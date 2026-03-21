@@ -1,11 +1,81 @@
+# Environment variables
 .env
+.env.local
+.env.*.local
+
+# Python
 __pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-qdrant_data/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
 .venv/
 venv/
-*.egg-info/
-dist/
-build/
+ENV/
+env/
+.conda/
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Project specific
+qdrant_data/
+logs/
+*.log
+*.pid
+.server.pid
+server.log
+
+# Claude/Codex specific
+.claude/
+.roo/
+.supermemory
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.bak
+*.cache
+
+# OS specific
+Thumbs.db
+desktop.ini
