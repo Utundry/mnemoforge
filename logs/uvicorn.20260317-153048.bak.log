@@ -1,0 +1,34 @@
+2026-03-17T15:22:23 | INFO     | app.main | Starting memory server
+2026-03-17T15:22:24 | INFO     | app.services.qdrant_service | Collection 'agent_memories' already exists
+2026-03-17T15:22:24 | INFO     | app.main | Ollama embed model warmed up (dim=768)
+2026-03-17T15:22:24 | INFO     | app.services.job_queue | JobQueue initialized: qdrant_data\jobs.db
+2026-03-17T15:22:24 | INFO     | app.main | Job queue started
+2026-03-17T15:22:24 | INFO     | app.services.skill_counters | SkillCountersStore initialized: qdrant_data\skills.db
+2026-03-17T15:22:24 | INFO     | app.services.job_queue | Job queue worker started
+2026-03-17T15:22:24 | INFO     | app.services.improvements_store | ImprovementsStore initialized: qdrant_data\improvements.db
+2026-03-17T15:22:25 | INFO     | app.services.learning_store | LearningStore initialized: qdrant_data\learning.db
+2026-03-17T15:22:25 | INFO     | app.services.memory_store | MemoryContentStore initialized: qdrant_data\memory_store.db
+2026-03-17T15:22:25 | INFO     | app.main | GLM mirror background task started (interval=0h)
+2026-03-17T15:22:25 | INFO     | app.main | Importance decay background task started (interval=24h)
+2026-03-17T15:22:25 | INFO     | app.main | Crystallization background task started (interval=168h)
+2026-03-17T15:22:25 | INFO     | app.main | Memory server ready — Qdrant=localhost:6333, Ollama=http://localhost:11434, model=nomic-embed-text
+2026-03-17T15:22:25 | INFO     | app.services.mcp_session_store | MCP session store: memory backend
+INFO:     127.0.0.1:63044 - "GET /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63045 - "POST /mcp/messages?sessionId=f92a6975-dba1-4522-9a80-9f016a6af000 HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:63045 - "POST /mcp/messages?sessionId=f92a6975-dba1-4522-9a80-9f016a6af000 HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:63046 - "POST /mcp/messages?sessionId=f92a6975-dba1-4522-9a80-9f016a6af000 HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:63045 - "GET /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63046 - "GET /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63065 - "GET /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63068 - "GET /mcp/sse HTTP/1.1" 200 OK
+INFO:     192.168.1.138:63156 - "GET /dashboard HTTP/1.1" 200 OK
+INFO:     192.168.1.138:63165 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:63164 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:63166 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:63156 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:63164 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:63165 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:63166 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:63156 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:63157 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:63162 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK

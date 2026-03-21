@@ -1,0 +1,260 @@
+2026-03-18T10:22:26 | INFO     | app.main | Starting memory server
+2026-03-18T10:22:27 | INFO     | app.services.qdrant_service | Collection 'agent_memories' already exists
+2026-03-18T10:22:28 | INFO     | app.main | Ollama embed model warmed up (dim=768)
+2026-03-18T10:22:28 | INFO     | app.services.job_queue | JobQueue initialized: qdrant_data\jobs.db
+2026-03-18T10:22:28 | INFO     | app.main | Job queue started
+2026-03-18T10:22:28 | INFO     | app.services.skill_counters | SkillCountersStore initialized: qdrant_data\skills.db
+2026-03-18T10:22:28 | INFO     | app.services.job_queue | Job queue worker started
+2026-03-18T10:22:28 | INFO     | app.main | Skill counters migration: seeded 2 skills from Qdrant -> SQLite
+2026-03-18T10:22:28 | WARNING  | app.main | Improvements migration failed (non-fatal): no such column: norm_title
+2026-03-18T10:22:28 | INFO     | app.services.learning_store | LearningStore initialized: qdrant_data\learning.db
+2026-03-18T10:22:28 | INFO     | app.services.memory_store | MemoryContentStore initialized: qdrant_data\memory_store.db
+2026-03-18T10:22:28 | INFO     | app.main | GLM mirror background task started (interval=0h)
+2026-03-18T10:22:28 | INFO     | app.main | Importance decay background task started (interval=24h)
+2026-03-18T10:22:28 | INFO     | app.main | Crystallization background task started (interval=168h)
+2026-03-18T10:22:28 | INFO     | app.main | Scout background task started (interval=6h)
+2026-03-18T10:22:28 | INFO     | app.main | Memory server ready — Qdrant=localhost:6333, Ollama=http://localhost:11434, model=nomic-embed-text
+INFO:     192.168.1.138:51934 - "GET /dashboard HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51936 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51934 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51935 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51978 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:51977 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51934 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51935 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51980 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51977 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51934 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51980 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:51935 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51977 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51934 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51979 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51934 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52085 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52086 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52087 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52088 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52087 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52089 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52090 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52086 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52091 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52089 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52087 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52090 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52091 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52085 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52103 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51953 - "GET /dashboard HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51953 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52166 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52168 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52167 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52171 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51953 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52166 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52167 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52172 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51953 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52171 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52166 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52167 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52166 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52170 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52170 - "GET /dashboard HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52170 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52171 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52166 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52167 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52183 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52170 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52184 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52166 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52167 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52184 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52183 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52170 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52166 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52172 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52172 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52451 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52454 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52452 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52453 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52456 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52451 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52457 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52452 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52453 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52451 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52456 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52457 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52457 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52455 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52542 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52545 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52543 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52544 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52542 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52547 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52543 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52547 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52544 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52548 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52542 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52543 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52550 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52546 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52546 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52941 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52942 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52944 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52943 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52941 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52946 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52942 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52943 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52946 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52942 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:52947 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52941 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52943 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52941 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:52945 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52962 - "GET /api/v1/improvements?status=open&limit=3 HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:52970 - "POST /api/v1/improvements HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:52976 - "POST /api/v1/improvements HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:53275 - "GET /api/v1/improvements?status=open&limit=3 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:53728 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53729 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53731 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:53730 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53728 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53733 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53729 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53730 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53733 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:53734 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53728 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53729 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53730 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53729 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53732 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53772 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53776 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:53773 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53774 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53778 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53772 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53773 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53774 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53779 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53772 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:53778 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53773 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53777 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53773 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54089 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54092 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:54090 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54091 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54094 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54089 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54090 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54095 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54089 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:54091 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54094 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54090 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54095 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54093 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54095 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54134 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54135 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54137 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:54136 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54139 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54134 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54135 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54136 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54140 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54139 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54134 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:54135 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54139 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54138 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57888 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57889 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57890 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57891 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:57893 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57890 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57888 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57889 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57890 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:57894 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57893 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57888 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57893 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57892 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57888 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57899 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57900 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57902 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:57901 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57903 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57904 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57900 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57901 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57905 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57903 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57904 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:57900 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57903 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:57899 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58034 - "GET /dashboard HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58034 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58035 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58037 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58038 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:58037 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58040 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58034 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58035 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58041 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58037 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58034 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:58040 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58037 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58040 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58039 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58296 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58298 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58299 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58302 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:58299 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58304 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58296 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58298 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58305 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58304 - "GET /api/v1/improvements/report HTTP/1.1" 500 Internal Server Error
+INFO:     192.168.1.138:58299 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58296 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58299 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58303 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58456 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58457 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+2026-03-18T10:25:57 | INFO     | app.services.improvements_store | ImprovementsStore initialized: qdrant_data\improvements.db
+INFO:     192.168.1.138:58459 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58458 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58459 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58461 - "GET /api/v1/learning/artifacts?status=active&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58456 - "GET /api/v1/learning/artifacts?status=pending_review&limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58457 - "GET /api/v1/learning/artifacts?limit=1 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58458 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58459 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58461 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58457 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58459 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:58460 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK

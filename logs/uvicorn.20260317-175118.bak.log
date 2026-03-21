@@ -1,0 +1,232 @@
+2026-03-17T17:32:09 | INFO     | app.main | Starting memory server
+2026-03-17T17:32:10 | INFO     | app.services.qdrant_service | Collection 'agent_memories' already exists
+2026-03-17T17:32:10 | INFO     | app.main | Ollama embed model warmed up (dim=768)
+2026-03-17T17:32:10 | INFO     | app.services.job_queue | JobQueue initialized: qdrant_data\jobs.db
+2026-03-17T17:32:10 | INFO     | app.main | Job queue started
+2026-03-17T17:32:10 | INFO     | app.services.skill_counters | SkillCountersStore initialized: qdrant_data\skills.db
+2026-03-17T17:32:10 | INFO     | app.services.job_queue | Job queue worker started
+2026-03-17T17:32:10 | INFO     | app.main | Skill counters migration: seeded 2 skills from Qdrant -> SQLite
+2026-03-17T17:32:10 | INFO     | app.services.improvements_store | ImprovementsStore initialized: qdrant_data\improvements.db
+2026-03-17T17:32:11 | INFO     | app.main | Improvements migration: seeded 52 items from Qdrant -> SQLite
+2026-03-17T17:32:11 | INFO     | app.services.learning_store | LearningStore initialized: qdrant_data\learning.db
+2026-03-17T17:32:11 | INFO     | app.services.memory_store | MemoryContentStore initialized: qdrant_data\memory_store.db
+2026-03-17T17:32:11 | INFO     | app.main | GLM mirror background task started (interval=0h)
+2026-03-17T17:32:11 | INFO     | app.main | Importance decay background task started (interval=24h)
+2026-03-17T17:32:11 | INFO     | app.main | Crystallization background task started (interval=168h)
+2026-03-17T17:32:11 | INFO     | app.main | Memory server ready — Qdrant=localhost:6333, Ollama=http://localhost:11434, model=nomic-embed-text
+INFO:     127.0.0.1:54623 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54640 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54639 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54641 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54636 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54641 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54640 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54639 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54637 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54636 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54636 - "GET /dashboard HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54641 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54640 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54651 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54640 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:54651 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:54636 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54640 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54651 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54636 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54641 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54637 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54639 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+2026-03-17T17:32:53 | INFO     | app.services.glm_mirror | GLM mirror: calling LLM (events=30, patterns=1)
+INFO:     192.168.1.138:54693 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54692 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54693 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54693 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:54693 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:54689 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54693 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54692 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54689 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54690 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54693 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+2026-03-17T17:33:04 | INFO     | app.services.glm_mirror | GLM mirror: evidence++ on 2ffc2e59-ee07-4435-a403-98b50ff82e13 (action=suggest_run_tests)
+2026-03-17T17:33:04 | INFO     | app.services.glm_mirror | GLM mirror: evidence++ on 008605a1-f8eb-4bce-8db3-816c074ea583 (action=suggest_save_result)
+2026-03-17T17:33:04 | INFO     | app.services.glm_mirror | GLM mirror: evidence++ on 2ce421fd-610a-4d8a-8904-2ef8ecbd2ad1 (action=suggest_rebuild_docs)
+INFO:     192.168.1.138:54659 - "POST /api/v1/learning/mirror/run HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54659 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54659 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54691 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55255 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55254 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55256 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55254 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:55256 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:55250 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55254 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55256 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55250 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55255 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55252 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+2026-03-17T17:33:55 | INFO     | app.services.mcp_session_store | MCP session store: memory backend
+INFO:     127.0.0.1:55308 - "GET /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55310 - "POST /mcp/messages?sessionId=7849b764-42e3-4c45-87df-a2df268cff1e HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55311 - "POST /mcp/messages?sessionId=7849b764-42e3-4c45-87df-a2df268cff1e HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55310 - "POST /mcp/messages?sessionId=7849b764-42e3-4c45-87df-a2df268cff1e HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55310 - "POST /mcp/messages?sessionId=7849b764-42e3-4c45-87df-a2df268cff1e HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55311 - "POST /mcp/messages?sessionId=7849b764-42e3-4c45-87df-a2df268cff1e HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55333 - "GET /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55335 - "POST /mcp/messages?sessionId=cccb7c8f-2f49-4a34-a355-af3efe52bfd4 HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55335 - "POST /mcp/messages?sessionId=cccb7c8f-2f49-4a34-a355-af3efe52bfd4 HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55335 - "POST /mcp/messages?sessionId=cccb7c8f-2f49-4a34-a355-af3efe52bfd4 HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55341 - "GET /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55343 - "POST /mcp/messages?sessionId=4a0555d3-16c0-4b04-a709-4467a6082fed HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55343 - "POST /mcp/messages?sessionId=4a0555d3-16c0-4b04-a709-4467a6082fed HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55343 - "POST /mcp/messages?sessionId=4a0555d3-16c0-4b04-a709-4467a6082fed HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55310 - "GET /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55311 - "POST /mcp/messages?sessionId=fab25aa4-a046-45ac-b9fc-8f87b4353406 HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55347 - "POST /mcp/messages?sessionId=fab25aa4-a046-45ac-b9fc-8f87b4353406 HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55311 - "POST /mcp/messages?sessionId=fab25aa4-a046-45ac-b9fc-8f87b4353406 HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55362 - "GET /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55364 - "POST /mcp/messages?sessionId=7517db6f-f533-4f0a-a61a-b1659c4ecd6c HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55364 - "POST /mcp/messages?sessionId=7517db6f-f533-4f0a-a61a-b1659c4ecd6c HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:55364 - "POST /mcp/messages?sessionId=7517db6f-f533-4f0a-a61a-b1659c4ecd6c HTTP/1.1" 202 Accepted
+INFO:     192.168.1.138:55253 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+2026-03-17T17:36:48 | INFO     | app.services.performance_tracker | Performance tracker initialized: qdrant_data\performance.db
+INFO:     127.0.0.1:64016 - "POST /api/v1/skills/profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50834 - "POST /api/v1/skills/profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51242 - "POST /api/v1/memories HTTP/1.1" 201 Created
+INFO:     127.0.0.1:51235 - "POST /mcp/messages?sessionId=7517db6f-f533-4f0a-a61a-b1659c4ecd6c HTTP/1.1" 202 Accepted
+INFO:     192.168.1.138:51633 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51632 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51634 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51632 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:51634 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:51632 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51634 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51633 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51629 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51632 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51630 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:51631 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+2026-03-17T17:42:11 | INFO     | app.services.glm_mirror | GLM mirror: calling LLM (events=33, patterns=1)
+2026-03-17T17:42:21 | INFO     | app.services.glm_mirror | GLM mirror: evidence++ on 2ffc2e59-ee07-4435-a403-98b50ff82e13 (action=suggest_run_tests)
+2026-03-17T17:42:21 | INFO     | app.services.glm_mirror | GLM mirror: evidence++ on 008605a1-f8eb-4bce-8db3-816c074ea583 (action=suggest_save_result)
+2026-03-17T17:42:21 | INFO     | app.services.glm_mirror | GLM mirror: evidence++ on d2f2e3cc-112b-474c-929f-6d00f3af5352 (action=suggest_create_improvement)
+2026-03-17T17:42:21 | INFO     | app.main | GLM mirror: created=0 updated=3 events=33 errors=0
+INFO:     127.0.0.1:52779 - "POST /api/v1/skills/profile HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54611 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54610 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54612 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54610 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:54612 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:54610 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54612 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54605 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54611 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54610 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54608 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54609 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55499 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55498 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55501 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55499 - "GET /dashboard HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55501 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:55499 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:55501 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55499 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55518 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55517 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55519 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55518 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:55517 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:55519 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55518 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55517 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55514 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55499 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55516 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56377 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56375 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56378 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56375 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:56378 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:56375 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56378 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56372 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56375 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56377 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56373 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56374 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56774 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56772 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56775 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56772 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:56775 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:56772 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56775 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56769 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56772 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56774 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56770 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:56771 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:64431 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:64429 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:64432 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:64429 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:64432 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:64429 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:64432 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:64426 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:64431 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:64429 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:64427 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:64428 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49421 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49420 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49422 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49420 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:49422 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:49420 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49422 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49416 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49420 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49421 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49417 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49418 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49787 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49786 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49788 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49786 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:49788 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:49786 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49788 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49783 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49786 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49787 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49784 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:49785 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+2026-03-17T17:50:37 | INFO     | app.routers.skills | Outcome recorded: pack=auto helpful=0 unused=0 missing=[] success=True
+INFO:     127.0.0.1:50181 - "POST /api/v1/skills/outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:50246 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:50245 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:50247 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:50245 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:50247 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:50245 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:50247 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:50242 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:50246 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:50245 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:50243 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:50244 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:65258 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:65257 - "GET /api/v1/learning/artifacts?limit=1000 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:65259 - "GET /api/v1/learning/report HTTP/1.1" 200 OK
+INFO:     192.168.1.138:65257 - "GET /api/v1/admin/logs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:65259 - "GET /api/v1/admin/dbs HTTP/1.1" 403 Forbidden
+INFO:     192.168.1.138:65257 - "GET /api/v1/learning/events?event_type=memory_use&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:65259 - "GET /api/v1/learning/events?event_type=outcome_recorded&limit=200&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:65254 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:65258 - "GET /api/v1/governance/dying?limit=10&max_importance=0.25&min_age_days=7 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:65257 - "GET /api/v1/learning/events?limit=120&since_hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:65255 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK

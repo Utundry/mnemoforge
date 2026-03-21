@@ -1,0 +1,292 @@
+[CmdletBinding()]
+param(
+  [ValidateSet("local", "docker")]
+  [string]$Mode = "local",
+
+  [int]$Port = 0,
+  [string]$ListenHost = "",
+  [switch]$Reload,
+  [switch]$WaitHealthy,
+  [int]$WaitSeconds = 15,
+  [switch]$DryRun
+)
+
+$ErrorActionPreference = "Stop"
+
+function Read-DotEnvValue {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$Key
+  )
+  if (!(Test-Path $Path)) { return $null }
+  foreach ($line in (Get-Content $Path -ErrorAction SilentlyContinue)) {
+    $t = ""
+    if ($null -ne $line) { $t = "$line" }
+    $t = $t.Trim()
+    if (!$t -or $t.StartsWith("#")) { continue }
+    $m = [regex]::Match($t, "^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$")
+    if (!$m.Success) { continue }
+    if ($m.Groups[1].Value -ne $Key) { continue }
+    $v = $m.Groups[2].Value.Trim()
+    if (($v.StartsWith('"') -and $v.EndsWith('"')) -or ($v.StartsWith("'") -and $v.EndsWith("'"))) {
+      $v = $v.Substring(1, $v.Length - 2)
+    }
+    return $v
+  }
+  return $null
+}
+
+function Stop-ByPidFile {
+  param([string]$PidPath)
+  if (!(Test-Path $PidPath)) { return $false }
+  $raw = (Get-Content $PidPath -Raw -ErrorAction SilentlyContinue).Trim()
+  if (!$raw) { return $false }
+  $procId = 0
+  if (![int]::TryParse($raw, [ref]$procId)) { return $false }
+  $removePidFile = $false
+  try {
+    try {
+      $null = Get-Process -Id $procId -ErrorAction Stop
+    } catch {
+      # Stale pidfile: process is gone.
+      $removePidFile = $true
+      return $false
+    }
+
+    if ($DryRun) {
+      Write-Host "DRYRUN: Stop-Process -Id $procId -Force"
+      $removePidFile = $true
+      return $true
+    }
+
+    try {
+      Stop-Process -Id $procId -Force -ErrorAction Stop
+      $removePidFile = $true
+      return $true
+    } catch {
+      # Couldn't stop the process — keep pidfile so the user can inspect it.
+      $removePidFile = $false
+      return $false
+    }
+  } finally {
+    if ($removePidFile) {
+      if ($DryRun) {
+        Write-Host "DRYRUN: Remove-Item $PidPath -Force"
+      } else {
+        Remove-Item $PidPath -Force -ErrorAction SilentlyContinue | Out-Null
+      }
+    }
+  }
+}
+
+function Stop-ByPort {
+  param([int]$Port)
+  try {
+    # Get-NetTCPConnection часто требует повышенных прав; netstat работает почти всегда.
+    $lines = netstat -ano -p tcp | Select-String -Pattern "LISTENING"
+    if (!$lines) { return $false }
+
+    $pids = @()
+    foreach ($m in $lines) {
+      $parts = ($m.Line -split "\s+") | Where-Object { $_ -ne "" }
+      if ($parts.Count -lt 5) { continue }
+      $local = $parts[1]
+      $pidRaw = $parts[$parts.Count - 1]
+      if ($local -notmatch (":$Port$")) { continue }
+      $pid = 0
+      if ([int]::TryParse($pidRaw, [ref]$pid)) {
+        $pids += $pid
+      }
+    }
+
+    $pids = $pids | Select-Object -Unique
+    if (!$pids -or $pids.Count -eq 0) { return $false }
+
+    foreach ($procId in $pids) {
+      if ($DryRun) {
+        Write-Host "DRYRUN: Stop-Process -Id $procId -Force (port $Port)"
+      } else {
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+      }
+    }
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Stop-UvicornFallback {
+  param([int]$Port)
+  try {
+    $procs = Get-CimInstance Win32_Process -Filter "Name = 'python.exe' OR Name = 'pythonw.exe'" -ErrorAction Stop
+    $match = $procs | Where-Object {
+      ($_.CommandLine -like "*uvicorn*app.main:app*") -and ($_.CommandLine -like "*--port $Port*")
+    } | Select-Object -First 1
+    if (!$match) { return $false }
+    $procId = [int]$match.ProcessId
+    if ($DryRun) {
+      Write-Host "DRYRUN: Stop-Process -Id $procId -Force (uvicorn cmdline match)"
+    } else {
+      Stop-Process -Id $procId -Force
+    }
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Wait-Health {
+  param([int]$Port, [int]$Seconds)
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  while ((Get-Date) -lt $deadline) {
+    try {
+      # Use 127.0.0.1 (avoid IPv6 ::1 localhost resolution on Windows when server listens on IPv4 only)
+      $r = Invoke-RestMethod -TimeoutSec 2 -Uri "http://127.0.0.1:$Port/api/v1/health" -Method Get
+      # /health returns status: ok|degraded; older scripts expected "healthy".
+      if ($r -and ($r.status -eq "ok" -or $r.status -eq "healthy" -or $r.status -eq "degraded")) {
+        return $true
+      }
+    } catch {}
+    Start-Sleep -Milliseconds 400
+  }
+  return $false
+}
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+Push-Location $repoRoot
+try {
+  $envPath = Join-Path $repoRoot ".env"
+  if ($Port -le 0) {
+    $p = Read-DotEnvValue -Path $envPath -Key "SERVER_PORT"
+    if ($p) { [void][int]::TryParse($p, [ref]$Port) }
+  }
+  if ($Port -le 0) { $Port = 8000 }
+
+  if (!$ListenHost) {
+    $h = Read-DotEnvValue -Path $envPath -Key "SERVER_HOST"
+    $ListenHost = if ($h) { $h } else { "0.0.0.0" }
+  }
+
+  if (!$PSBoundParameters.ContainsKey("WaitHealthy")) {
+    $WaitHealthy = $true
+  }
+
+  if ($Mode -eq "docker") {
+    if ($DryRun) {
+      Write-Host "DRYRUN: docker compose restart memory-server"
+    } else {
+      docker compose restart memory-server
+    }
+    exit 0
+  }
+
+  $pidFile = Join-Path $repoRoot ".server.pid"
+  $stopped = (Stop-ByPidFile -PidPath $pidFile)
+  if (-not $stopped) { $stopped = (Stop-ByPort -Port $Port) }
+  if (-not $stopped) { $stopped = (Stop-UvicornFallback -Port $Port) }
+
+  $python = Join-Path $repoRoot ".venv\\Scripts\\python.exe"
+  if (!(Test-Path $python)) {
+    throw "Python venv not found: $python. Create venv first (see SETUP.md)."
+  }
+
+  $logDir = Join-Path $repoRoot "logs"
+  if ($DryRun) {
+    Write-Host "DRYRUN: New-Item -ItemType Directory -Force $logDir"
+  } else {
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+  }
+
+  $stdout = Join-Path $logDir "uvicorn.log"
+  $stderr = Join-Path $logDir "uvicorn.err.log"
+  $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+
+  function Move-WithRetry {
+    param(
+      [Parameter(Mandatory = $true)][string]$Src,
+      [Parameter(Mandatory = $true)][string]$Dst,
+      [int]$Retries = 6,
+      [int]$DelayMs = 250
+    )
+    for ($i = 0; $i -lt $Retries; $i++) {
+      try {
+        Move-Item -Force -ErrorAction Stop $Src $Dst
+        return $true
+      } catch {
+        if ($i -ge ($Retries - 1)) { return $false }
+        Start-Sleep -Milliseconds $DelayMs
+      }
+    }
+    return $false
+  }
+
+  # Default: keep stable names. If rotation fails due to file locks, fall back to per-run log filenames.
+  $stdoutRun = $stdout
+  $stderrRun = $stderr
+
+  if (Test-Path $stdout) {
+    $bak = Join-Path $logDir "uvicorn.$ts.bak.log"
+    if ($DryRun) {
+      Write-Host "DRYRUN: Move-Item $stdout -> $bak"
+    } else {
+      $moved = Move-WithRetry -Src $stdout -Dst $bak
+      if (-not $moved) {
+        Write-Warning "Cannot rotate $stdout (locked). Using per-run log file for this start."
+        $stdoutRun = Join-Path $logDir "uvicorn.$ts.log"
+      }
+    }
+  }
+  if (Test-Path $stderr) {
+    $bak = Join-Path $logDir "uvicorn.$ts.bak.err.log"
+    if ($DryRun) {
+      Write-Host "DRYRUN: Move-Item $stderr -> $bak"
+    } else {
+      $moved = Move-WithRetry -Src $stderr -Dst $bak
+      if (-not $moved) {
+        Write-Warning "Cannot rotate $stderr (locked). Using per-run log file for this start."
+        $stderrRun = Join-Path $logDir "uvicorn.$ts.err.log"
+      }
+    }
+  }
+
+  $args = @(
+    "-m", "uvicorn",
+    "app.main:app",
+    "--app-dir", $repoRoot,
+    "--host", $ListenHost,
+    "--port", "$Port"
+  )
+  if ($Reload) { $args += "--reload" }
+
+  if ($DryRun) {
+    Write-Host "DRYRUN: Start-Process -FilePath $python -ArgumentList $($args -join ' ')"
+    Write-Host "DRYRUN: (stdout) $stdoutRun"
+    Write-Host "DRYRUN: (stderr) $stderrRun"
+    Write-Host "DRYRUN: Write pid to $pidFile"
+  } else {
+    $proc = Start-Process -FilePath $python `
+      -ArgumentList $args `
+      -WorkingDirectory $repoRoot `
+      -RedirectStandardOutput $stdoutRun `
+      -RedirectStandardError $stderrRun `
+      -PassThru `
+      -WindowStyle Hidden
+    Set-Content -Path $pidFile -Value $proc.Id -Encoding ascii
+  }
+
+  if ($WaitHealthy -and -not $DryRun) {
+    $ok = Wait-Health -Port $Port -Seconds $WaitSeconds
+    if (!$ok) {
+      Write-Warning "Server started but health check did not pass in ${WaitSeconds}s. Check logs: $stdoutRun / $stderrRun"
+    }
+  }
+
+  Write-Host "OK: server restarted on http://127.0.0.1:$Port (mode=$Mode reload=$Reload)"
+  if (!$DryRun) {
+    Write-Host "PID: $(Get-Content $pidFile -Raw)"
+    Write-Host "Logs: $stdoutRun"
+  }
+}
+finally {
+  Pop-Location
+}

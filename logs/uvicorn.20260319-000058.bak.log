@@ -1,0 +1,158 @@
+2026-03-18T17:17:14 | INFO     | app.main | Starting memory server
+2026-03-18T17:17:14 | INFO     | app.services.qdrant_service | Collection 'agent_memories' already exists
+2026-03-18T17:17:15 | INFO     | app.main | Ollama embed model warmed up (dim=768)
+2026-03-18T17:17:15 | INFO     | app.services.job_queue | JobQueue initialized: qdrant_data\jobs.db
+2026-03-18T17:17:15 | INFO     | app.main | Job queue started
+2026-03-18T17:17:15 | INFO     | app.services.skill_counters | SkillCountersStore initialized: qdrant_data\skills.db
+2026-03-18T17:17:15 | INFO     | app.services.job_queue | Job queue worker started
+2026-03-18T17:17:15 | INFO     | app.main | Skill counters migration: seeded 2 skills from Qdrant -> SQLite
+2026-03-18T17:17:15 | INFO     | app.services.improvements_store | ImprovementsStore initialized: qdrant_data\improvements.db
+2026-03-18T17:17:15 | INFO     | app.main | Improvements migration: seeded 52 items from Qdrant -> SQLite
+2026-03-18T17:17:15 | INFO     | app.services.learning_store | LearningStore initialized: qdrant_data\learning.db
+2026-03-18T17:17:15 | INFO     | app.services.memory_store | MemoryContentStore initialized: qdrant_data\memory_store.db
+2026-03-18T17:17:15 | INFO     | app.main | GLM mirror background task started (interval=0h)
+2026-03-18T17:17:15 | INFO     | app.main | Importance decay background task started (interval=24h)
+2026-03-18T17:17:15 | INFO     | app.main | Crystallization background task started (interval=168h)
+2026-03-18T17:17:15 | INFO     | app.main | Scout background task started (interval=6h)
+2026-03-18T17:17:15 | INFO     | app.main | Memory server ready — Qdrant=localhost:6333, Ollama=http://localhost:11434, model=nomic-embed-text
+INFO:     127.0.0.1:59127 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59141 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59140 - "GET /api/v1/learning/artifacts?status=pending_review&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59141 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59140 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59144 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59140 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59231 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59233 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59232 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59235 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59233 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59231 - "GET /api/v1/learning/artifacts?status=pending_review&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59232 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59235 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59233 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59235 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59234 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59230 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59143 - "GET /api/v1/improvements/report HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59305 - "GET /mcp/sse HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:59322 - "GET /mcp/sse HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:59322 - "GET /.well-known/oauth-protected-resource/mcp/sse HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:59322 - "GET /.well-known/oauth-protected-resource HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:59322 - "GET /.well-known/oauth-authorization-server HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59305 - "GET /mcp/sse HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:59337 - "GET /mcp/sse HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:59337 - "GET /.well-known/oauth-protected-resource/mcp/sse HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:59337 - "GET /.well-known/oauth-protected-resource HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:59337 - "GET /.well-known/oauth-authorization-server HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59353 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59356 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59354 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59359 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59353 - "GET /api/v1/learning/artifacts?status=pending_review&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59356 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59354 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59359 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59353 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59359 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59358 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:59352 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59384 - "GET /.well-known/oauth-authorization-server/mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59384 - "GET /.well-known/oauth-protected-resource/mcp/sse HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:59384 - "GET /.well-known/oauth-protected-resource HTTP/1.1" 401 Unauthorized
+INFO:     127.0.0.1:59384 - "GET /.well-known/oauth-authorization-server HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53869 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53870 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53871 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53874 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53869 - "GET /api/v1/learning/artifacts?status=pending_review&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53870 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53871 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53874 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53869 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53871 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53872 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53868 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53868 - "GET /dashboard HTTP/1.1" 200 OK
+2026-03-18T17:18:30 | INFO     | app.services.project_tree_store | ProjectTreeStore initialized: qdrant_data\project_tree.db
+INFO:     192.168.1.138:53868 - "GET /api/v1/tree HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53874 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53871 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53869 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53868 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53871 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53874 - "GET /api/v1/learning/artifacts?status=pending_review&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53869 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53868 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53870 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53871 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53868 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:53872 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54293 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54294 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54295 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54298 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54294 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54293 - "GET /api/v1/learning/artifacts?status=pending_review&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54295 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54298 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54294 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54295 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54296 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54292 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+2026-03-18T17:19:22 | INFO     | app.services.performance_tracker | Performance tracker initialized: qdrant_data\performance.db
+INFO:     127.0.0.1:54560 - "POST /api/v1/skills/profile HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54561 - "POST /api/v1/memories/context HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54595 - "POST /api/v1/skills/pack/create HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54685 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54686 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54687 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54690 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54685 - "GET /api/v1/learning/artifacts?status=pending_review&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54686 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54687 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54690 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54685 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54686 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54689 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54696 - "GET /.well-known/oauth-authorization-server/mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54696 - "GET /mcp/sse/.well-known/oauth-authorization-server HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54696 - "GET /.well-known/oauth-authorization-server HTTP/1.1" 200 OK
+INFO:     192.168.1.138:54684 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54704 - "POST /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54704 - "POST /mcp/sse HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:54704 - "POST /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54704 - "POST /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54704 - "POST /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54811 - "GET /.well-known/oauth-authorization-server/mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54811 - "GET /mcp/sse/.well-known/oauth-authorization-server HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54811 - "GET /.well-known/oauth-authorization-server HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54817 - "POST /mcp/sse HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54817 - "POST /mcp/sse HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:54817 - "POST /mcp/sse HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55268 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55270 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55269 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55272 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55270 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55268 - "GET /api/v1/learning/artifacts?status=pending_review&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55269 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55272 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55270 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55269 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55271 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55267 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55318 - "GET /.well-known/oauth-authorization-server HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55632 - "GET /api/v1/learning/report?limit=50 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55634 - "GET /api/v1/improvements?status=open&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55633 - "GET /api/v1/learning/artifacts?status=pending_review&limit=100 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55636 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55632 - "GET /api/v1/learning/artifacts?status=pending_review&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55634 - "GET /api/v1/learning/mirror/status HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55633 - "GET /api/v1/learning/events?limit=200&hours=24 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55636 - "GET /api/v1/learning/events?limit=50&event_type=session_outcome HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55632 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55633 - "GET /api/v1/learning/artifacts?status=active&limit=200 HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55635 - "GET /api/v1/memories/stats HTTP/1.1" 200 OK
+INFO:     192.168.1.138:55631 - "GET /api/v1/admin/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55655 - "GET /.well-known/oauth-authorization-server HTTP/1.1" 200 OK

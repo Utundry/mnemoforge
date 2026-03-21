@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en" translate="no" class="notranslate">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="google" content="notranslate">
+  <title>Supermemory — Project Docs</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2d3a;
+      --accent: #6c8cff;
+      --accent-dim: #3a4a8a;
+      --text: #e2e4ed;
+      --text-dim: #7a7f9a;
+      --green: #4ade80;
+      --yellow: #fbbf24;
+      --red: #f87171;
+      --radius: 8px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .logo { font-size: 18px; font-weight: 700; color: var(--accent); letter-spacing: -0.5px; }
+    .logo span { color: var(--text-dim); font-weight: 400; }
+
+    .header-right { display: flex; align-items: center; gap: 12px; }
+
+    #status-bar {
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    #status-bar .dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    #status-bar.ok .dot { background: var(--green); }
+    #status-bar.building .dot { background: var(--yellow); animation: pulse 1s infinite; }
+    #status-bar.error .dot { background: var(--red); }
+
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    button {
+      background: var(--accent-dim);
+      color: var(--text);
+      border: 1px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 7px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button:hover { background: var(--accent); }
+    button:disabled { opacity: 0.4; cursor: default; }
+
+    .project-selector {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+
+    .project-selector input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 5px 10px;
+      font-size: 13px;
+      width: 140px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      height: calc(100vh - 57px);
+    }
+
+    nav {
+      border-right: 1px solid var(--border);
+      padding: 16px 0;
+      overflow-y: auto;
+    }
+
+    nav a {
+      display: block;
+      padding: 9px 20px;
+      font-size: 14px;
+      color: var(--text-dim);
+      text-decoration: none;
+      border-left: 3px solid transparent;
+      transition: all 0.1s;
+    }
+
+    nav a:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+    nav a.active { color: var(--accent); border-left-color: var(--accent); background: rgba(108,140,255,0.07); }
+
+    main {
+      overflow-y: auto;
+      padding: 32px 40px;
+    }
+
+    #empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 16px;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    #empty-state h2 { font-size: 20px; color: var(--text); }
+    #empty-state p { font-size: 14px; max-width: 340px; line-height: 1.6; }
+
+    .section-title {
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .generated-at {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 24px;
+    }
+
+    .md-content { line-height: 1.7; }
+    .md-content h1, .md-content h2, .md-content h3 {
+      margin: 20px 0 10px;
+      font-weight: 600;
+    }
+    .md-content h1 { font-size: 20px; }
+    .md-content h2 { font-size: 17px; }
+    .md-content h3 { font-size: 15px; color: var(--accent); }
+    .md-content p { margin-bottom: 12px; }
+    .md-content ul, .md-content ol { margin: 8px 0 12px 20px; }
+    .md-content li { margin: 4px 0; }
+    .md-content code {
+      background: rgba(108,140,255,0.12);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 13px;
+      font-family: "JetBrains Mono", "Fira Code", monospace;
+    }
+    .md-content pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      overflow-x: auto;
+      margin: 12px 0;
+    }
+    .md-content pre code { background: none; padding: 0; }
+    .md-content table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 12px 0;
+      font-size: 13px;
+    }
+    .md-content th, .md-content td {
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      text-align: left;
+    }
+    .md-content th { background: var(--surface); font-weight: 600; }
+    .md-content tr:hover td { background: rgba(255,255,255,0.02); }
+    .md-content strong { color: #c5cadf; }
+    .md-content em { color: var(--text-dim); font-style: italic; }
+    .md-content blockquote {
+      border-left: 3px solid var(--accent-dim);
+      padding: 8px 16px;
+      color: var(--text-dim);
+      margin: 12px 0;
+    }
+
+    #error-banner {
+      display: none;
+      background: rgba(248,113,113,0.1);
+      border: 1px solid var(--red);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      font-size: 14px;
+      color: var(--red);
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">supermemory <span>/ docs</span></div>
+  <div class="header-right">
+    <div class="project-selector">
+      <label for="project-input">project:</label>
+      <input id="project-input" type="text" value="supermemory" placeholder="project id">
+    </div>
+    <div id="status-bar"><span class="dot"></span><span id="status-text">loading…</span></div>
+    <button type="button" id="rebuild-btn" onclick="triggerRebuild()">Rebuild</button>
+    <button type="button" onclick="loadDocs()">Refresh</button>
+  </div>
+</header>
+
+<div class="layout">
+  <nav id="nav"></nav>
+  <main id="main">
+    <div id="empty-state">
+      <h2>No documentation built yet</h2>
+      <p>Click <strong>Rebuild</strong> to generate documentation from live project data.</p>
+    </div>
+  </main>
+</div>
+
+<script>
+const API = '/api/v1';
+const API_KEY = '__API_KEY__';
+const _H = API_KEY ? {'X-Api-Key': API_KEY} : {};
+let docsData = null;
+let pollTimer = null;
+let currentSectionKey = null;
+
+const SECTION_ORDER = ['overview', 'architecture', 'features', 'pending', 'decisions', 'skills', 'performance'];
+
+function project() {
+  return document.getElementById('project-input').value.trim() || 'supermemory';
+}
+
+function setStatus(state, text) {
+  const bar = document.getElementById('status-bar');
+  bar.className = state;
+  document.getElementById('status-text').textContent = text;
+}
+
+async function readError(resp) {
+  let message = `HTTP ${resp.status}`;
+  try {
+    const data = await resp.json();
+    message = data.detail || data.error_description || data.error || message;
+  } catch {}
+  return message;
+}
+
+async function loadDocs() {
+  setStatus('building', 'loading…');
+  try {
+    const r = await fetch(`${API}/docs/status?project=${encodeURIComponent(project())}`, { headers: _H });
+    if (r.status === 404) {
+      setStatus('', 'not built');
+      renderEmpty();
+      return;
+    }
+    if (!r.ok) throw new Error(await readError(r));
+    docsData = await r.json();
+    renderDocs();
+    setStatus('ok', `built ${reltime(docsData.generated_at)}`);
+  } catch (e) {
+    setStatus('error', 'error');
+    showError(e.message);
+  }
+}
+
+function renderEmpty() {
+  document.getElementById('nav').innerHTML = '';
+  document.getElementById('main').innerHTML = `
+    <div id="empty-state">
+      <h2>No documentation built yet</h2>
+      <p>Click <strong>Rebuild</strong> to generate documentation from live project data.</p>
+    </div>`;
+}
+
+function renderDocs() {
+  if (!docsData) return;
+
+  const sections = docsData.sections;
+  const ordered = SECTION_ORDER.filter(k => sections[k]).concat(
+    Object.keys(sections).filter(k => !SECTION_ORDER.includes(k))
+  );
+
+  // Nav
+  const nav = document.getElementById('nav');
+  nav.innerHTML = ordered.map(key =>
+    `<a href="#" data-section="${key}" onclick="showSection('${key}');return false;">${sections[key].name}</a>`
+  ).join('');
+
+  // Show first section
+  showSection(ordered[0]);
+}
+
+function showSection(key) {
+  if (!docsData) return;
+  const section = docsData.sections[key];
+  if (!section) return;
+  currentSectionKey = key;
+
+  // Update nav active state
+  document.querySelectorAll('nav a').forEach(a => {
+    a.classList.toggle('active', a.dataset.section === key);
+  });
+
+  const genAt = new Date(docsData.generated_at).toLocaleString();
+  document.getElementById('main').innerHTML = `
+    <div id="error-banner"></div>
+    <div class="section-title">${section.name}</div>
+    <div class="generated-at">Generated: ${genAt}</div>
+    <div style="margin-bottom:12px">
+      <button type="button" onclick="translateCurrentSection()">🌐 Translate</button>
+    </div>
+    <div class="md-content">${marked.parse(section.content)}</div>
+    <div id="translate-result" style="margin-top:20px"></div>
+  `;
+}
+
+async function translateCurrentSection() {
+  if (!docsData || !currentSectionKey) return;
+  const el = document.getElementById('translate-result');
+  if (el) el.innerHTML = '<div style="color:var(--text-dim)">translating…</div>';
+  try {
+    const r = await fetch(
+      `${API}/docs/section/${encodeURIComponent(currentSectionKey)}/translate?project=${encodeURIComponent(project())}`,
+      { headers: _H }
+    );
+    if (!r.ok) throw new Error(await readError(r));
+    const data = await r.json();
+    if (el) el.innerHTML = `
+      <div style="margin-top:8px;font-size:11px;color:var(--text-dim)">🌐 ${data.language}</div>
+      <div class="md-content" style="margin-top:8px">${marked.parse(data.translated || '')}</div>
+    `;
+  } catch (e) {
+    if (el) el.innerHTML = `<div style="color:var(--red)">${e.message}</div>`;
+  }
+}
+
+async function triggerRebuild() {
+  const btn = document.getElementById('rebuild-btn');
+  btn.disabled = true;
+  setStatus('building', 'rebuilding…');
+  try {
+    const r = await fetch(`${API}/docs/rebuild`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', ..._H},
+      body: JSON.stringify({project: project(), force: true}),
+    });
+    if (!r.ok) throw new Error(await readError(r));
+    const data = await r.json();
+    pollJob(data.job_id, btn);
+  } catch (e) {
+    setStatus('error', 'rebuild failed');
+    showError(e.message);
+    btn.disabled = false;
+  }
+}
+
+function pollJob(jobId, btn) {
+  clearInterval(pollTimer);
+  let ticks = 0;
+  pollTimer = setInterval(async () => {
+    ticks++;
+    setStatus('building', `rebuilding… ${ticks * 2}s`);
+    try {
+      const r = await fetch(`${API}/tasks/${jobId}`, { headers: _H });
+      if (!r.ok) return;
+      const job = await r.json();
+      if (job.status === 'done') {
+        clearInterval(pollTimer);
+        btn.disabled = false;
+        await loadDocs();
+      } else if (job.status === 'failed') {
+        clearInterval(pollTimer);
+        btn.disabled = false;
+        setStatus('error', 'rebuild failed');
+        showError(job.error || 'Unknown error');
+      }
+    } catch {}
+  }, 2000);
+}
+
+function showError(msg) {
+  const banner = document.getElementById('error-banner');
+  if (banner) { banner.style.display = 'block'; banner.textContent = msg; }
+}
+
+function reltime(iso) {
+  const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+  return `${Math.floor(diff/3600)}h ago`;
+}
+
+// Auto-reload on project change
+document.getElementById('project-input').addEventListener('change', loadDocs);
+
+// Initial load
+loadDocs();
+</script>
+</body>
+</html>
