@@ -1,29 +1,32 @@
-import urllib.request
 import json
 
-text = "kexit cjplfq jnxtn gj ekexitybzv"
-data = json.dumps({
-    'text': text,
-    'force_llm': False,
-    'agent_id': 'cline'
-}).encode('utf-8')
+from api_helpers import post_json
 
-req = urllib.request.Request(
-    'http://localhost:8000/api/v1/layout/fix',
-    data=data,
-    headers={'Content-Type': 'application/json'}
-)
 
-try:
-    response = urllib.request.urlopen(req)
-    result = json.loads(response.read().decode())
-    
-    if result.get('was_fixed'):
-        print(f"Оригинал: {result['original']}")
-        print(f"Исправлено: {result['corrected']}")
-        print(f"Метод: {result['method']}")
-        print(f"Уверенность: {result['confidence']}")
+def main() -> None:
+    text = "kexit cjplfq jnxtn gj ekexitybzv"
+    payload = {
+        "text": text,
+        "force_llm": False,
+        "agent_id": "cline",
+    }
+
+    result = post_json("layout/fix", json_payload=payload, auth=True)
+
+    if "error" in result:
+        print(f"Error: {result['error']}")
+        return
+
+    if result.get("was_fixed"):
+        print("Fix applied:")
+        print(f"  Original:  {result['original']}")
+        print(f"  Corrected: {result['corrected']}")
+        print(f"  Method:    {result['method']}")
+        print(f"  Confidence:{result['confidence']}")
     else:
-        print(f"Исправление не нужно: {result['original']}")
-except Exception as e:
-    print(f"Ошибка: {e}")
+        print("No fix required.")
+        print(f"  Text: {result.get('original', text)}")
+
+
+if __name__ == "__main__":
+    main()

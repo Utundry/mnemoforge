@@ -1,12 +1,42 @@
 import time
+import os
 from fastapi import APIRouter
 
 from app.config import settings
 from app.dependencies import OllamaDep, QdrantDep
+from app.services.data_hygiene_service import get_data_hygiene_store
+from app.services.data_integrity_service import get_data_integrity_store
+from app.services.storage_trust_service import build_storage_trust_report
 
 router = APIRouter(tags=["health"])
 
 _STARTED_AT = int(time.time())
+
+
+def _parse_model_list(raw: str) -> list[str]:
+    return [item.strip() for item in (raw or "").split(",") if item.strip()]
+
+
+def _llm_status() -> dict:
+    from app.services.cloud_llm import available_cloud_models, cloud_available, cloud_provider
+
+    cloud_models = available_cloud_models()
+    default_provider = cloud_provider() if cloud_available() else "cloud-llm"
+    return {
+        "local_model": os.getenv("LOCAL_GENERATE_MODEL", settings.learning_mirror_model or "qwen3:1.7b").strip()
+        or "qwen3:1.7b",
+        "cloud_available": cloud_available(),
+        "default_cloud_provider": default_provider,
+        "configured_cloud_models": cloud_models,
+        "gateway": {
+            "local_fallback_enabled": os.getenv("LLM_GATEWAY_ENABLE_LOCAL_FALLBACK", "1").strip().lower()
+            not in {"0", "false", "no", "off"},
+            "economy_cloud_llms": _parse_model_list(os.getenv("ECONOMY_CLOUD_LLMS", "")),
+            "balanced_cloud_llms": _parse_model_list(os.getenv("BALANCED_CLOUD_LLMS", "")),
+            "reasoning_cloud_llms": _parse_model_list(os.getenv("REASONING_CLOUD_LLMS", "")),
+            "profile_count": len(cloud_models),
+        },
+    }
 
 _COMPONENTS = [
     {
@@ -110,12 +140,20 @@ _COMPONENTS = [
 async def health(qdrant: QdrantDep, ollama: OllamaDep):
     qdrant_ok = await qdrant.health()
     ollama_ok = await ollama.health()
-    status = "ok" if (qdrant_ok and ollama_ok) else "degraded"
+    integrity = get_data_integrity_store().overview()
+    data_hygiene = get_data_hygiene_store().overview()
+    storage_trust = build_storage_trust_report()
+    llm = _llm_status()
+    status = "ok" if (qdrant_ok and ollama_ok and integrity["status"] == "ok") else "degraded"
     return {
         "status": status,
         "started_at": _STARTED_AT,
         "qdrant": {"reachable": qdrant_ok},
         "ollama": {"reachable": ollama_ok},
+        "llm": llm,
+        "integrity": integrity,
+        "data_hygiene": data_hygiene,
+        "storage_trust": storage_trust,
     }
 
 
@@ -132,6 +170,10 @@ async def system_info(qdrant: QdrantDep, ollama: OllamaDep):
     """
     qdrant_ok = await qdrant.health()
     ollama_ok = await ollama.health()
+    integrity = get_data_integrity_store().overview()
+    data_hygiene = get_data_hygiene_store().overview()
+    storage_trust = build_storage_trust_report()
+    llm = _llm_status()
 
     # Live counters — best-effort, don't fail if unavailable
     memory_count = 0
@@ -184,7 +226,7 @@ async def system_info(qdrant: QdrantDep, ollama: OllamaDep):
         pass
 
     return {
-        "status": "ok" if (qdrant_ok and ollama_ok) else "degraded",
+        "status": "ok" if (qdrant_ok and ollama_ok and integrity["status"] == "ok") else "degraded",
         "started_at": _STARTED_AT,
         "uptime_seconds": int(time.time()) - _STARTED_AT,
         "infrastructure": {
@@ -192,12 +234,16 @@ async def system_info(qdrant: QdrantDep, ollama: OllamaDep):
             "ollama": {"reachable": ollama_ok, "url": settings.ollama_base_url, "models": ollama_models},
             "embedding_model": settings.ollama_embedding_model,
             "embedding_dimensions": settings.embedding_dimensions,
+            "llm": llm,
         },
         "counters": {
             "memories": memory_count,
             "skills": skill_count,
             "layout_terms": layout_terms_count,
         },
+        "integrity": integrity,
+        "data_hygiene": data_hygiene,
+        "storage_trust": storage_trust,
         "components": _COMPONENTS,
         "api_prefix": settings.api_prefix,
     }

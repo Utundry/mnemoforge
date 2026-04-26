@@ -1,14 +1,31 @@
 services:
   qdrant:
-    image: qdrant/qdrant:v1.12.1
+    image: qdrant/qdrant:v1.17-gpu-nvidia
     ports:
       - "6333:6333"
       - "6334:6334"
     volumes:
       - ./qdrant_data:/qdrant/storage
+    environment:
+      QDRANT_LOG_LEVEL: trace
+      RUST_BACKTRACE: full
     restart: unless-stopped
 
   memory-server:
+    build: .
+    ports:
+      - "8001:8000"
+    depends_on:
+      - qdrant
+    env_file: .env
+    environment:
+      QDRANT_HOST: qdrant
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  memory-server-dev:
     build: .
     ports:
       - "8000:8000"
@@ -20,4 +37,61 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./qdrant_data:/app/qdrant_data
+      - ./app:/app/app
+      - ./static:/app/static
+      - ./mcp:/app/mcp
+      - ./cli:/app/cli
+      - ./scripts:/app/scripts
     restart: unless-stopped
+
+  qdrant-test:
+    image: qdrant/qdrant:v1.17.0
+    profiles: ["test"]
+    environment:
+      QDRANT_LOG_LEVEL: warn
+    tmpfs:
+      - /qdrant/storage
+
+  memory-server-test:
+    build: .
+    profiles: ["test"]
+    depends_on:
+      - qdrant-test
+    ports:
+      - "8010:8000"
+    environment:
+      API_KEY: test-api-key
+      SELF_PROJECT_ID: supermemory-test
+      QDRANT_HOST: qdrant-test
+      QDRANT_PORT: 6333
+      QDRANT_COLLECTION_NAME: agent_memories_test
+      QDRANT_LEARNING_COLLECTION_NAME: learning_artifacts_test
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      DISABLED_MODULES: watcher,layout_fixer,openai_compat
+      WATCHER_AUTO_START: "false"
+      AUTO_REBUILD_SELF_PROJECT_DOCS: "0"
+      AUTO_BOOTSTRAP_SELF_PROJECT_LAWS: "0"
+      DATA_HYGIENE_AUDIT_MINUTES: "0"
+      DATA_HYGIENE_AUTO_TEST_CLEANUP: "0"
+      GLM_MIRROR_INTERVAL_HOURS: "0"
+      CLOUD_LLM_PROVIDER: ""
+      CLOUD_LLM_API_KEY: ""
+      GLM_API_KEY: ""
+      GEMINI_API_KEY: ""
+      DEEPSEEK_API_KEY: ""
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    tmpfs:
+      - /app/qdrant_data
+
+  mcp-e2e-test-runner:
+    build: .
+    profiles: ["test"]
+    depends_on:
+      - memory-server-test
+    environment:
+      SUPERMEMORY_SERVER_URL: http://memory-server-test:8000
+      API_KEY: test-api-key
+    command: ["python", "scripts/docker_remote_mcp_e2e.py"]

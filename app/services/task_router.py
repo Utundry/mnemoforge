@@ -12,6 +12,7 @@ Caller records the outcome via Performance Tracker.
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Optional
@@ -51,6 +52,20 @@ Task: {task}
 Return one of the task types above, exactly as written.
 """
 
+_HEURISTIC_RULES: list[tuple[str, tuple[str, ...]]] = [
+    ("code_review", ("review", "bug", "regression", "risk", "audit", "inspect", "findings")),
+    ("architecture", ("architecture", "design", "tradeoff", "roadmap", "strategy", "decompose", "benchmark")),
+    ("code_generation", ("implement", "fix", "patch", "endpoint", "router", "mcp", "server", "api", "write scope", ".py", ".ts", ".js")),
+    ("text_summarization", ("summarize", "summary", "short description", "overview")),
+    ("fact_extraction", ("extract facts", "extract fact", "facts from", "memories from")),
+    ("query_expansion", ("expand query", "reformulate query", "query expansion")),
+    ("relevance_scoring", ("relevance", "rank documents", "score relevance")),
+    ("memory_extraction", ("jsonl", "structured memories", "conversation memories")),
+    ("skill_tagging", ("skill tags", "tag skill", "domain tags")),
+    ("log_filter", ("log", "traceback", "stacktrace", "error lines")),
+    ("layout_fix", ("keyboard layout", "translit", "ru/en")),
+]
+
 
 @dataclass
 class RoutingDecision:
@@ -79,6 +94,18 @@ async def _llm_classify(task: str) -> str:
         return text.lower().split()[0] if text else "text_summarization"
 
 
+def _heuristic_classify(task: str) -> str | None:
+    text = str(task or "").strip().lower()
+    if not text:
+        return None
+
+    for task_type, markers in _HEURISTIC_RULES:
+        if any(marker in text for marker in markers):
+            return task_type
+
+    return None
+
+
 def _pick_cloud_model(task_type: str, cloud_entries: list) -> tuple[str, float, list]:
     """
     Use ModelRegistry to pick best available cloud model for task_type.
@@ -99,10 +126,45 @@ def _pick_cloud_model(task_type: str, cloud_entries: list) -> tuple[str, float, 
     return "cloud-llm", score, []
 
 
+def _configured_local_components() -> set[str]:
+    local_components = {
+        MANAGER_MODEL,
+        str(settings.learning_mirror_model or "").strip(),
+        str(os.getenv("LOCAL_GENERATE_MODEL", "")).strip(),
+        "qwen3:1.7b",
+    }
+    return {component for component in local_components if component}
+
+
+def _configured_cloud_components(task_type: str) -> set[str]:
+    try:
+        from app.services.model_registry import get_model_registry
+
+        return {model_id for model_id, _score in get_model_registry().rank_for_task(task_type)}
+    except Exception as e:
+        logger.debug("ModelRegistry unavailable while filtering cloud candidates: %s", e)
+        return set()
+
+
+def _filter_live_ranked_components(task_type: str, ranked: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    local_components = _configured_local_components()
+    cloud_components = _configured_cloud_components(task_type)
+    filtered: list[tuple[str, float]] = []
+
+    for component, score in ranked:
+        if component.startswith("skill:") or component == "cloud-llm":
+            filtered.append((component, score))
+            continue
+        if component in local_components or component in cloud_components:
+            filtered.append((component, score))
+
+    return filtered
+
+
 def _route(task_type: str, preferred_tier: Optional[str] = None) -> RoutingDecision:
     """Apply routing policy to select best component for a task type."""
     reg = get_registry()
-    ranked = reg.best_for(task_type)
+    ranked = _filter_live_ranked_components(task_type, reg.best_for(task_type))
 
     if not ranked:
         return RoutingDecision(
@@ -177,14 +239,19 @@ async def decide(
 ) -> RoutingDecision:
     """Classify task and return routing decision."""
     if not task_type:
-        try:
-            task_type = await _llm_classify(task)
-            # Validate
-            known = get_registry().task_types()
-            if task_type not in known:
-                task_type = "text_summarization"  # safe fallback
-        except Exception as e:
-            logger.warning("Task classification failed: %s", e)
-            task_type = "text_summarization"
+        heuristic_type = _heuristic_classify(task)
+        if heuristic_type:
+            task_type = heuristic_type
+        else:
+            try:
+                task_type = await _llm_classify(task)
+                # Validate
+                known = get_registry().task_types()
+                if task_type not in known:
+                    task_type = "text_summarization"  # safe fallback
+            except Exception as e:
+                fallback_type = _heuristic_classify(task) or "text_summarization"
+                logger.warning("Task classification failed; fallback=%s error=%s", fallback_type, e)
+                task_type = fallback_type
 
     return _route(task_type, preferred_tier=preferred_tier)

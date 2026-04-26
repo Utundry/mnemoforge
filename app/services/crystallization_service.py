@@ -18,6 +18,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.services.governed_artifact import (
+    apply_candidate_fields,
+    build_candidate_revision,
+    clear_prefixed_candidate_patch,
+    extract_prefixed_candidate,
+    prefixed_candidate_patch,
+)
+from app.services.data_hygiene_service import memory_payload_should_be_excluded_from_learning
 from app.services.project_tree_store import get_tree_store
 from app.services.qdrant_service import _point_to_record
 
@@ -39,6 +47,17 @@ CANONICAL_MERGE_THRESHOLD = float(os.getenv("CRYSTAL_MERGE_SIMILARITY", "0.88"))
 CANONICAL_SUPPRESS_THRESHOLD = float(os.getenv("CRYSTAL_SUPPRESS_CONFIDENCE", "0.45"))
 
 _SKIP_CATEGORIES = {"improvement", "skill", "handoff", "event", "status", "incident"}
+CANONICAL_CANDIDATE_FIELDS = (
+    "content",
+    "topic_path",
+    "supports",
+    "support_count",
+    "confidence",
+    "source_scope",
+    "observation",
+    "why_it_matters",
+    "updated_at",
+)
 
 
 @dataclass
@@ -138,9 +157,9 @@ def _min_supports_for_scope(scope: str) -> int:
     if scope == "domain":
         return MIN_SUPPORTS_FOR_DOMAIN
     if scope == "principle":
-        return MIN_DOMAINS_FOR_PRINCIPLE
+        return MIN_SUPPORTS_FOR_PRINCIPLE
     if scope == "meta":
-        return MIN_PRINCIPLES_FOR_META
+        return MIN_SUPPORTS_FOR_META
     return 1
 
 
@@ -270,6 +289,67 @@ def _canonical_tags(topic_path: str, scope: str) -> list[str]:
     return _unique_preserve_order([f"topic:{topic_path}", f"scope:{scope}", "canonical"])
 
 
+def _candidate_revision_payload(
+    candidate: CrystallizationCandidate,
+    *,
+    supports: list[str],
+    now_iso: str,
+) -> dict[str, Any]:
+    return build_candidate_revision(
+        base={},
+        updates={
+            "content": candidate.statement,
+            "topic_path": candidate.topic_path,
+            "supports": _unique_preserve_order(supports),
+            "support_count": len(_unique_preserve_order(supports)),
+            "confidence": candidate.confidence,
+            "source_scope": candidate.source_scope,
+            "observation": candidate.observation,
+            "why_it_matters": candidate.why_it_matters,
+            "updated_at": now_iso,
+        },
+        fields=CANONICAL_CANDIDATE_FIELDS,
+        proposed_at=now_iso,
+        proposed_at_field="updated_at",
+    )
+
+
+def _extract_candidate_revision(payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+    candidate = extract_prefixed_candidate(
+        payload,
+        fields=CANONICAL_CANDIDATE_FIELDS,
+        required_field="content",
+        defaults={
+            "topic_path": payload.get("topic_path", ""),
+            "supports": list(payload.get("supports") or []),
+            "support_count": int(payload.get("support_count") or 0),
+            "confidence": float(payload.get("confidence") or 0.0),
+            "source_scope": payload.get("source_scope", ""),
+            "observation": payload.get("observation", ""),
+            "why_it_matters": payload.get("why_it_matters", ""),
+            "updated_at": payload.get("updated_at", ""),
+        },
+    )
+    if candidate is None:
+        return None
+    candidate["supports"] = list(candidate.get("supports") or [])
+    candidate["support_count"] = int(candidate.get("support_count") or 0)
+    candidate["confidence"] = float(candidate.get("confidence") or 0.0)
+    candidate["status"] = "proposed"
+    return candidate
+
+
+def _candidate_revision_patch(candidate_payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **prefixed_candidate_patch(candidate_payload, fields=CANONICAL_CANDIDATE_FIELDS),
+        "status_reason": "Candidate canonical revision pending review",
+    }
+
+
+def _clear_candidate_revision_patch() -> dict[str, Any]:
+    return clear_prefixed_candidate_patch(fields=CANONICAL_CANDIDATE_FIELDS)
+
+
 async def _scroll_points(
     qdrant_client,
     collection: str,
@@ -304,6 +384,8 @@ async def _scroll_points(
             if not payload.get("topic_path"):
                 continue
             if payload.get("category", "general") in _SKIP_CATEGORIES:
+                continue
+            if memory_payload_should_be_excluded_from_learning(payload):
                 continue
             if not include_suppressed and payload.get("suppressed"):
                 continue
@@ -489,13 +571,25 @@ async def reconcile_canonical_lifecycle(qdrant_client, collection: str) -> dict[
         if payload.get("merged_into"):
             continue
 
+        last_review_action = str(payload.get("last_review_action") or "").strip()
+        manual_override_active = {"reactivate", "merge_target", "apply_candidate"}
+        manual_override_suppressed = {"suppress", "merge_source"}
+        if last_review_action in manual_override_active:
+            next_status = "active"
+            should_suppress = False
+        elif last_review_action in manual_override_suppressed:
+            next_status = "merged" if last_review_action == "merge_source" else "suppressed"
+            should_suppress = True
+        else:
+            support_count = len(payload.get("supports") or [])
+            confidence = float(payload.get("confidence", 0.0))
+            should_suppress = (
+                confidence < CANONICAL_SUPPRESS_THRESHOLD
+                or support_count < _min_supports_for_scope(scope)
+            )
+            next_status = "suppressed" if should_suppress else "active"
+
         support_count = len(payload.get("supports") or [])
-        confidence = float(payload.get("confidence", 0.0))
-        should_suppress = (
-            confidence < CANONICAL_SUPPRESS_THRESHOLD
-            or support_count < _min_supports_for_scope(scope)
-        )
-        next_status = "suppressed" if should_suppress else "active"
         current_status = payload.get("canonical_status") or ("suppressed" if payload.get("suppressed") else "active")
         current_suppressed = bool(payload.get("suppressed", False))
         if current_status != next_status or current_suppressed != should_suppress:
@@ -511,7 +605,10 @@ async def reconcile_canonical_lifecycle(qdrant_client, collection: str) -> dict[
                 points=[str(point.id)],
             )
             summary["updated"] += 1
-        summary[next_status] += 1
+        if next_status == "merged":
+            summary["suppressed"] += 1
+        else:
+            summary[next_status] += 1
     return summary
 
 
@@ -605,27 +702,19 @@ async def apply_crystallization(
     if compatible_matches:
         winner = compatible_matches[0]
         winner_id = str(winner.id)
-        patch = _merge_payload(winner.payload or {}, candidate, now_iso)
+        winner_payload = winner.payload or {}
+        base_supports = list((winner_payload.get("candidate_supports") or winner_payload.get("supports") or []))
+        candidate_payload = _candidate_revision_payload(
+            candidate,
+            supports=base_supports + list(candidate.supports),
+            now_iso=now_iso,
+        )
+        patch = _candidate_revision_patch(candidate_payload)
         await qdrant_client.set_payload(
             collection_name=collection,
             payload=patch,
             points=[winner_id],
         )
-        await qdrant_client.update_vectors(
-            collection_name=collection,
-            points=[qmodels.PointVectors(id=winner_id, vector=vector)],
-        )
-        for duplicate in compatible_matches[1:]:
-            await qdrant_client.set_payload(
-                collection_name=collection,
-                payload={
-                    "suppressed": True,
-                    "canonical_status": "merged",
-                    "merged_into": winner_id,
-                    "merged_at": now_iso,
-                },
-                points=[str(duplicate.id)],
-            )
         canonical_id = winner_id
     else:
         canonical_id = str(uuid4())
@@ -659,21 +748,23 @@ async def apply_crystallization(
             "source_scope": candidate.source_scope,
             "observation": candidate.observation,
             "why_it_matters": candidate.why_it_matters,
+            **_clear_candidate_revision_patch(),
         }
         await qdrant_client.upsert(
             collection_name=collection,
             points=[qmodels.PointStruct(id=canonical_id, vector=vector, payload=payload)],
         )
 
-    for support_id in _unique_preserve_order(candidate.supports):
-        try:
-            await qdrant_client.set_payload(
-                collection_name=collection,
-                payload={"canonical_id": canonical_id},
-                points=[support_id],
-            )
-        except Exception as exc:
-            logger.debug("Failed to back-link support %s: %s", support_id, exc)
+    if not compatible_matches:
+        for support_id in _unique_preserve_order(candidate.supports):
+            try:
+                await qdrant_client.set_payload(
+                    collection_name=collection,
+                    payload={"canonical_id": canonical_id},
+                    points=[support_id],
+                )
+            except Exception as exc:
+                logger.debug("Failed to back-link support %s: %s", support_id, exc)
 
     await _sync_canonical_to_tree(candidate.topic_path, canonical_id)
     await reconcile_canonical_lifecycle(qdrant_client, collection)
@@ -725,6 +816,12 @@ async def list_canonicals(
                 "suppressed": bool(payload.get("suppressed", False)),
                 "canonical_status": payload.get("canonical_status") or "active",
                 "merged_into": payload.get("merged_into"),
+                "candidate_revision": _extract_candidate_revision(payload),
+                "last_review_action": payload.get("last_review_action"),
+                "last_reviewed_by": payload.get("last_reviewed_by"),
+                "last_review_source": payload.get("last_review_source"),
+                "last_reviewed_at": payload.get("last_reviewed_at"),
+                "last_review_reason": payload.get("last_review_reason"),
                 "project": record.project,
                 "timestamp": record.timestamp.isoformat(),
             }
@@ -738,6 +835,51 @@ async def list_canonicals(
         )
     )
     return items[:limit]
+
+
+def _canonical_item_from_point(point: Any) -> dict[str, Any]:
+    payload = point.payload or {}
+    record = _point_to_record(point)
+    return {
+        "id": str(record.id),
+        "topic_path": record.topic_path or "",
+        "scope": record.scope,
+        "content": record.content,
+        "supports": record.supports,
+        "support_count": len(record.supports),
+        "confidence": float(payload.get("confidence", 0.0)),
+        "suppressed": bool(payload.get("suppressed", False)),
+        "canonical_status": payload.get("canonical_status") or "active",
+        "merged_into": payload.get("merged_into"),
+        "candidate_revision": _extract_candidate_revision(payload),
+        "last_review_action": payload.get("last_review_action"),
+        "last_reviewed_by": payload.get("last_reviewed_by"),
+        "last_review_source": payload.get("last_review_source"),
+        "last_reviewed_at": payload.get("last_reviewed_at"),
+        "last_review_reason": payload.get("last_review_reason"),
+        "project": record.project,
+        "timestamp": record.timestamp.isoformat(),
+    }
+
+
+async def get_canonical(
+    qdrant_client,
+    collection: str,
+    *,
+    canonical_id: str,
+) -> dict[str, Any]:
+    results = await qdrant_client.retrieve(
+        collection_name=collection,
+        ids=[canonical_id],
+        with_payload=True,
+        with_vectors=False,
+    )
+    if not results:
+        raise ValueError("Canonical not found")
+    payload = results[0].payload or {}
+    if payload.get("scope") not in CANONICAL_SCOPES:
+        raise ValueError("Memory is not a canonical")
+    return _canonical_item_from_point(results[0])
 
 
 async def get_knowledge_hierarchy(
@@ -787,6 +929,8 @@ async def set_canonical_status(
     canonical_id: str,
     suppressed: bool,
     reason: Optional[str] = None,
+    reviewed_by: str = "user",
+    review_source: str = "inline_user_approval",
 ) -> dict[str, Any]:
     results = await qdrant_client.retrieve(
         collection_name=collection,
@@ -808,6 +952,11 @@ async def set_canonical_status(
         "status_reason": reason,
         "suppressed_at": now_iso if suppressed else None,
         "reactivated_at": None if suppressed else now_iso,
+        "last_review_action": "suppress" if suppressed else "reactivate",
+        "last_reviewed_by": reviewed_by,
+        "last_review_source": review_source,
+        "last_reviewed_at": now_iso,
+        "last_review_reason": reason or None,
     }
     await qdrant_client.set_payload(
         collection_name=collection,
@@ -820,6 +969,11 @@ async def set_canonical_status(
         "suppressed": suppressed,
         "canonical_status": next_status,
         "reason": reason,
+        "last_review_action": patch["last_review_action"],
+        "last_reviewed_by": reviewed_by,
+        "last_review_source": review_source,
+        "last_reviewed_at": now_iso,
+        "last_review_reason": reason or None,
     }
 
 
@@ -829,6 +983,9 @@ async def merge_canonicals(
     *,
     source_id: str,
     target_id: str,
+    reviewed_by: str = "user",
+    review_source: str = "inline_user_approval",
+    reason: Optional[str] = None,
 ) -> dict[str, Any]:
     if source_id == target_id:
         raise ValueError("Source and target cannot be the same")
@@ -849,6 +1006,8 @@ async def merge_canonicals(
         raise ValueError("Both memories must be canonicals")
     if source_payload.get("scope") != target_payload.get("scope"):
         raise ValueError("Canonicals must have the same scope to merge")
+    if source_payload.get("candidate_content") or target_payload.get("candidate_content"):
+        raise ValueError("Resolve pending canonical candidate revisions before merge")
 
     now_iso = datetime.now(timezone.utc).isoformat()
     source_topic = source_payload.get("topic_path", "") or ""
@@ -860,6 +1019,7 @@ async def merge_canonicals(
     merged_confidence = max(float(target_payload.get("confidence", 0.0)), float(source_payload.get("confidence", 0.0)))
     chosen_content = target_payload.get("content", "") or source_payload.get("content", "")
 
+    now_iso = datetime.now(timezone.utc).isoformat()
     await qdrant_client.set_payload(
         collection_name=collection,
         payload={
@@ -873,6 +1033,11 @@ async def merge_canonicals(
             "merged_into": None,
             "updated_at": now_iso,
             "tags": _canonical_tags(merged_topic, target_payload.get("scope", "domain")),
+            "last_review_action": "merge_target",
+            "last_reviewed_by": reviewed_by,
+            "last_review_source": review_source,
+            "last_reviewed_at": now_iso,
+            "last_review_reason": reason or None,
         },
         points=[target_id],
     )
@@ -883,6 +1048,11 @@ async def merge_canonicals(
             "canonical_status": "merged",
             "merged_into": target_id,
             "merged_at": now_iso,
+            "last_review_action": "merge_source",
+            "last_reviewed_by": reviewed_by,
+            "last_review_source": review_source,
+            "last_reviewed_at": now_iso,
+            "last_review_reason": reason or None,
         },
         points=[source_id],
     )
@@ -904,4 +1074,133 @@ async def merge_canonicals(
         "target_id": target_id,
         "merged_support_count": len(merged_supports),
         "topic_path": merged_topic,
+        "last_review_action": "merge",
+        "last_reviewed_by": reviewed_by,
+        "last_review_source": review_source,
+        "last_reviewed_at": now_iso,
+        "last_review_reason": reason or None,
     }
+
+
+async def apply_canonical_candidate(
+    qdrant_client,
+    collection: str,
+    *,
+    canonical_id: str,
+    ollama_svc,
+    reviewed_by: str = "user",
+    review_source: str = "inline_user_approval",
+    reason: Optional[str] = None,
+) -> dict[str, Any]:
+    from qdrant_client.http import models as qmodels
+
+    results = await qdrant_client.retrieve(
+        collection_name=collection,
+        ids=[canonical_id],
+        with_payload=True,
+        with_vectors=False,
+    )
+    if not results:
+        raise ValueError("Canonical not found")
+    payload = results[0].payload or {}
+    if payload.get("scope") not in CANONICAL_SCOPES:
+        raise ValueError("Memory is not a canonical")
+    candidate = _extract_candidate_revision(payload)
+    if not candidate:
+        raise ValueError("No candidate revision for canonical")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    applied = apply_candidate_fields(
+        effective={
+            "content": payload.get("content", ""),
+            "topic_path": payload.get("topic_path", ""),
+            "supports": list(payload.get("supports") or []),
+            "support_count": int(payload.get("support_count") or len(payload.get("supports") or [])),
+            "confidence": float(payload.get("confidence") or 0.0),
+            "source_scope": payload.get("source_scope", ""),
+            "observation": payload.get("observation", ""),
+            "why_it_matters": payload.get("why_it_matters", ""),
+            "updated_at": payload.get("updated_at", ""),
+        },
+        candidate=candidate,
+        fields=CANONICAL_CANDIDATE_FIELDS,
+    )
+    supports = _unique_preserve_order(list(applied.get("supports") or []))
+    content = str(applied.get("content") or "")
+    topic_path = str(applied.get("topic_path") or "")
+    scope = payload.get("scope", "domain")
+    patch = {
+        "content": content,
+        "supports": supports,
+        "support_count": len(supports),
+        "confidence": float(applied.get("confidence") or payload.get("confidence", 0.0)),
+        "topic_path": topic_path,
+        "source_scope": applied.get("source_scope") or payload.get("source_scope", ""),
+        "observation": applied.get("observation") or payload.get("observation", ""),
+        "why_it_matters": applied.get("why_it_matters") or payload.get("why_it_matters", ""),
+        "updated_at": now_iso,
+        "tags": _canonical_tags(topic_path, scope),
+        "canonical_status": "active",
+        "suppressed": False,
+        "status_reason": reason or "Candidate revision applied",
+        "last_review_action": "apply_candidate",
+        "last_reviewed_by": reviewed_by,
+        "last_review_source": review_source,
+        "last_reviewed_at": now_iso,
+        "last_review_reason": reason or None,
+        **_clear_candidate_revision_patch(),
+    }
+    vector = await ollama_svc.embed(content)
+    await qdrant_client.set_payload(collection_name=collection, payload=patch, points=[canonical_id])
+    await qdrant_client.update_vectors(
+        collection_name=collection,
+        points=[qmodels.PointVectors(id=canonical_id, vector=vector)],
+    )
+    for support_id in supports:
+        try:
+            await qdrant_client.set_payload(
+                collection_name=collection,
+                payload={"canonical_id": canonical_id},
+                points=[support_id],
+            )
+        except Exception as exc:
+            logger.debug("Failed to relink support %s after candidate apply: %s", support_id, exc)
+    await _sync_canonical_to_tree(topic_path, canonical_id)
+    await reconcile_canonical_lifecycle(qdrant_client, collection)
+    return await get_canonical(qdrant_client, collection, canonical_id=canonical_id)
+
+
+async def discard_canonical_candidate(
+    qdrant_client,
+    collection: str,
+    *,
+    canonical_id: str,
+    reviewed_by: str = "user",
+    review_source: str = "inline_user_approval",
+    reason: Optional[str] = None,
+) -> dict[str, Any]:
+    results = await qdrant_client.retrieve(
+        collection_name=collection,
+        ids=[canonical_id],
+        with_payload=True,
+        with_vectors=False,
+    )
+    if not results:
+        raise ValueError("Canonical not found")
+    payload = results[0].payload or {}
+    if payload.get("scope") not in CANONICAL_SCOPES:
+        raise ValueError("Memory is not a canonical")
+    if not payload.get("candidate_content"):
+        raise ValueError("No candidate revision for canonical")
+
+    patch = {
+        **_clear_candidate_revision_patch(),
+        "last_review_action": "discard_candidate",
+        "last_reviewed_by": reviewed_by,
+        "last_review_source": review_source,
+        "last_reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "last_review_reason": reason or None,
+        "status_reason": reason or "Candidate revision discarded",
+    }
+    await qdrant_client.set_payload(collection_name=collection, payload=patch, points=[canonical_id])
+    return await get_canonical(qdrant_client, collection, canonical_id=canonical_id)

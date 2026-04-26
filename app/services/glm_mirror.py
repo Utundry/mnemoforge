@@ -1,5 +1,6 @@
 """
-GLM Mirror — background job that analyzes learning events and generates candidate artifacts.
+Model Mirror — background job that analyzes dialogue-derived learning events
+and generates candidate artifacts.
 
 Design (human-in-the-loop):
   - Reads recent events from learning.db
@@ -8,12 +9,16 @@ Design (human-in-the-loop):
   - Validates output (action_type whitelist + trigger DSL)
   - Calls upsert_candidate() — dedup-safe, never direct inserts
   - Records an llm_mirror event for auditability
-  - GLM produces ONLY candidates (scope=candidate, status=pending_review)
+  - Produces ONLY candidates (scope=candidate, status=pending_review)
   - Human approves/rejects/defers via GET /learning/report
 
 Run modes:
-  - Periodic: asyncio background loop (interval configurable via GLM_MIRROR_INTERVAL_HOURS env)
+  - Periodic: asyncio background loop (interval configurable via MODEL_MIRROR_INTERVAL_HOURS env)
   - Manual:   POST /learning/mirror/run
+
+Legacy note:
+  This module keeps the historical glm_mirror name as a compatibility shim.
+  The canonical naming in new code is ModelMirror / get_model_mirror.
 """
 from __future__ import annotations
 
@@ -27,23 +32,55 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+
+def _env_float(*names: str, default: str) -> float:
+    for name in names:
+        value = os.getenv(name)
+        if value not in (None, ""):
+            return float(value)
+    return float(default)
+
+
+def _env_str(*names: str, default: str) -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value not in (None, ""):
+            return value
+    return default
+
 # How many candidates GLM proposes per run (matches UX principle: 2-3 max)
 _MAX_CANDIDATES_PER_RUN = 3
 
 # Analyse events from the last N hours
-_LOOKBACK_HOURS = float(os.getenv("GLM_MIRROR_LOOKBACK_HOURS", "24"))
+MODEL_MIRROR_LOOKBACK_HOURS = _env_float(
+    "MODEL_MIRROR_LOOKBACK_HOURS",
+    "GLM_MIRROR_LOOKBACK_HOURS",
+    default="24",
+)
 
 # Minimum frequency for a pattern to be eligible (avoid noise)
 _MIN_PATTERN_FREQ = 3
 
 # Periodic interval (hours)
-GLM_MIRROR_INTERVAL_HOURS = float(os.getenv("GLM_MIRROR_INTERVAL_HOURS", "0.1667"))  # default 10min
+MODEL_MIRROR_INTERVAL_HOURS = _env_float(
+    "MODEL_MIRROR_INTERVAL_HOURS",
+    "GLM_MIRROR_INTERVAL_HOURS",
+    default="0.1667",
+)  # default 10min
 
 # Generation model (must support text generation, NOT embedding-only models)
-GLM_GENERATE_MODEL = os.getenv("GLM_GENERATE_MODEL", "qwen3:1.7b")
+MODEL_MIRROR_GENERATE_MODEL = _env_str(
+    "MODEL_MIRROR_MODEL",
+    "GLM_GENERATE_MODEL",
+    default="qwen3:1.7b",
+)
 
 # Language for candidate descriptions (observation / why_it_matters / proposed_content)
-GLM_RESPONSE_LANGUAGE = os.getenv("GLM_RESPONSE_LANGUAGE", "Russian")
+MODEL_MIRROR_RESPONSE_LANGUAGE = _env_str(
+    "MODEL_MIRROR_RESPONSE_LANGUAGE",
+    "GLM_RESPONSE_LANGUAGE",
+    default="Russian",
+)
 
 # Allowed action_types and artifact_types (mirrors trigger_dsl whitelists)
 from app.services.trigger_dsl import (
@@ -51,10 +88,12 @@ from app.services.trigger_dsl import (
     validate_if_then_rule,
     validate_trigger,
 )
+from app.services.data_hygiene_service import learning_event_should_be_excluded_from_learning
 from app.services.text_localization import prepare_artifact_texts
 
 _DIALOGUE_PRIMARY_EVENT_TYPES = frozenset({"dialogue_signal", "dialogue_excerpt"})
 _DIALOGUE_SUPPORT_EVENT_TYPES = frozenset({"user_request", "user_feedback"})
+_LEARNING_CONTEXT_EVENT_TYPES = _DIALOGUE_PRIMARY_EVENT_TYPES | _DIALOGUE_SUPPORT_EVENT_TYPES
 
 _CANDIDATE_SCHEMA = {
     "action_type":      str,
@@ -75,7 +114,7 @@ _ALLOWED_RISK_LEVELS = {"low", "medium"}  # never high in GLM candidates
 # ── Result ─────────────────────────────────────────────────────────────────────
 
 @dataclass
-class GlmMirrorResult:
+class ModelMirrorResult:
     candidates_created: int = 0
     candidates_updated: int = 0   # evidence_count incremented on existing candidate
     events_analyzed: int = 0
@@ -106,7 +145,7 @@ def _summarize_events(events: list[dict]) -> str:
     Groups by (context_signature, event_type) with payload detail for
     user_request (request_type) and tool_call (tool_name).
     """
-    if any(ev.get("event_type") in _DIALOGUE_PRIMARY_EVENT_TYPES for ev in events):
+    if any(ev.get("event_type") in _LEARNING_CONTEXT_EVENT_TYPES for ev in events):
         return _summarize_dialogue_events(events)
 
     from collections import defaultdict
@@ -214,7 +253,10 @@ def _select_events_for_analysis(events: list[dict]) -> tuple[list[dict], str]:
         supporting = [e for e in events if e.get("event_type") in _DIALOGUE_SUPPORT_EVENT_TYPES]
         selected = sorted(dialogue_events + supporting, key=lambda x: float(x.get("ts") or 0))
         return selected[-120:], "dialogue"
-    return events, "telemetry"
+    supporting = [e for e in events if e.get("event_type") in _DIALOGUE_SUPPORT_EVENT_TYPES]
+    if supporting:
+        return sorted(supporting, key=lambda x: float(x.get("ts") or 0))[-120:], "user_context"
+    return [], "insufficient_context"
 
 
 def _summarize_active_artifacts(artifacts: list[dict]) -> str:
@@ -358,12 +400,12 @@ def _validate_candidate(raw: dict) -> list[str]:
 
 # ── Main service ───────────────────────────────────────────────────────────────
 
-class GlmMirror:
+class ModelMirror:
     def __init__(self) -> None:
-        self._last_result: Optional[GlmMirrorResult] = None
+        self._last_result: Optional[ModelMirrorResult] = None
         self.next_run_at: Optional[float] = None
 
-    async def run(self, ollama, learning_store) -> GlmMirrorResult:
+    async def run(self, ollama, learning_store) -> ModelMirrorResult:
         """
         Full GLM mirror cycle:
           1. Collect recent events
@@ -373,25 +415,37 @@ class GlmMirror:
           5. upsert_candidate() (dedup-safe)
           6. Record llm_mirror event
         """
-        result = GlmMirrorResult(ran_at=time.time())
+        result = ModelMirrorResult(ran_at=time.time())
 
         try:
-            since_ts = time.time() - _LOOKBACK_HOURS * 3600
+            since_ts = time.time() - MODEL_MIRROR_LOOKBACK_HOURS * 3600
             events_all = await learning_store.list_events(since_ts=since_ts, limit=500)
 
             # Learn only from canonical, trigger-safe event types (see trigger_dsl whitelists).
             # This avoids self-referential loops dominated by llm_mirror / approvals / admin events.
             from app.services.trigger_dsl import ALLOWED_EVENT_TYPES
-            events = [e for e in (events_all or []) if (e.get("event_type") in ALLOWED_EVENT_TYPES)]
+            events = [
+                e for e in (events_all or [])
+                if (e.get("event_type") in ALLOWED_EVENT_TYPES)
+                and not learning_event_should_be_excluded_from_learning(e)
+            ]
             events, analysis_source = _select_events_for_analysis(events)
             result.events_analyzed = len(events)
 
             if not events:
-                logger.info("GLM mirror: no events in last %.0fh — skipping", _LOOKBACK_HOURS)
+                if events_all:
+                    result.warnings.append("insufficient_dialogue_evidence")
+                    logger.info(
+                        "Model mirror: skipped due to insufficient dialogue evidence in last %.0fh",
+                        MODEL_MIRROR_LOOKBACK_HOURS,
+                    )
+                else:
+                    logger.info(
+                        "Model mirror: no events in last %.0fh — skipping",
+                        MODEL_MIRROR_LOOKBACK_HOURS,
+                    )
                 self._last_result = result
                 return result
-            if analysis_source == "telemetry":
-                result.warnings.append("dialogue_evidence_absent_fallback_to_telemetry")
 
             # Count patterns
             from collections import Counter
@@ -403,7 +457,7 @@ class GlmMirror:
             result.patterns_found = len(eligible)
 
             if not eligible:
-                logger.info("GLM mirror: no patterns with freq >= %d — skipping", _MIN_PATTERN_FREQ)
+                logger.info("Model mirror: no patterns with freq >= %d — skipping", _MIN_PATTERN_FREQ)
                 self._last_result = result
                 return result
 
@@ -416,17 +470,17 @@ class GlmMirror:
             prompt = _PROMPT_TEMPLATE.format(
                 max_candidates=_MAX_CANDIDATES_PER_RUN,
                 allowed_actions=", ".join(sorted(ALLOWED_ACTION_TYPES)),
-                lookback_h=_LOOKBACK_HOURS,
+                lookback_h=MODEL_MIRROR_LOOKBACK_HOURS,
                 event_summary=event_summary,
                 active_summary=active_summary,
                 min_freq=_MIN_PATTERN_FREQ,
-                language=GLM_RESPONSE_LANGUAGE,
+                language=MODEL_MIRROR_RESPONSE_LANGUAGE,
             )
 
             # Call LLM
-            logger.info("GLM mirror: calling LLM (source=%s, events=%d, patterns=%d)",
+            logger.info("Model mirror: calling LLM (source=%s, events=%d, patterns=%d)",
                         analysis_source, result.events_analyzed, result.patterns_found)
-            raw_response = await ollama.generate(prompt, model=GLM_GENERATE_MODEL)
+            raw_response = await ollama.generate(prompt, model=MODEL_MIRROR_GENERATE_MODEL)
 
             if not raw_response:
                 result.errors.append("LLM returned empty response")
@@ -467,7 +521,7 @@ class GlmMirror:
                 errors = _validate_candidate(raw)
 
                 if errors:
-                    logger.warning("GLM mirror: candidate rejected (%s): %s", errors, raw)
+                    logger.warning("Model mirror: candidate rejected (%s): %s", errors, raw)
                     result.errors.extend(errors)
                     result.skipped_validation += 1
                     continue
@@ -503,51 +557,41 @@ class GlmMirror:
                 )
                 if created:
                     result.candidates_created += 1
-                    logger.info("GLM mirror: new candidate %s (action=%s)", artifact_id, action_type)
+                    logger.info("Model mirror: new candidate %s (action=%s)", artifact_id, action_type)
                 else:
                     result.candidates_updated += 1
-                    logger.info("GLM mirror: evidence++ on %s (action=%s)", artifact_id, action_type)
+                    logger.info("Model mirror: evidence++ on %s (action=%s)", artifact_id, action_type)
 
-                # Auto-approve high-confidence, low-risk candidates with enough evidence
-                # so they reach active status without manual review bottleneck
-                if (
-                    not created  # only on evidence accumulation, not first proposal
-                    and confidence >= 0.8
-                    and risk_level == "low"
-                ):
-                    try:
-                        artifact = await learning_store.get_artifact(artifact_id)
-                        if (
-                            artifact
-                            and artifact.get("status") == "pending_review"
-                            and int(artifact.get("evidence_count") or 1) >= 3
-                        ):
-                            await learning_store.approve_candidate(artifact_id)
-                            logger.info(
-                                "GLM mirror: auto-approved %s (confidence=%.2f, evidence=%d)",
-                                artifact_id, confidence, artifact.get("evidence_count", 0),
-                            )
-                    except Exception as e:
-                        logger.debug("Auto-approve check failed for %s: %s", artifact_id, e)
+                if confidence >= 0.8 and risk_level == "low":
+                    result.warnings.append("user_review_required_for_high_confidence_candidates")
 
         except Exception as exc:
-            logger.exception("GLM mirror: unexpected error: %s", exc)
+            logger.exception("Model mirror: unexpected error: %s", exc)
             result.errors.append(str(exc))
 
         self._last_result = result
         return result
 
-    def last_result(self) -> Optional[GlmMirrorResult]:
+    def last_result(self) -> Optional[ModelMirrorResult]:
         return self._last_result
 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
 
-_mirror: Optional[GlmMirror] = None
+_mirror: Optional[ModelMirror] = None
 
 
-def get_glm_mirror() -> GlmMirror:
+def get_model_mirror() -> ModelMirror:
     global _mirror
     if _mirror is None:
-        _mirror = GlmMirror()
+        _mirror = ModelMirror()
     return _mirror
+
+
+GlmMirrorResult = ModelMirrorResult
+GlmMirror = ModelMirror
+get_glm_mirror = get_model_mirror
+GLM_MIRROR_INTERVAL_HOURS = MODEL_MIRROR_INTERVAL_HOURS
+GLM_GENERATE_MODEL = MODEL_MIRROR_GENERATE_MODEL
+GLM_RESPONSE_LANGUAGE = MODEL_MIRROR_RESPONSE_LANGUAGE
+_LOOKBACK_HOURS = MODEL_MIRROR_LOOKBACK_HOURS

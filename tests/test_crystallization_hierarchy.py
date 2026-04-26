@@ -94,7 +94,7 @@ async def test_find_crystallization_candidates_promotes_upper_scopes(client):
 
 
 @pytest.mark.asyncio
-async def test_apply_crystallization_merges_duplicates_and_syncs_tree(client):
+async def test_apply_crystallization_stages_candidate_revision_until_applied(client):
     first_leaf = await _create_memory(
         client,
         content="FastAPI caching pattern",
@@ -150,16 +150,44 @@ async def test_apply_crystallization_merges_duplicates_and_syncs_tree(client):
     canonical = await client.get(f"{PREFIX}/memories/{canonical_id}", headers=HEADERS)
     assert canonical.status_code == 200
     payload = canonical.json()
-    assert sorted(payload["supports"]) == sorted([first_leaf, second_leaf])
+    assert payload["supports"] == [first_leaf]
+    assert payload["meta"] == {} or isinstance(payload["meta"], dict)
 
     first_leaf_payload = (await client.get(f"{PREFIX}/memories/{first_leaf}", headers=HEADERS)).json()
     second_leaf_payload = (await client.get(f"{PREFIX}/memories/{second_leaf}", headers=HEADERS)).json()
     assert first_leaf_payload["canonical_id"] == canonical_id
-    assert second_leaf_payload["canonical_id"] == canonical_id
+    assert second_leaf_payload["canonical_id"] is None
 
     node = tree_store.get_node(node_id)
     assert node["meta_json"]["canonical_memory_id"] == canonical_id
     assert canonical_id in node["meta_json"]["canonical_memory_ids"]
+
+    scope_view = await client.get(
+        f"{PREFIX}/canonicals/by-scope",
+        headers=HEADERS,
+        params={"scope": "domain", "include_suppressed": True},
+    )
+    assert scope_view.status_code == 200
+    item = next(item for item in scope_view.json()["items"] if item["id"] == canonical_id)
+    assert item["candidate_revision"] is not None
+    assert sorted(item["candidate_revision"]["supports"]) == sorted([first_leaf, second_leaf])
+
+    applied = await client.post(
+        f"{PREFIX}/canonicals/{canonical_id}/apply-candidate",
+        headers=HEADERS,
+        json={"reviewed_by": "owner", "review_source": "dashboard_review", "reason": "Looks canonical"},
+    )
+    assert applied.status_code == 200
+    applied_body = applied.json()
+    assert applied_body["candidate_revision"] is None
+    assert sorted(applied_body["supports"]) == sorted([first_leaf, second_leaf])
+    assert applied_body["last_review_action"] == "apply_candidate"
+    assert applied_body["last_reviewed_by"] == "owner"
+    assert applied_body["last_review_source"] == "dashboard_review"
+    assert applied_body["last_review_reason"] == "Looks canonical"
+
+    second_leaf_payload = (await client.get(f"{PREFIX}/memories/{second_leaf}", headers=HEADERS)).json()
+    assert second_leaf_payload["canonical_id"] == canonical_id
 
 
 @pytest.mark.asyncio
@@ -220,26 +248,56 @@ async def test_canonical_governance_endpoints_merge_and_reactivate(client):
     suppress = await client.patch(
         f"{PREFIX}/canonicals/{source_id}/status",
         headers=HEADERS,
-        json={"suppressed": True, "reason": "test"},
+        json={
+            "suppressed": True,
+            "reason": "test",
+            "reviewed_by": "owner",
+            "review_source": "dashboard_review",
+        },
     )
     assert suppress.status_code == 200
-    assert suppress.json()["canonical_status"] == "suppressed"
+    suppress_body = suppress.json()
+    assert suppress_body["canonical_status"] == "suppressed"
+    assert suppress_body["last_review_action"] == "suppress"
+    assert suppress_body["last_reviewed_by"] == "owner"
+    assert suppress_body["last_review_source"] == "dashboard_review"
+    assert suppress_body["last_review_reason"] == "test"
 
     reactivate = await client.patch(
         f"{PREFIX}/canonicals/{source_id}/status",
         headers=HEADERS,
-        json={"suppressed": False, "reason": "reactivate"},
+        json={
+            "suppressed": False,
+            "reason": "reactivate",
+            "reviewed_by": "owner",
+            "review_source": "dashboard_review",
+        },
     )
     assert reactivate.status_code == 200
-    assert reactivate.json()["canonical_status"] == "active"
+    reactivate_body = reactivate.json()
+    assert reactivate_body["canonical_status"] == "active"
+    assert reactivate_body["last_review_action"] == "reactivate"
+    assert reactivate_body["last_reviewed_by"] == "owner"
+    assert reactivate_body["last_review_source"] == "dashboard_review"
+    assert reactivate_body["last_review_reason"] == "reactivate"
 
     merged = await client.post(
         f"{PREFIX}/canonicals/{source_id}/merge",
         headers=HEADERS,
-        json={"target_id": target_id},
+        json={
+            "target_id": target_id,
+            "reviewed_by": "owner",
+            "review_source": "dashboard_review",
+            "reason": "Merge duplicates",
+        },
     )
     assert merged.status_code == 200
-    assert merged.json()["target_id"] == target_id
+    merged_body = merged.json()
+    assert merged_body["target_id"] == target_id
+    assert merged_body["last_review_action"] == "merge"
+    assert merged_body["last_reviewed_by"] == "owner"
+    assert merged_body["last_review_source"] == "dashboard_review"
+    assert merged_body["last_review_reason"] == "Merge duplicates"
 
     target = await client.get(f"{PREFIX}/memories/{target_id}", headers=HEADERS)
     assert sorted(target.json()["supports"]) == ["leaf-a", "leaf-b"]
@@ -249,7 +307,59 @@ async def test_canonical_governance_endpoints_merge_and_reactivate(client):
         params={"scope": "domain", "include_suppressed": True},
     )
     source_item = next(item for item in scope_view.json()["items"] if item["id"] == source_id)
+    target_item = next(item for item in scope_view.json()["items"] if item["id"] == target_id)
     assert source_item["canonical_status"] == "merged"
+    assert source_item["last_review_action"] == "merge_source"
+    assert source_item["last_reviewed_by"] == "owner"
+    assert source_item["last_review_source"] == "dashboard_review"
+    assert source_item["last_review_reason"] == "Merge duplicates"
+    assert target_item["last_review_action"] == "merge_target"
+    assert target_item["last_reviewed_by"] == "owner"
+    assert target_item["last_review_source"] == "dashboard_review"
+    assert target_item["last_review_reason"] == "Merge duplicates"
+
+
+@pytest.mark.asyncio
+async def test_canonical_candidate_can_be_discarded(client):
+    canonical_id = await _create_memory(
+        client,
+        content="Canonical A",
+        scope="domain",
+        topic_path="python/caching",
+        supports=["leaf-a"],
+    )
+
+    qdrant = get_qdrant()
+    ollama = get_ollama()
+    candidate = CrystallizationCandidate(
+        key="cand-discard",
+        topic_path="python/caching",
+        target_scope="domain",
+        statement="Use shared Python caching guidance with explicit invalidation checks.",
+        observation="obs",
+        why_it_matters="why",
+        supports=["leaf-a", "leaf-b"],
+        confidence=0.91,
+        project_diversity=2,
+        evidence_count=2,
+        source_scope="project",
+    )
+    staged_id = await apply_crystallization(candidate, qdrant._client, settings.qdrant_collection_name, ollama)
+    assert staged_id == canonical_id
+
+    discarded = await client.post(
+        f"{PREFIX}/canonicals/{canonical_id}/discard-candidate",
+        headers=HEADERS,
+        json={"reviewed_by": "owner", "review_source": "dashboard_review", "reason": "not ready"},
+    )
+    assert discarded.status_code == 200
+    body = discarded.json()
+    assert body["candidate_revision"] is None
+    assert body["supports"] == ["leaf-a"]
+    assert body["last_review_action"] == "discard_candidate"
+    assert body["last_reviewed_by"] == "owner"
+    assert body["last_review_source"] == "dashboard_review"
+    assert body["last_review_reason"] == "not ready"
 
 
 @pytest.mark.asyncio

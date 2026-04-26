@@ -102,6 +102,9 @@ class FeedbackRequest(BaseModel):
     correction_id: str          # FixResponse.id
     confirmed: bool             # True = fix was correct, False = it was wrong
     correct_text: Optional[str] = None  # if confirmed=False, provide the real text
+    reviewed_by: str = Field("user", min_length=1, max_length=256)
+    review_source: str = Field("inline_user_approval", max_length=128)
+    reason: str = Field("", max_length=1000)
 
 
 class StatsResponse(BaseModel):
@@ -297,9 +300,16 @@ def _rule_fix(text: str) -> tuple[str, str, float]:
 
     # Mostly Latin text — three-signal analysis
     if latin_ratio >= 0.75:
+        ng_dir, ng_conf = _ngram_confidence(text)
+
+        # Tiny one-token typos should not be auto-translated unless we have
+        # a strong Russian-in-EN ngram signal.
+        words = [w.strip(".,!?;:\"'()[]{}").lower() for w in text.split()]
+        compact_words = [w for w in words if w]
+        if len(compact_words) == 1 and len(compact_words[0]) <= 4 and ng_dir != "en->ru":
+            return text, "none", 0.90
 
         # Signal 1: stop-word check
-        words = [w.strip(".,!?;:\"'()[]{}").lower() for w in text.split()]
         en_word_count = sum(1 for w in words if w in _EN_STOP_WORDS)
         has_en_stop_words = (
             en_word_count >= 2 or
@@ -307,7 +317,6 @@ def _rule_fix(text: str) -> tuple[str, str, float]:
         )
 
         # Signal 2: bigram/trigram anomaly
-        ng_dir, ng_conf = _ngram_confidence(text)
         ngram_says_ru = ng_dir == "en->ru"
         ngram_says_en = ng_dir == "none" and ng_conf >= 0.80
 
@@ -650,7 +659,14 @@ async def layout_feedback(body: FeedbackRequest, qdrant: QdrantDep):
     """
     try:
         from qdrant_client.http import models as qmodels
-        patch = {"confirmed": body.confirmed}
+        patch = {
+            "confirmed": body.confirmed,
+            "last_feedback_action": "confirm_layout_fix" if body.confirmed else "reject_layout_fix",
+            "last_feedback_by": body.reviewed_by,
+            "last_feedback_source": body.review_source,
+            "last_feedback_at": datetime.now(timezone.utc).isoformat(),
+            "last_feedback_reason": body.reason or None,
+        }
         if not body.confirmed and body.correct_text:
             patch["user_correction"] = body.correct_text
         await qdrant._client.set_payload(
@@ -665,7 +681,15 @@ async def layout_feedback(body: FeedbackRequest, qdrant: QdrantDep):
             payload={"importance_score": importance},
             points=[body.correction_id],
         )
-        return {"status": "ok", "correction_id": body.correction_id, "confirmed": body.confirmed}
+        return {
+            "status": "ok",
+            "correction_id": body.correction_id,
+            "confirmed": body.confirmed,
+            "last_feedback_action": patch["last_feedback_action"],
+            "last_feedback_by": patch["last_feedback_by"],
+            "last_feedback_source": patch["last_feedback_source"],
+            "last_feedback_reason": patch["last_feedback_reason"],
+        }
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Correction not found: {e}")
 

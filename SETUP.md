@@ -69,10 +69,8 @@ curl http://localhost:11434/api/embed -d '{"model":"nomic-embed-text","input":"t
 ## 2. Получить код проекта
 
 ```bash
-git clone <repo-url> D:/work/supermemory   # Windows
-# или
-git clone <repo-url> ~/supermemory         # Linux/macOS
-cd supermemory
+git clone <repo-url> <SUPERMEMORY_HOME>
+cd <SUPERMEMORY_HOME>
 ```
 
 > Если git-репозитория нет — скопировать папку проекта на новую машину.
@@ -209,12 +207,12 @@ which claude
 
 ### Зарегистрировать MCP-сервер
 
-**Windows** (указать реальный путь к проекту):
+**Windows** (заменить `<SUPERMEMORY_HOME>` на путь к локальному репозиторию):
 ```powershell
 claude mcp add -s user `
   -e "MEMORY_SERVER_URL=http://localhost:8000" `
   super-memory `
-  -- "D:\work\supermemory\.venv\Scripts\python.exe" "D:\work\supermemory\mcp\server.py"
+  -- "<SUPERMEMORY_HOME>\.venv\Scripts\python.exe" "<SUPERMEMORY_HOME>\mcp\server.py"
 ```
 
 **Linux/macOS:**
@@ -291,7 +289,7 @@ ollama serve   # Linux/macOS
 ### MCP статус `✗ Failed` вместо `✓ Connected`
 ```bash
 # Проверить путь к Python
-"D:\work\supermemory\.venv\Scripts\python.exe" -c "import httpx; print('OK')"
+"<SUPERMEMORY_HOME>\.venv\Scripts\python.exe" -c "import httpx; print('OK')"
 
 # Проверить что сервер доступен
 curl http://localhost:8000/api/v1/health

@@ -1,11 +1,15 @@
 from __future__ import annotations
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
 from app.models.enums import MemoryType
+
+
+IMPROVEMENT_STAGES: tuple[str, ...] = ("proposal", "beta_test", "experimental", "stable", "deprecated")
+IMPROVEMENT_VERDICTS: tuple[str, ...] = ("effective", "ineffective")
 
 
 # Decay rate defaults by category — relevance decay, not validity.
@@ -34,6 +38,8 @@ class MemoryCreate(BaseModel):
     source: str = Field("conversation", max_length=128)
     tags: list[str] = Field(default_factory=list)
     session_id: Optional[str] = None
+    status: Optional[str] = Field(None, max_length=64, description="Optional lifecycle status for governed knowledge entities.")
+    meta: dict[str, Any] = Field(default_factory=dict, description="Structured metadata for higher-level knowledge entities.")
     decay_rate: Optional[float] = Field(
         None, ge=0.0, le=10.0,
         description=(
@@ -67,6 +73,8 @@ class MemoryUpdate(BaseModel):
     source: Optional[str] = Field(None, max_length=128)
     tags: Optional[list[str]] = None
     session_id: Optional[str] = None
+    status: Optional[str] = Field(None, max_length=64)
+    meta: Optional[dict[str, Any]] = None
     decay_rate: Optional[float] = Field(None, ge=0.0, le=10.0)
     pinned: Optional[bool] = None
     project: Optional[str] = Field(None, max_length=128)
@@ -89,6 +97,7 @@ class MemoryRecord(BaseModel):
     access_count: int
     session_id: Optional[str]
     status: Optional[str] = None
+    meta: dict[str, Any] = Field(default_factory=dict)
     decay_rate: float = 1.0
     pinned: bool = False
     last_access_ts: Optional[datetime] = None
@@ -111,6 +120,8 @@ class ImprovementCreate(BaseModel):
     agent_id: str = Field("llm", max_length=256)
     importance_score: float = Field(0.7, ge=0.0, le=1.0)
     tags: list[str] = Field(default_factory=list)
+    stage: str = Field("proposal", pattern="^(proposal|beta_test|experimental|stable|deprecated)$")
+    verdict: str | None = Field(None, pattern="^(effective|ineffective)$")
 
 
 class ImprovementRecord(BaseModel):
@@ -123,9 +134,28 @@ class ImprovementRecord(BaseModel):
     timestamp: datetime
     status: str
     tags: list[str]
+    stage: str = "proposal"
+    verdict: Optional[str] = None
     resolved_at: Optional[datetime] = None
     report_count: int = 1
     report_history: list[dict] = []
+    last_status_action: Optional[str] = None
+    last_status_acted_by: Optional[str] = None
+    last_status_action_source: Optional[str] = None
+    last_status_action_at: Optional[datetime] = None
+    last_status_action_reason: Optional[str] = None
+    last_quality_review_by: Optional[str] = None
+    last_quality_review_source: Optional[str] = None
+    last_quality_review_at: Optional[datetime] = None
+    last_quality_review_reason: Optional[str] = None
+
+
+class ImprovementReviewRequest(BaseModel):
+    stage: str | None = Field(None, pattern="^(proposal|beta_test|experimental|stable|deprecated)$")
+    verdict: str | None = Field(None, pattern="^(effective|ineffective)$")
+    reviewed_by: str = Field("user", min_length=1, max_length=256)
+    review_source: str = Field("manual_review", max_length=128)
+    reason: str = Field("", max_length=1000)
 
 
 class SearchRequest(BaseModel):
@@ -133,6 +163,7 @@ class SearchRequest(BaseModel):
     agent_id: Optional[str] = None
     memory_type: Optional[MemoryType] = None
     category: Optional[str] = None
+    topic_prefix: Optional[str] = Field(None, max_length=256, description="Optional topic_path prefix filter")
     limit: int = Field(10, ge=1, le=100)
     min_score: float = Field(0.0, ge=0.0, le=1.0)
     since_minutes: Optional[int] = Field(None, ge=1, description="Only return memories added within last N minutes")
@@ -172,6 +203,7 @@ class ContextRequest(BaseModel):
     agent_id: Optional[str] = None
     memory_type: Optional[MemoryType] = None
     category: Optional[str] = None
+    topic_prefix: Optional[str] = Field(None, max_length=256, description="Optional topic_path prefix filter")
     limit: int = Field(10, ge=1, le=50)
     min_score: float = Field(0.0, ge=0.0, le=1.0)
     since_minutes: Optional[int] = Field(None, ge=1)

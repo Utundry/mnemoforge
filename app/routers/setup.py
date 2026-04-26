@@ -11,13 +11,14 @@ Usage on a client machine (Linux/macOS):
   curl -s http://<SERVER_IP>:8000/client-setup | python3
   curl -s http://<SERVER_IP>:8000/client-setup/test | python3
 
-Usage on a client machine (Windows PowerShell):
-  (Invoke-WebRequest http://<SERVER_IP>:8000/client-setup).Content | python
-  (Invoke-WebRequest http://<SERVER_IP>:8000/client-setup/test).Content | python
+Cross-platform Python fallback (avoids shell curl/IWR quirks):
+  python -c "import urllib.request; exec(urllib.request.urlopen('http://<SERVER_IP>:8000/client-setup').read().decode('utf-8'))"
+  python -c "import urllib.request; exec(urllib.request.urlopen('http://<SERVER_IP>:8000/client-setup/test').read().decode('utf-8'))"
 """
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -300,13 +301,17 @@ def get_client_scan(request: Request):
     # Derive Ollama URL: same host as the server, port 11434
     ollama_url = f"{request.base_url.scheme}://{request.base_url.hostname}:11434"
     script = _read("scripts/client_scan.py")
-    script = script.replace(
-        'DEFAULT_SERVER = "http://192.168.1.138:8000"',
-        f'DEFAULT_SERVER = "{server_url}"',
+    script = re.sub(
+        r'^DEFAULT_SERVER = .*$',
+        f'DEFAULT_SERVER = os.environ.get("SUPERMEMORY_SERVER_URL", "{server_url}")',
+        script,
+        flags=re.MULTILINE,
     )
-    script = script.replace(
-        'DEFAULT_OLLAMA = "http://localhost:11434"',
-        f'DEFAULT_OLLAMA = "{ollama_url}"',
+    script = re.sub(
+        r'^DEFAULT_OLLAMA = .*$',
+        f'DEFAULT_OLLAMA = os.environ.get("SUPERMEMORY_OLLAMA_URL", "{ollama_url}")',
+        script,
+        flags=re.MULTILINE,
     )
     return script
 
@@ -320,7 +325,7 @@ def get_bootstrap(request: Request):
     Return a self-contained Python 3.9+ bootstrap script.
     The script auto-detects OS and sets up the MCP client.
     """
-    server_url = str(request.base_url).rstrip("/")  # e.g. http://192.168.1.138:8000
+    server_url = str(request.base_url).rstrip("/")  # e.g. http://<SERVER_HOST>:8000
 
     script = f'''\
 #!/usr/bin/env python3

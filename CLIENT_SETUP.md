@@ -36,7 +36,7 @@ curl http://<SERVER_IP>:8000/api/v1/health
 
 ```bash
 # Windows
-mkdir C:\supermemory-client
+mkdir <CLIENT_HOME>
 # Скопировать mcp\server.py из репозитория или с сервера по scp/sftp
 ```
 
@@ -92,7 +92,7 @@ which claude
 claude mcp add -s user `
   -e "MEMORY_SERVER_URL=http://<SERVER_IP>:8000" `
   super-memory `
-  -- "C:\supermemory-client\.venv\Scripts\python.exe" "C:\supermemory-client\server.py"
+  -- "<CLIENT_HOME>\.venv\Scripts\python.exe" "<CLIENT_HOME>\server.py"
 ```
 
 **Linux/macOS:**

@@ -12,6 +12,7 @@ Pattern (dual-write, Qdrant-fallback):
 Categories currently stored here:
   skill          — full SKILL.md content + skill_name, description, platform, etc.
   code_component — code snippet + code_path, symbol, chunk_type, language, imports
+  handoff        — full task-packet content + lifecycle metadata for durable pickup
 """
 from __future__ import annotations
 
@@ -76,6 +77,7 @@ class MemoryContentStore:
                 INSERT INTO memory_content (memory_id, category, content, metadata, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(memory_id) DO UPDATE SET
+                    category   = excluded.category,
                     content    = excluded.content,
                     metadata   = excluded.metadata,
                     updated_at = excluded.updated_at
@@ -142,6 +144,59 @@ class MemoryContentStore:
                 "SELECT 1 FROM memory_content WHERE memory_id = ?", (memory_id,)
             ).fetchone()
         return row is not None
+
+    async def count(self, category: str | None = None) -> int:
+        with self._lock:
+            if category is None:
+                row = self._conn.execute("SELECT COUNT(*) FROM memory_content").fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) FROM memory_content WHERE category = ?",
+                    (category,),
+                ).fetchone()
+        return int(row[0]) if row else 0
+
+    async def list_by_category(self, category: str, limit: int = 100) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM memory_content
+                WHERE category = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (category, limit),
+            ).fetchall()
+        return [_decode(row) for row in rows]
+
+    async def list_rows(
+        self,
+        *,
+        category: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        with self._lock:
+            if category is None:
+                rows = self._conn.execute(
+                    """
+                    SELECT * FROM memory_content
+                    ORDER BY updated_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (limit, offset),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    """
+                    SELECT * FROM memory_content
+                    WHERE category = ?
+                    ORDER BY updated_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (category, limit, offset),
+                ).fetchall()
+        return [_decode(row) for row in rows]
 
     def close(self) -> None:
         with self._lock:

@@ -108,11 +108,17 @@ async def generate_journal_entry(
     )
 
     try:
-        entry = await cloud_complete(
+        from app.services.llm_gateway import get_cloud_gateway
+
+        entry = await get_cloud_gateway().generate(
             prompt,
             system="You are a precise technical writer. Write concise, actionable journal entries.",
-            max_tokens=600,
+            task_type="text_summarization",
+            mode="economy",
+            max_tokens=420,
             temperature=0.2,
+            allow_local_fallback=True,
+            prefer_local=True,
         )
         return entry.strip()
     except Exception as e:

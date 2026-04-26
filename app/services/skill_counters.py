@@ -155,6 +155,11 @@ class SkillCountersStore:
             ).fetchall()
         return [row[0] for row in rows]
 
+    async def count(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) FROM skill_meta").fetchone()
+        return int(row[0]) if row else 0
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

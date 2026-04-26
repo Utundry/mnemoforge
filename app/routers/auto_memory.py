@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -484,6 +485,9 @@ class PreviewResponse(BaseModel):
 
 class ConfirmRequest(BaseModel):
     draft_ids: list[str] = Field(..., description="Memory IDs to promote from draft to active")
+    confirmed_by: str = Field("user", min_length=1, max_length=256)
+    confirmation_source: str = Field("manual_draft_confirm", max_length=128)
+    reason: str = Field("", max_length=1000)
 
 
 class ConfirmResponse(BaseModel):
@@ -493,6 +497,9 @@ class ConfirmResponse(BaseModel):
 
 class DiscardRequest(BaseModel):
     draft_ids: list[str] = Field(..., description="Draft memory IDs to delete")
+    discarded_by: str = Field("user", min_length=1, max_length=256)
+    discard_source: str = Field("manual_draft_discard", max_length=128)
+    reason: str = Field("", max_length=1000)
 
 
 class DiscardResponse(BaseModel):
@@ -591,9 +598,30 @@ async def confirm_drafts(body: ConfirmRequest, qdrant: QdrantDep):
 
     for draft_id in body.draft_ids:
         try:
+            points = await qdrant._client.retrieve(
+                collection_name=qdrant._collection,
+                ids=[draft_id],
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not points:
+                failed += 1
+                continue
+            payload = points[0].payload or {}
+            if payload.get("status") != "draft" and payload.get("category") != "draft":
+                failed += 1
+                continue
             await qdrant._client.set_payload(
                 collection_name=qdrant._collection,
-                payload={"status": None, "category": "general", "decay_rate": 1.0},
+                payload={
+                    "status": None,
+                    "category": "general",
+                    "decay_rate": 1.0,
+                    "confirmed_by": body.confirmed_by,
+                    "confirmation_source": body.confirmation_source,
+                    "confirmed_at": datetime.now(timezone.utc).isoformat(),
+                    "confirmation_reason": body.reason.strip() or None,
+                },
                 points=[draft_id],
             )
             confirmed += 1
@@ -611,15 +639,39 @@ async def discard_drafts(body: DiscardRequest, qdrant: QdrantDep):
 
     Use this to reject unwanted candidates from /extract/preview.
     """
-    from uuid import UUID
+    from app.services.event_emitter import emit
     from qdrant_client.http import models as qmodels
 
     discarded = 0
     for draft_id in body.draft_ids:
         try:
+            points = await qdrant._client.retrieve(
+                collection_name=qdrant._collection,
+                ids=[draft_id],
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not points:
+                continue
+            payload = points[0].payload or {}
+            if payload.get("status") != "draft" and payload.get("category") != "draft":
+                continue
             await qdrant._client.delete(
                 collection_name=qdrant._collection,
                 points_selector=qmodels.PointIdsList(points=[draft_id]),
+            )
+            await emit(
+                "user_feedback",
+                agent_id=body.discarded_by,
+                transport="api",
+                context_signature="auto_memory:draft_discard",
+                payload={
+                    "action": "discard_draft",
+                    "draft_id": draft_id,
+                    "discarded_by": body.discarded_by,
+                    "discard_source": body.discard_source,
+                    "reason": body.reason,
+                },
             )
             discarded += 1
         except Exception as e:

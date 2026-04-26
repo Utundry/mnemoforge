@@ -12,6 +12,7 @@ import logging
 import re
 import sqlite3
 import time
+from collections.abc import Callable
 from pathlib import Path
 from threading import Lock
 from typing import Optional
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS tree_nodes (
     doc              TEXT NOT NULL DEFAULT '',
     doc_candidate    TEXT NOT NULL DEFAULT '',
     doc_generated_at REAL,
+    doc_candidate_generated_at REAL,
     sort_order       INTEGER NOT NULL DEFAULT 0,
     tags             TEXT NOT NULL DEFAULT '[]',
     created_at       REAL NOT NULL,
@@ -62,7 +64,8 @@ CREATE TABLE IF NOT EXISTS project_workspaces (
     canonical    INTEGER NOT NULL DEFAULT 0,
     status       TEXT NOT NULL DEFAULT 'active',
     created_at   REAL NOT NULL,
-    promoted_at  REAL
+    promoted_at  REAL,
+    meta_json    TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_ws_project ON project_workspaces(project_id);
 CREATE INDEX IF NOT EXISTS idx_ws_dir     ON project_workspaces(dir_path);
@@ -79,7 +82,33 @@ def _row(row: sqlite3.Row) -> dict:
 def _ws_row(row: sqlite3.Row) -> dict:
     d = dict(row)
     d["canonical"] = bool(d.get("canonical"))
+    d["meta_json"] = json.loads(d.get("meta_json") or "{}")
     return d
+
+
+def _merge_tags(*tag_lists: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for tags in tag_lists:
+        for tag in tags or []:
+            key = str(tag).strip()
+            if not key or key in seen:
+                continue
+            merged.append(key)
+            seen.add(key)
+    return merged
+
+
+def _merge_meta_json(preferred: dict, duplicate: dict) -> dict:
+    merged = dict(preferred or {})
+    for key, value in (duplicate or {}).items():
+        existing = merged.get(key)
+        if key not in merged or existing is None or existing == "" or existing == [] or existing == {}:
+            merged[key] = value
+            continue
+        if isinstance(existing, list) and isinstance(value, list):
+            merged[key] = _merge_tags(existing, value)
+    return merged
 
 
 class ProjectTreeStore:
@@ -98,12 +127,18 @@ class ProjectTreeStore:
         """Add columns and tables introduced after initial schema creation."""
         for col, definition in [
             ("doc_candidate", "TEXT NOT NULL DEFAULT ''"),
+            ("doc_candidate_generated_at", "REAL"),
         ]:
             try:
                 self._conn.execute(f"ALTER TABLE tree_nodes ADD COLUMN {col} {definition}")
                 logger.info("Migration: added column %s to tree_nodes", col)
             except sqlite3.OperationalError:
                 pass  # column already exists
+        try:
+            self._conn.execute("ALTER TABLE project_workspaces ADD COLUMN meta_json TEXT NOT NULL DEFAULT '{}'")
+            logger.info("Migration: added column meta_json to project_workspaces")
+        except sqlite3.OperationalError:
+            pass
         # Ensure journal table exists (idempotent — CREATE TABLE IF NOT EXISTS)
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS node_journal_entries (
@@ -154,7 +189,7 @@ class ProjectTreeStore:
 
     def update_node(self, node_id: str, **fields) -> bool:
         allowed = {"title", "description", "goal", "status", "topic_path",
-                   "doc", "doc_candidate", "doc_generated_at", "tags", "sort_order",
+                   "doc", "doc_candidate", "doc_generated_at", "doc_candidate_generated_at", "tags", "sort_order",
                    "parent_id", "done_at", "meta_json"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -192,6 +227,51 @@ class ProjectTreeStore:
             row = self._conn.execute(
                 "SELECT * FROM tree_nodes WHERE topic_path = ? LIMIT 1",
                 (topic_path,),
+            ).fetchone()
+        return _row(row) if row else None
+
+    def find_node_by_improvement_id(self, improvement_id: str) -> Optional[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM tree_nodes
+                WHERE type = 'task'
+                ORDER BY created_at ASC
+                """
+            ).fetchall()
+        for row in rows:
+            parsed = _row(row)
+            meta = parsed.get("meta_json") or {}
+            if str(meta.get("improvement_id") or "") == str(improvement_id):
+                return parsed
+        return None
+
+    def find_equivalent_node(
+        self,
+        *,
+        title: str,
+        type: str,
+        parent_id: Optional[str],
+        status: Optional[str] = None,
+        topic_path: Optional[str] = None,
+    ) -> Optional[dict]:
+        clauses = ["type = ?", "title = ?"]
+        params: list[object] = [type, title]
+        if parent_id is None:
+            clauses.append("parent_id IS NULL")
+        else:
+            clauses.append("parent_id = ?")
+            params.append(parent_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if topic_path is not None:
+            clauses.append("topic_path = ?")
+            params.append(topic_path)
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT * FROM tree_nodes WHERE {' AND '.join(clauses)} ORDER BY created_at ASC LIMIT 1",
+                params,
             ).fetchone()
         return _row(row) if row else None
 
@@ -274,18 +354,26 @@ class ProjectTreeStore:
                     (project_id,),
                 )
             self._conn.execute(
-                """INSERT INTO project_workspaces (id,project_id,dir_path,canonical,status,created_at)
-                   VALUES (?,?,?,?,?,?)""",
-                (uid, project_id, dir_path, int(canonical), "active", now),
+                """INSERT INTO project_workspaces (id,project_id,dir_path,canonical,status,created_at,meta_json)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (uid, project_id, dir_path, int(canonical), "active", now, "{}"),
             )
             self._conn.commit()
         return uid
 
-    def promote_workspace(self, workspace_id: str) -> bool:
+    def promote_workspace(
+        self,
+        workspace_id: str,
+        *,
+        acted_by: str = "user",
+        action_source: str = "inline_user_approval",
+        reason: str = "",
+    ) -> bool:
         """Mark this workspace as canonical, demote all others in same project."""
+        now = time.time()
         with self._lock:
             row = self._conn.execute(
-                "SELECT project_id FROM project_workspaces WHERE id=?", (workspace_id,)
+                "SELECT project_id, meta_json FROM project_workspaces WHERE id=?", (workspace_id,)
             ).fetchone()
             if not row:
                 return False
@@ -293,22 +381,55 @@ class ProjectTreeStore:
                 "UPDATE project_workspaces SET canonical=0 WHERE project_id=?",
                 (row["project_id"],),
             )
+            meta = json.loads(row["meta_json"] or "{}")
+            meta["org_last_action_type"] = "promote_workspace"
+            meta["org_last_action_by"] = acted_by
+            meta["org_last_action_source"] = action_source
+            meta["org_last_action_at"] = now
+            meta["org_last_action_reason"] = reason or None
             self._conn.execute(
-                "UPDATE project_workspaces SET canonical=1, promoted_at=? WHERE id=?",
-                (time.time(), workspace_id),
+                "UPDATE project_workspaces SET canonical=1, promoted_at=?, meta_json=? WHERE id=?",
+                (now, json.dumps(meta), workspace_id),
             )
             self._conn.commit()
         return True
 
-    def archive_workspace(self, workspace_id: str) -> bool:
+    def archive_workspace(
+        self,
+        workspace_id: str,
+        *,
+        acted_by: str = "user",
+        action_source: str = "inline_user_approval",
+        reason: str = "",
+    ) -> bool:
+        now = time.time()
         with self._lock:
+            row = self._conn.execute(
+                "SELECT meta_json FROM project_workspaces WHERE id=?", (workspace_id,)
+            ).fetchone()
+            if not row:
+                return False
+            meta = json.loads(row["meta_json"] or "{}")
+            meta["org_last_action_type"] = "archive_workspace"
+            meta["org_last_action_by"] = acted_by
+            meta["org_last_action_source"] = action_source
+            meta["org_last_action_at"] = now
+            meta["org_last_action_reason"] = reason or None
             cur = self._conn.execute(
-                "UPDATE project_workspaces SET status='archived' WHERE id=?", (workspace_id,)
+                "UPDATE project_workspaces SET status='archived', meta_json=? WHERE id=?",
+                (json.dumps(meta), workspace_id),
             )
             self._conn.commit()
         return cur.rowcount > 0
 
     # ── Workspace reads ───────────────────────────────────────────────────────
+
+    def get_workspace(self, workspace_id: str) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM project_workspaces WHERE id=?", (workspace_id,)
+            ).fetchone()
+        return _ws_row(row) if row else None
 
     def get_workspace_by_dir(self, dir_path: str) -> Optional[dict]:
         with self._lock:
@@ -354,6 +475,163 @@ class ProjectTreeStore:
         if not node:
             return []
         return self.get_journal(node["id"], limit=limit)
+
+    def dedupe_exact_nodes(
+        self,
+        *,
+        limit_groups: int = 50,
+        relink_node_reference: Callable[[str, str], None] | None = None,
+    ) -> dict:
+        """
+        Collapse exact duplicate tree nodes by natural key.
+
+        Key: (type, title, parent_id, topic_path, status)
+        Keeps the oldest row as canonical and deletes newer duplicates after
+        re-pointing journals, child parent_ids, and optional external references.
+        """
+        with self._lock:
+            groups = self._conn.execute(
+                """
+                SELECT
+                    type,
+                    title,
+                    COALESCE(parent_id, '') AS parent_id_key,
+                    COALESCE(topic_path, '') AS topic_path_key,
+                    status,
+                    COUNT(*) AS duplicate_count
+                FROM tree_nodes
+                GROUP BY type, title, COALESCE(parent_id, ''), COALESCE(topic_path, ''), status
+                HAVING COUNT(*) > 1
+                ORDER BY duplicate_count DESC, MIN(created_at) ASC
+                LIMIT ?
+                """,
+                (limit_groups,),
+            ).fetchall()
+
+            merged_groups = 0
+            deleted_nodes = 0
+            relinked_children = 0
+            relinked_journals = 0
+            canonical_ids: list[str] = []
+            deleted_ids: list[str] = []
+
+            for group in groups:
+                rows = self._conn.execute(
+                    """
+                    SELECT * FROM tree_nodes
+                    WHERE type = ?
+                      AND title = ?
+                      AND COALESCE(parent_id, '') = ?
+                      AND COALESCE(topic_path, '') = ?
+                      AND status = ?
+                    ORDER BY created_at ASC, id ASC
+                    """,
+                    (
+                        group["type"],
+                        group["title"],
+                        group["parent_id_key"],
+                        group["topic_path_key"],
+                        group["status"],
+                    ),
+                ).fetchall()
+                if len(rows) < 2:
+                    continue
+
+                canonical = _row(rows[0])
+                canonical_id = str(canonical["id"])
+                canonical_ids.append(canonical_id)
+
+                merged_tags = list(canonical.get("tags") or [])
+                merged_meta = dict(canonical.get("meta_json") or {})
+                merged_description = str(canonical.get("description") or "")
+                merged_goal = str(canonical.get("goal") or "")
+                merged_doc = str(canonical.get("doc") or "")
+                merged_doc_candidate = str(canonical.get("doc_candidate") or "")
+                merged_doc_generated_at = canonical.get("doc_generated_at")
+                merged_doc_candidate_generated_at = canonical.get("doc_candidate_generated_at")
+                merged_done_at = canonical.get("done_at")
+
+                loser_ids: list[str] = []
+                for loser_row in rows[1:]:
+                    loser = _row(loser_row)
+                    loser_id = str(loser["id"])
+                    loser_ids.append(loser_id)
+                    deleted_ids.append(loser_id)
+                    merged_tags = _merge_tags(merged_tags, loser.get("tags") or [])
+                    merged_meta = _merge_meta_json(merged_meta, loser.get("meta_json") or {})
+                    if not merged_description and loser.get("description"):
+                        merged_description = str(loser["description"])
+                    if not merged_goal and loser.get("goal"):
+                        merged_goal = str(loser["goal"])
+                    if not merged_doc and loser.get("doc"):
+                        merged_doc = str(loser["doc"])
+                    if not merged_doc_candidate and loser.get("doc_candidate"):
+                        merged_doc_candidate = str(loser["doc_candidate"])
+                    if merged_doc_generated_at is None and loser.get("doc_generated_at") is not None:
+                        merged_doc_generated_at = loser.get("doc_generated_at")
+                    if merged_doc_candidate_generated_at is None and loser.get("doc_candidate_generated_at") is not None:
+                        merged_doc_candidate_generated_at = loser.get("doc_candidate_generated_at")
+                    if merged_done_at is None and loser.get("done_at") is not None:
+                        merged_done_at = loser.get("done_at")
+
+                self._conn.execute(
+                    """
+                    UPDATE tree_nodes
+                    SET description = ?,
+                        goal = ?,
+                        doc = ?,
+                        doc_candidate = ?,
+                        doc_generated_at = ?,
+                        doc_candidate_generated_at = ?,
+                        done_at = ?,
+                        tags = ?,
+                        meta_json = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        merged_description,
+                        merged_goal,
+                        merged_doc,
+                        merged_doc_candidate,
+                        merged_doc_generated_at,
+                        merged_doc_candidate_generated_at,
+                        merged_done_at,
+                        json.dumps(merged_tags),
+                        json.dumps(merged_meta),
+                        time.time(),
+                        canonical_id,
+                    ),
+                )
+
+                for loser_id in loser_ids:
+                    child_cur = self._conn.execute(
+                        "UPDATE tree_nodes SET parent_id = ?, updated_at = ? WHERE parent_id = ?",
+                        (canonical_id, time.time(), loser_id),
+                    )
+                    relinked_children += int(child_cur.rowcount or 0)
+                    journal_cur = self._conn.execute(
+                        "UPDATE node_journal_entries SET node_id = ? WHERE node_id = ?",
+                        (canonical_id, loser_id),
+                    )
+                    relinked_journals += int(journal_cur.rowcount or 0)
+                    if relink_node_reference is not None:
+                        relink_node_reference(loser_id, canonical_id)
+                    self._conn.execute("DELETE FROM tree_nodes WHERE id = ?", (loser_id,))
+                    deleted_nodes += 1
+
+                merged_groups += 1
+
+            self._conn.commit()
+
+        return {
+            "merged_groups": merged_groups,
+            "deleted_nodes": deleted_nodes,
+            "relinked_children": relinked_children,
+            "relinked_journals": relinked_journals,
+            "canonical_ids": canonical_ids,
+            "deleted_ids": deleted_ids,
+        }
 
     def close(self) -> None:
         with self._lock:

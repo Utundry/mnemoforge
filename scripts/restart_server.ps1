@@ -8,6 +8,7 @@ param(
   [switch]$Reload,
   [switch]$WaitHealthy,
   [int]$WaitSeconds = 15,
+  [bool]$FailOnUnhealthy = $true,
   [switch]$DryRun
 )
 
@@ -79,12 +80,11 @@ function Stop-ByPidFile {
   }
 }
 
-function Stop-ByPort {
+function Get-ListeningPids {
   param([int]$Port)
   try {
-    # Get-NetTCPConnection часто требует повышенных прав; netstat работает почти всегда.
     $lines = netstat -ano -p tcp | Select-String -Pattern "LISTENING"
-    if (!$lines) { return $false }
+    if (!$lines) { return @() }
 
     $pids = @()
     foreach ($m in $lines) {
@@ -93,13 +93,23 @@ function Stop-ByPort {
       $local = $parts[1]
       $pidRaw = $parts[$parts.Count - 1]
       if ($local -notmatch (":$Port$")) { continue }
-      $pid = 0
-      if ([int]::TryParse($pidRaw, [ref]$pid)) {
-        $pids += $pid
+      $resolvedPid = 0
+      if ([int]::TryParse($pidRaw, [ref]$resolvedPid)) {
+        $pids += $resolvedPid
       }
     }
 
-    $pids = $pids | Select-Object -Unique
+    return @($pids | Select-Object -Unique)
+  } catch {
+    return @()
+  }
+}
+
+function Stop-ByPort {
+  param([int]$Port)
+  try {
+    # Get-NetTCPConnection часто требует повышенных прав; netstat работает почти всегда.
+    $pids = @(Get-ListeningPids -Port $Port)
     if (!$pids -or $pids.Count -eq 0) { return $false }
 
     foreach ($procId in $pids) {
@@ -109,6 +119,91 @@ function Stop-ByPort {
         Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
       }
     }
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Wait-PortReleased {
+  param([int]$Port, [int]$Seconds = 10)
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  while ((Get-Date) -lt $deadline) {
+    $listeners = @(Get-ListeningPids -Port $Port)
+    if ($listeners.Count -eq 0) {
+      return $true
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  return $false
+}
+
+function Wait-ListenerPids {
+  param([int]$Port, [int]$Seconds = 5)
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  while ((Get-Date) -lt $deadline) {
+    $listeners = @(Get-ListeningPids -Port $Port)
+    if ($listeners.Count -gt 0) {
+      return $listeners
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  return @()
+}
+
+function Wait-ServerPid {
+  param(
+    [int]$Port,
+    [string]$ApiKey,
+    [int]$Seconds = 5
+  )
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  while ((Get-Date) -lt $deadline) {
+    try {
+      $headers = @{}
+      if ($ApiKey) {
+        $headers["X-Api-Key"] = $ApiKey
+      }
+      $r = Invoke-RestMethod -TimeoutSec 2 -Uri "http://127.0.0.1:$Port/api/v1/admin/status" -Method Get -Headers $headers
+      $resolvedPid = 0
+      if ($r -and [int]::TryParse("$($r.pid)", [ref]$resolvedPid) -and $resolvedPid -gt 0) {
+        return $resolvedPid
+      }
+    } catch {}
+    Start-Sleep -Milliseconds 250
+  }
+  return 0
+}
+
+function Wait-LoggedServerPid {
+  param(
+    [string]$ErrLogPath,
+    [int]$Seconds = 5
+  )
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  while ((Get-Date) -lt $deadline) {
+    try {
+      if (Test-Path $ErrLogPath) {
+        $matches = Select-String -Path $ErrLogPath -Pattern 'Started server process \[(\d+)\]' -AllMatches
+        if ($matches) {
+          $last = $matches | Select-Object -Last 1
+          $resolvedPid = 0
+          if ($last.Matches.Count -gt 0 -and [int]::TryParse($last.Matches[0].Groups[1].Value, [ref]$resolvedPid) -and $resolvedPid -gt 0) {
+            return $resolvedPid
+          }
+        }
+      }
+    } catch {}
+    Start-Sleep -Milliseconds 250
+  }
+  return 0
+}
+
+function Test-ProcessAlive {
+  param([int]$ProcessId)
+  if ($ProcessId -le 0) { return $false }
+  try {
+    $null = Get-Process -Id $ProcessId -ErrorAction Stop
     return $true
   } catch {
     return $false
@@ -156,6 +251,10 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Push-Location $repoRoot
 try {
   $envPath = Join-Path $repoRoot ".env"
+  $apiKey = $env:API_KEY
+  if (!$apiKey) {
+    $apiKey = Read-DotEnvValue -Path $envPath -Key "API_KEY"
+  }
   if ($Port -le 0) {
     $p = Read-DotEnvValue -Path $envPath -Key "SERVER_PORT"
     if ($p) { [void][int]::TryParse($p, [ref]$Port) }
@@ -181,9 +280,19 @@ try {
   }
 
   $pidFile = Join-Path $repoRoot ".server.pid"
-  $stopped = (Stop-ByPidFile -PidPath $pidFile)
-  if (-not $stopped) { $stopped = (Stop-ByPort -Port $Port) }
-  if (-not $stopped) { $stopped = (Stop-UvicornFallback -Port $Port) }
+  $null = Stop-ByPidFile -PidPath $pidFile
+  Start-Sleep -Milliseconds 300
+  if (@(Get-ListeningPids -Port $Port).Count -gt 0) {
+    $null = Stop-ByPort -Port $Port
+    Start-Sleep -Milliseconds 300
+  }
+  if (@(Get-ListeningPids -Port $Port).Count -gt 0) {
+    $null = Stop-UvicornFallback -Port $Port
+  }
+  if (-not (Wait-PortReleased -Port $Port -Seconds 10)) {
+    $stuck = @(Get-ListeningPids -Port $Port)
+    throw "Port $Port is still busy after restart pre-stop sequence. Listening PIDs: $($stuck -join ', ')"
+  }
 
   $python = Join-Path $repoRoot ".venv\\Scripts\\python.exe"
   if (!(Test-Path $python)) {
@@ -277,7 +386,46 @@ try {
   if ($WaitHealthy -and -not $DryRun) {
     $ok = Wait-Health -Port $Port -Seconds $WaitSeconds
     if (!$ok) {
-      Write-Warning "Server started but health check did not pass in ${WaitSeconds}s. Check logs: $stdoutRun / $stderrRun"
+      $msg = "Server started but health check did not pass in ${WaitSeconds}s. Check logs: $stdoutRun / $stderrRun"
+      $stderrTail = ""
+      try {
+        if (Test-Path $stderrRun) {
+          $stderrTail = (Get-Content -Path $stderrRun -Tail 40 -ErrorAction SilentlyContinue) -join [Environment]::NewLine
+        }
+      } catch {}
+      if ($FailOnUnhealthy) {
+        if ($stderrTail) {
+          throw "$msg`n---- stderr tail ----`n$stderrTail"
+        }
+        throw $msg
+      }
+      Write-Warning $msg
+    } else {
+      $serverPid = 0
+      $listenerPids = @(Wait-ListenerPids -Port $Port -Seconds 5)
+      if ($serverPid -le 0) {
+        $serverPid = Wait-ServerPid -Port $Port -ApiKey $apiKey -Seconds 5
+      }
+      if ($serverPid -le 0) {
+        $serverPid = Wait-LoggedServerPid -ErrLogPath $stderrRun -Seconds 5
+      }
+      if ($serverPid -le 0 -and $listenerPids.Count -eq 1) {
+        $serverPid = $listenerPids[0]
+      }
+      if ($serverPid -le 0 -and (Test-ProcessAlive -ProcessId $proc.Id)) {
+        $serverPid = $proc.Id
+      }
+      if ($serverPid -gt 0 -and (Test-ProcessAlive -ProcessId $serverPid)) {
+        Set-Content -Path $pidFile -Value $serverPid -Encoding ascii
+      } else {
+        if ($listenerPids.Count -eq 1) {
+          Set-Content -Path $pidFile -Value $listenerPids[0] -Encoding ascii
+        } elseif ($listenerPids.Count -gt 1) {
+          Write-Warning "Multiple listeners detected on port ${Port}: $($listenerPids -join ', '). Keeping initial pidfile."
+        } else {
+          Write-Warning "Health check passed but no listener PID could be resolved for port $Port. Keeping initial pidfile."
+        }
+      }
     }
   }
 

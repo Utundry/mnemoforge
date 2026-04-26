@@ -119,6 +119,9 @@ class TestApproveReject:
         body = r.json()
         assert body["review_status"] == "approved"
         assert body["active"] is True
+        assert body["last_review_action"] == "approve_skill"
+        assert body["last_reviewed_by"] == "user"
+        assert body["last_review_source"] == "inline_user_approval"
 
     async def test_approved_skill_appears_in_pack(self, client):
         await _auto_generate_skill(client, ["approved-pack-domain"])
@@ -151,11 +154,18 @@ class TestApproveReject:
         items = [i for i in queue.json() if "reject-domain" in i["name"]]
         skill_id = items[0]["id"]
 
-        r = await client.post(f"/api/v1/skills/review/{skill_id}/reject?reason=not+useful")
+        r = await client.post(
+            f"/api/v1/skills/review/{skill_id}/reject?reason=not+useful",
+            json={"reviewed_by": "owner", "review_source": "dashboard_review"},
+        )
         assert r.status_code == 200
         body = r.json()
         assert body["review_status"] == "rejected"
         assert body["active"] is False
+        assert body["last_review_action"] == "reject_skill"
+        assert body["last_reviewed_by"] == "owner"
+        assert body["last_review_source"] == "dashboard_review"
+        assert body["last_review_reason"] == "not useful"
 
     async def test_rejected_skill_not_in_pack(self, client):
         await _auto_generate_skill(client, ["rejected-pack-domain"])
@@ -187,9 +197,11 @@ class TestAutoImprovements:
                 "agent_id": "test",
             })
 
-        r = await client.get("/api/v1/improvements?project=supermemory&status=open&limit=50")
+        r = await client.get("/api/v1/artifacts?project=supermemory&type=improvement&artifact_status=open&limit=50")
         assert r.status_code == 200
-        titles = [i["title"] for i in r.json()]
+        data = r.json()
+        items = data.get("items", [])
+        titles = [i["title"] for i in items]
         assert any("nginx" in t.lower() for t in titles)
 
     async def test_improvement_has_correct_tags(self, client):
@@ -199,9 +211,11 @@ class TestAutoImprovements:
                 "agent_id": "test",
             })
 
-        r = await client.get("/api/v1/improvements?project=supermemory&status=open&limit=50")
+        r = await client.get("/api/v1/artifacts?project=supermemory&type=improvement&artifact_status=open&limit=50")
         assert r.status_code == 200
-        skill_gap_items = [i for i in r.json() if "skill-gap" in i.get("tags", [])]
+        data = r.json()
+        items = data.get("items", [])
+        skill_gap_items = [i for i in items if "skill-gap" in i.get("tags", [])]
         assert len(skill_gap_items) >= 1
 
     async def test_no_improvements_when_no_missing_skills(self, client):
@@ -212,8 +226,8 @@ class TestAutoImprovements:
             "user_preference": [],
             "successful_pattern": [],
         })
-        r_before = await client.get("/api/v1/improvements?project=supermemory&status=open&limit=50")
-        count_before = len(r_before.json())
+        r_before = await client.get("/api/v1/artifacts?project=supermemory&type=improvement&artifact_status=open&limit=50")
+        count_before = len(r_before.json().get("items", []))
 
         with patch("app.routers.skills._llm", new=AsyncMock(return_value=empty_signal)):
             await client.post("/api/v1/skills/dialogue/analyze", json={
@@ -221,5 +235,5 @@ class TestAutoImprovements:
                 "agent_id": "test",
             })
 
-        r_after = await client.get("/api/v1/improvements?project=supermemory&status=open&limit=50")
-        assert len(r_after.json()) == count_before
+        r_after = await client.get("/api/v1/artifacts?project=supermemory&type=improvement&artifact_status=open&limit=50")
+        assert len(r_after.json().get("items", [])) == count_before

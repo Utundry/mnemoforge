@@ -424,6 +424,24 @@ class TestCandidateLifecycle:
         assert updated is not None
         assert updated["artifact_scope"] == "persistent_rule"
 
+    @pytest.mark.asyncio
+    async def test_promote_records_explicit_promotion_metadata(self, store):
+        uid = await _insert_candidate(store)
+        await store.approve_candidate(uid)
+        updated = await store.promote_artifact(
+            uid,
+            promoted_by="owner",
+            promotion_source="dashboard_review",
+            promotion_reason="Promote after dashboard review",
+        )
+        assert updated is not None
+        assert updated["artifact_scope"] == "persistent_rule"
+        assert updated["meta"]["last_promoted_by"] == "owner"
+        assert updated["meta"]["last_promotion_source"] == "dashboard_review"
+        assert updated["meta"]["last_promotion_reason"] == "Promote after dashboard review"
+        assert updated["meta"]["last_promotion_from"] == "runtime_hint"
+        assert updated["meta"]["last_promotion_to"] == "persistent_rule"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LearningStore — Report (get_report_candidates)
@@ -600,13 +618,32 @@ class TestGlmMirror:
         ollama.generate.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_telemetry_only_events_do_not_trigger_learning(self, store):
+        from app.services.glm_mirror import GlmMirror, _MIN_PATTERN_FREQ
+        mirror = GlmMirror()
+        for _ in range(_MIN_PATTERN_FREQ):
+            await store.write_event(
+                event_type="memory_write",
+                context_signature="project=supermemory;category=qa",
+            )
+        ollama = AsyncMock()
+        result = await mirror.run(ollama, store)
+        assert result.events_analyzed == 0
+        assert "insufficient_dialogue_evidence" in result.warnings
+        ollama.generate.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_valid_llm_response_creates_candidate(self, store):
         from app.services.glm_mirror import GlmMirror, _MIN_PATTERN_FREQ
         # Seed enough events to trigger analysis
         ctx = make_context_signature(project="sm", task_type="t", phase="p",
                                       category="c", transport="mcp")
         for _ in range(_MIN_PATTERN_FREQ):
-            await store.write_event(event_type="memory_write", context_signature=ctx)
+            await store.write_event(
+                event_type="dialogue_signal",
+                context_signature=ctx,
+                payload={"missing_skill": ["nginx"], "excerpt": "USER: help with nginx"},
+            )
 
         valid_candidates = [
             {
@@ -637,7 +674,11 @@ class TestGlmMirror:
         import json
         ctx = make_context_signature(project="sm")
         for _ in range(_MIN_PATTERN_FREQ):
-            await store.write_event(event_type="memory_write", context_signature=ctx)
+            await store.write_event(
+                event_type="dialogue_signal",
+                context_signature=ctx,
+                payload={"missing_skill": ["pytest"], "excerpt": "USER: help with pytest"},
+            )
 
         candidate = {
             "action_type": "suggest_save_result",
@@ -661,11 +702,52 @@ class TestGlmMirror:
         assert r2.candidates_created == 0
 
     @pytest.mark.asyncio
+    async def test_high_confidence_candidates_still_require_user_review(self, store):
+        from app.services.glm_mirror import GlmMirror, _MIN_PATTERN_FREQ
+        import json
+
+        ctx = make_context_signature(project="sm")
+        for _ in range(_MIN_PATTERN_FREQ):
+            await store.write_event(
+                event_type="dialogue_signal",
+                context_signature=ctx,
+                payload={"missing_skill": ["pytest"], "excerpt": "USER: help with pytest"},
+            )
+
+        candidate = {
+            "action_type": "suggest_save_result",
+            "artifact_type": "hint",
+            "trigger_dsl": "",
+            "observation": "Repeated observation.",
+            "why_it_matters": "Saves time.",
+            "proposed_content": "Auto-save after code changes.",
+            "confidence": 0.9,
+            "risk_level": "low",
+            "evidence_count": 5,
+        }
+        ollama = AsyncMock()
+        ollama.generate = AsyncMock(return_value=json.dumps([candidate]))
+        mirror = GlmMirror()
+
+        await mirror.run(ollama, store)
+        result = await mirror.run(ollama, store)
+        assert "user_review_required_for_high_confidence_candidates" in result.warnings
+
+        rows = await store.list_artifacts(scope="candidate", status="pending_review", limit=10)
+        assert len(rows) == 1
+        assert rows[0]["artifact_scope"] == "candidate"
+        assert rows[0]["status"] == "pending_review"
+
+    @pytest.mark.asyncio
     async def test_invalid_json_records_error(self, store):
         from app.services.glm_mirror import GlmMirror, _MIN_PATTERN_FREQ
         ctx = make_context_signature(project="sm")
         for _ in range(_MIN_PATTERN_FREQ):
-            await store.write_event(event_type="tool_call", context_signature=ctx)
+            await store.write_event(
+                event_type="dialogue_signal",
+                context_signature=ctx,
+                payload={"missing_skill": ["docker"], "excerpt": "USER: help with docker"},
+            )
 
         ollama = AsyncMock()
         ollama.generate = AsyncMock(return_value="this is not json at all")
@@ -680,7 +762,11 @@ class TestGlmMirror:
         import json
         ctx = make_context_signature(project="sm")
         for _ in range(_MIN_PATTERN_FREQ):
-            await store.write_event(event_type="memory_write", context_signature=ctx)
+            await store.write_event(
+                event_type="dialogue_signal",
+                context_signature=ctx,
+                payload={"missing_skill": ["kubernetes"], "excerpt": "USER: help with kubernetes"},
+            )
 
         bad_candidate = {
             "action_type": "DELETE_EVERYTHING",  # not in whitelist
@@ -706,7 +792,11 @@ class TestGlmMirror:
         import json
         ctx = make_context_signature(project="sm")
         for _ in range(_MIN_PATTERN_FREQ):
-            await store.write_event(event_type="memory_write", context_signature=ctx)
+            await store.write_event(
+                event_type="dialogue_signal",
+                context_signature=ctx,
+                payload={"missing_skill": ["ssl"], "excerpt": "USER: help with SSL"},
+            )
 
         high_risk = {
             "action_type": "suggest_save_result",
@@ -732,7 +822,11 @@ class TestGlmMirror:
         import json
         ctx = make_context_signature(project="sm")
         for _ in range(_MIN_PATTERN_FREQ):
-            await store.write_event(event_type="memory_write", context_signature=ctx)
+            await store.write_event(
+                event_type="dialogue_signal",
+                context_signature=ctx,
+                payload={"missing_skill": ["reverse proxy"], "excerpt": "USER: help with reverse proxy"},
+            )
 
         empty_obs = {
             "action_type": "suggest_save_result",
@@ -756,7 +850,11 @@ class TestGlmMirror:
         from app.services.glm_mirror import GlmMirror, _MIN_PATTERN_FREQ
         ctx = make_context_signature(project="sm")
         for _ in range(_MIN_PATTERN_FREQ):
-            await store.write_event(event_type="memory_write", context_signature=ctx)
+            await store.write_event(
+                event_type="dialogue_signal",
+                context_signature=ctx,
+                payload={"missing_skill": ["auth"], "excerpt": "USER: help with auth"},
+            )
 
         ollama = AsyncMock()
         ollama.generate = AsyncMock(return_value="[]")
@@ -793,7 +891,31 @@ class TestGlmMirror:
         prompt = ollama.generate.await_args.args[0]
         assert "nginx" in prompt
         assert "memory_context" not in prompt
-        assert "dialogue_evidence_absent_fallback_to_telemetry" not in result.warnings
+        assert "insufficient_dialogue_evidence" not in result.warnings
+
+    @pytest.mark.asyncio
+    async def test_synthetic_dialogue_events_are_excluded_from_learning(self, store):
+        from app.services.glm_mirror import GlmMirror, _MIN_PATTERN_FREQ
+
+        for _ in range(_MIN_PATTERN_FREQ):
+            await store.write_event(
+                event_type="dialogue_signal",
+                agent_id="pytest-agent",
+                project="supermemory",
+                context_signature="project=supermemory;category=dialogue_signal",
+                payload={
+                    "missing_skill": ["nginx"],
+                    "excerpt": "USER: help with nginx reverse proxy and SSL",
+                },
+            )
+
+        ollama = AsyncMock()
+        mirror = GlmMirror()
+        result = await mirror.run(ollama, store)
+
+        assert result.events_analyzed == 0
+        assert "insufficient_dialogue_evidence" in result.warnings
+        ollama.generate.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_last_result_stored(self, store):

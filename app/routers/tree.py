@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.dependencies import OllamaDep, QdrantDep
+from app.services.governed_artifact import apply_buffered_revision, discard_buffered_revision
 
 router = APIRouter(prefix="/tree", tags=["tree"])
 
@@ -94,12 +95,27 @@ class NodeUpdate(BaseModel):
 
 class PromoteRequest(BaseModel):
     parent_id: str = Field(..., description="Target project/area node id")
+    acted_by: str = Field("user", min_length=1, max_length=256)
+    action_source: str = Field("inline_user_approval", max_length=128)
+    reason: str = Field("", max_length=1000)
 
 
 class WorkspaceCreate(BaseModel):
     project_id: str
     dir_path: str
     canonical: bool = False
+
+
+class OrganizationActionRequest(BaseModel):
+    acted_by: str = Field("user", min_length=1, max_length=256)
+    action_source: str = Field("inline_user_approval", max_length=128)
+    reason: str = Field("", max_length=1000)
+
+
+class DocCandidateReviewRequest(BaseModel):
+    reviewed_by: str = Field("user", min_length=1, max_length=256)
+    review_source: str = Field("inline_user_approval", max_length=128)
+    reason: str = Field("", max_length=1000)
 
 
 class NodeCanonicalLinksResponse(BaseModel):
@@ -299,17 +315,47 @@ async def register_workspace(body: WorkspaceCreate):
 
 
 @router.post("/workspaces/{workspace_id}/promote")
-async def promote_workspace(workspace_id: str):
-    if not _store().promote_workspace(workspace_id):
+async def promote_workspace(workspace_id: str, body: OrganizationActionRequest | None = None):
+    action = body or OrganizationActionRequest()
+    if not _store().promote_workspace(
+        workspace_id,
+        acted_by=action.acted_by,
+        action_source=action.action_source,
+        reason=action.reason,
+    ):
         raise HTTPException(404, "Workspace not found")
-    return {"workspace_id": workspace_id, "status": "canonical"}
+    workspace = _store().get_workspace(workspace_id)
+    return {
+        "workspace_id": workspace_id,
+        "status": "canonical",
+        "workspace": workspace,
+        "org_last_action_type": "promote_workspace",
+        "org_last_action_by": action.acted_by,
+        "org_last_action_source": action.action_source,
+        "org_last_action_reason": action.reason or None,
+    }
 
 
 @router.post("/workspaces/{workspace_id}/archive")
-async def archive_workspace(workspace_id: str):
-    if not _store().archive_workspace(workspace_id):
+async def archive_workspace(workspace_id: str, body: OrganizationActionRequest | None = None):
+    action = body or OrganizationActionRequest()
+    if not _store().archive_workspace(
+        workspace_id,
+        acted_by=action.acted_by,
+        action_source=action.action_source,
+        reason=action.reason,
+    ):
         raise HTTPException(404, "Workspace not found")
-    return {"workspace_id": workspace_id, "status": "archived"}
+    workspace = _store().get_workspace(workspace_id)
+    return {
+        "workspace_id": workspace_id,
+        "status": "archived",
+        "workspace": workspace,
+        "org_last_action_type": "archive_workspace",
+        "org_last_action_by": action.acted_by,
+        "org_last_action_source": action.action_source,
+        "org_last_action_reason": action.reason or None,
+    }
 
 
 @router.get("/{node_id}/context")
@@ -375,29 +421,68 @@ async def regenerate_doc(node_id: str, background_tasks: BackgroundTasks,
 
 
 @router.post("/{node_id}/doc/apply-candidate")
-async def apply_candidate(node_id: str):
+async def apply_candidate(node_id: str, body: DocCandidateReviewRequest | None = None):
     """Apply pending doc_candidate as the active doc, clear lock."""
     s = _store()
     node = s.get_node(node_id)
     if not node:
         raise HTTPException(404, "Node not found")
-    candidate = node.get("doc_candidate", "")
-    if not candidate:
+    if not node.get("doc_candidate", ""):
         raise HTTPException(400, "No candidate to apply")
+    effective_doc, effective_generated_at, candidate_doc, candidate_generated_at = apply_buffered_revision(
+        effective_value=node.get("doc", ""),
+        effective_updated_at=node.get("doc_generated_at"),
+        candidate_value=node.get("doc_candidate", ""),
+        candidate_updated_at=node.get("doc_candidate_generated_at"),
+        empty_factory=str,
+    )
     meta = node.get("meta_json") or {}
+    review = body or DocCandidateReviewRequest()
     meta["doc_locked"] = False
-    s.update_node(node_id, doc=candidate, doc_candidate="",
-                  doc_generated_at=time.time(), meta_json=meta)
+    meta["doc_last_review_action"] = "apply_candidate"
+    meta["doc_last_reviewed_by"] = review.reviewed_by
+    meta["doc_last_review_source"] = review.review_source
+    meta["doc_last_reviewed_at"] = time.time()
+    meta["doc_last_review_reason"] = review.reason or None
+    s.update_node(
+        node_id,
+        doc=effective_doc,
+        doc_candidate=candidate_doc,
+        doc_generated_at=effective_generated_at,
+        doc_candidate_generated_at=candidate_generated_at,
+        meta_json=meta,
+    )
     return {"node_id": node_id, "doc_locked": False, "applied": True}
 
 
 @router.post("/{node_id}/doc/discard-candidate")
-async def discard_candidate(node_id: str):
+async def discard_candidate(node_id: str, body: DocCandidateReviewRequest | None = None):
     """Discard pending doc_candidate, keep manual doc as-is."""
     s = _store()
-    if not s.get_node(node_id):
+    node = s.get_node(node_id)
+    if not node:
         raise HTTPException(404, "Node not found")
-    s.update_node(node_id, doc_candidate="")
+    if not node.get("doc_candidate", ""):
+        raise HTTPException(400, "No candidate to discard")
+    _, _, candidate_doc, candidate_generated_at = discard_buffered_revision(
+        effective_value=node.get("doc", ""),
+        effective_updated_at=node.get("doc_generated_at"),
+        candidate_value=node.get("doc_candidate", ""),
+        empty_factory=str,
+    )
+    review = body or DocCandidateReviewRequest()
+    meta = node.get("meta_json") or {}
+    meta["doc_last_review_action"] = "discard_candidate"
+    meta["doc_last_reviewed_by"] = review.reviewed_by
+    meta["doc_last_review_source"] = review.review_source
+    meta["doc_last_reviewed_at"] = time.time()
+    meta["doc_last_review_reason"] = review.reason or None
+    s.update_node(
+        node_id,
+        doc_candidate=candidate_doc,
+        doc_candidate_generated_at=candidate_generated_at,
+        meta_json=meta,
+    )
     return {"node_id": node_id, "candidate_cleared": True}
 
 
@@ -421,8 +506,23 @@ async def promote_node(node_id: str, body: PromoteRequest):
     node = s.get_node(node_id)
     if not node:
         raise HTTPException(404, "Node not found")
-    s.update_node(node_id, parent_id=body.parent_id, status="planning" if node["status"] == "inbox" else node["status"])
-    return {"node_id": node_id, "parent_id": body.parent_id}
+    meta = node.get("meta_json") or {}
+    meta["org_last_action_type"] = "promote_node"
+    meta["org_last_action_by"] = body.acted_by
+    meta["org_last_action_source"] = body.action_source
+    meta["org_last_action_at"] = time.time()
+    meta["org_last_action_reason"] = body.reason or None
+    new_status = "planning" if node["status"] == "inbox" else node["status"]
+    s.update_node(node_id, parent_id=body.parent_id, status=new_status, meta_json=meta)
+    return {
+        "node_id": node_id,
+        "parent_id": body.parent_id,
+        "status": new_status,
+        "org_last_action_type": "promote_node",
+        "org_last_action_by": body.acted_by,
+        "org_last_action_source": body.action_source,
+        "org_last_action_reason": body.reason or None,
+    }
 
 
 @router.get("/{node_id}")
@@ -599,14 +699,37 @@ async def _sync_node_done_to_improvement(node_id: str, s) -> None:
         from app.services.improvements_store import get_improvements_store
         from uuid import UUID
         store = get_improvements_store()
-        await store.resolve(UUID(improvement_id))
+        await store.resolve(
+            UUID(improvement_id),
+            acted_by="system",
+            action_source="linked_tree_completion",
+            reason=f"Tree node {node_id} marked done",
+        )
         logger.info("Node %s done → improvement %s resolved", node_id, improvement_id)
     except Exception as e:
         logger.warning("Failed to sync node done to improvement: %s", e)
 
 
 @router.delete("/{node_id}")
-async def delete_node(node_id: str):
-    if not _store().delete_node(node_id):
+async def delete_node(node_id: str, body: OrganizationActionRequest | None = None):
+    s = _store()
+    node = s.get_node(node_id)
+    if not node:
         raise HTTPException(404, "Node not found")
-    return {"node_id": node_id, "status": "archived"}
+    action = body or OrganizationActionRequest()
+    meta = node.get("meta_json") or {}
+    meta["org_last_action_type"] = "archive_node"
+    meta["org_last_action_by"] = action.acted_by
+    meta["org_last_action_source"] = action.action_source
+    meta["org_last_action_at"] = time.time()
+    meta["org_last_action_reason"] = action.reason or None
+    if not s.update_node(node_id, status="archived", meta_json=meta):
+        raise HTTPException(404, "Node not found")
+    return {
+        "node_id": node_id,
+        "status": "archived",
+        "org_last_action_type": "archive_node",
+        "org_last_action_by": action.acted_by,
+        "org_last_action_source": action.action_source,
+        "org_last_action_reason": action.reason or None,
+    }

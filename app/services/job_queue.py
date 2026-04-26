@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 import time
 import uuid
@@ -28,6 +29,7 @@ _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS jobs (
     id           TEXT PRIMARY KEY,
     job_type     TEXT NOT NULL,
+    lane         TEXT NOT NULL DEFAULT 'fast',
     payload      TEXT NOT NULL,
     status       TEXT NOT NULL DEFAULT 'queued',
     created_at   REAL NOT NULL,
@@ -43,9 +45,35 @@ CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
 
 Handler = Callable[[dict], Coroutine[Any, Any, dict]]
 
+_SLOW_JOB_TYPES = {
+    "skills_retag",
+    "qdrant_reindex_from_sqlite",
+    "project_ingest",
+    "project_refresh",
+    "rebuild_project_tasks",
+    "docs_rebuild",
+    "docs_sync_memory",
+    "regenerate_skill_content",
+    "evolve_skills",
+    "verify_tree_classification",
+    "memory_scribe_compact",
+}
+
 
 class JobQueue:
     def __init__(self, db_path: Path) -> None:
+        total_workers = max(1, int(os.getenv("JOB_QUEUE_WORKERS", "2")))
+        fast_workers = os.getenv("JOB_QUEUE_FAST_WORKERS")
+        slow_workers = os.getenv("JOB_QUEUE_SLOW_WORKERS")
+        if fast_workers not in {None, ""} or slow_workers not in {None, ""}:
+            resolved_fast_workers = max(1, int(fast_workers or "1"))
+            resolved_slow_workers = max(1, int(slow_workers or "1"))
+        elif total_workers <= 1:
+            resolved_fast_workers = 1
+            resolved_slow_workers = 1
+        else:
+            resolved_slow_workers = 1
+            resolved_fast_workers = max(1, total_workers - resolved_slow_workers)
         self._path = db_path
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
@@ -53,11 +81,24 @@ class JobQueue:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(_CREATE_SQL)
-            self._conn.commit()
-        self._queue: asyncio.Queue = asyncio.Queue()
+            columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "lane" not in columns:
+                self._conn.execute("ALTER TABLE jobs ADD COLUMN lane TEXT NOT NULL DEFAULT 'fast'")
+                self._conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_lane_status ON jobs(lane, status, created_at)")
+        self._conn.commit()
+        self._fast_queue: asyncio.Queue = asyncio.Queue()
+        self._slow_queue: asyncio.Queue = asyncio.Queue()
         self._handlers: dict[str, Handler] = {}
+        self._fast_worker_count = resolved_fast_workers
+        self._slow_worker_count = resolved_slow_workers
         self._worker_task: Optional[asyncio.Task] = None
-        logger.info("JobQueue initialized: %s", db_path)
+        self._worker_tasks: list[asyncio.Task] = []
+        logger.info(
+            "JobQueue initialized: %s (fast_workers=%d slow_workers=%d)",
+            db_path,
+            resolved_fast_workers,
+            resolved_slow_workers,
+        )
 
     # ── Handler registry ────────────────────────────────────────────────────────
 
@@ -68,18 +109,31 @@ class JobQueue:
 
     # ── Submit ──────────────────────────────────────────────────────────────────
 
+    def _resolve_lane(self, job_type: str, payload: dict[str, Any] | None = None) -> str:
+        requested = str((payload or {}).get("_queue_lane") or "").strip().lower()
+        if requested in {"fast", "slow"}:
+            return requested
+        return "slow" if job_type in _SLOW_JOB_TYPES else "fast"
+
+    async def _enqueue_job(self, job_id: str, lane: str) -> None:
+        if lane == "slow":
+            await self._slow_queue.put(job_id)
+            return
+        await self._fast_queue.put(job_id)
+
     async def submit(self, job_type: str, payload: dict) -> str:
         """Persist job and enqueue for background processing. Returns job_id."""
         job_id = str(uuid.uuid4())
         now = time.time()
+        lane = self._resolve_lane(job_type, payload)
         with self._lock:
             self._conn.execute(
-                "INSERT INTO jobs(id, job_type, payload, status, created_at) VALUES (?,?,?,?,?)",
-                (job_id, job_type, json.dumps(payload), "queued", now),
+                "INSERT INTO jobs(id, job_type, lane, payload, status, created_at) VALUES (?,?,?,?,?,?)",
+                (job_id, job_type, lane, json.dumps(payload), "queued", now),
             )
             self._conn.commit()
-        await self._queue.put(job_id)
-        logger.info("Submitted job %s type=%s", job_id[:8], job_type)
+        await self._enqueue_job(job_id, lane)
+        logger.info("Submitted job %s type=%s lane=%s", job_id[:8], job_type, lane)
         return job_id
 
     # ── Query ───────────────────────────────────────────────────────────────────
@@ -93,6 +147,7 @@ class JobQueue:
         self,
         job_type: Optional[str] = None,
         status: Optional[str] = None,
+        lane: Optional[str] = None,
         limit: int = 20,
     ) -> list[dict]:
         sql = "SELECT * FROM jobs WHERE 1=1"
@@ -103,6 +158,9 @@ class JobQueue:
         if status:
             sql += " AND status=?"
             params.append(status)
+        if lane:
+            sql += " AND lane=?"
+            params.append(lane)
         sql += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
         with self._lock:
@@ -167,15 +225,15 @@ class JobQueue:
             self._set_failed(job_id, str(e))
             logger.error("Job %s failed (%s): %s", job_id[:8], job_type, e)
 
-    async def _worker_loop(self) -> None:
-        logger.info("Job queue worker started")
+    async def _worker_loop(self, queue: asyncio.Queue, *, lane: str, worker_index: int = 0) -> None:
+        logger.info("Job queue worker started (lane=%s worker=%d)", lane, worker_index)
         while True:
             try:
-                job_id = await self._queue.get()
+                job_id = await queue.get()
                 await self._process(job_id)
-                self._queue.task_done()
+                queue.task_done()
             except asyncio.CancelledError:
-                logger.info("Job queue worker stopped")
+                logger.info("Job queue worker stopped (lane=%s worker=%d)", lane, worker_index)
                 break
             except Exception as e:
                 logger.error("Unexpected worker error: %s", e)
@@ -184,7 +242,7 @@ class JobQueue:
         """Re-queue interrupted jobs and start the background worker."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id FROM jobs WHERE status IN ('queued','running') ORDER BY created_at"
+                "SELECT id, lane FROM jobs WHERE status IN ('queued','running') ORDER BY created_at"
             ).fetchall()
             # Jobs stuck in 'running' were interrupted by server restart → re-queue
             self._conn.execute(
@@ -193,19 +251,31 @@ class JobQueue:
             self._conn.commit()
 
         for row in rows:
-            await self._queue.put(row[0])
+            await self._enqueue_job(row["id"], str(row["lane"] or "fast"))
         if rows:
             logger.info("Re-queued %d interrupted jobs", len(rows))
 
-        self._worker_task = asyncio.create_task(self._worker_loop())
+        self._worker_tasks = []
+        self._worker_tasks.extend(
+            asyncio.create_task(self._worker_loop(self._fast_queue, lane="fast", worker_index=worker_index + 1))
+            for worker_index in range(self._fast_worker_count)
+        )
+        self._worker_tasks.extend(
+            asyncio.create_task(self._worker_loop(self._slow_queue, lane="slow", worker_index=worker_index + 1))
+            for worker_index in range(self._slow_worker_count)
+        )
+        self._worker_task = self._worker_tasks[0] if self._worker_tasks else None
 
     async def stop(self) -> None:
-        if self._worker_task:
-            self._worker_task.cancel()
+        for task in self._worker_tasks:
+            task.cancel()
+        for task in self._worker_tasks:
             try:
-                await self._worker_task
+                await task
             except asyncio.CancelledError:
                 pass
+        self._worker_tasks = []
+        self._worker_task = None
         with self._lock:
             self._conn.close()
 

@@ -79,14 +79,24 @@ Generate the complete SKILL.md content. Start directly with "# " heading.
 
 async def _llm(prompt: str, timeout: float = 60.0) -> str:
     """Call cloud LLM if configured, otherwise fall back to local Ollama."""
-    from app.services.cloud_llm import cloud_available, cloud_complete, cloud_provider
+    from app.services.cloud_llm import cloud_available, cloud_provider
+    from app.services.llm_gateway import get_cloud_gateway
     from app.services.performance_tracker import get_tracker
     from time import perf_counter
 
     if cloud_available():
         started = perf_counter()
         try:
-            result = await cloud_complete(prompt, timeout=timeout)
+            result = await get_cloud_gateway().generate(
+                prompt,
+                task_type="text_summarization",
+                mode="economy",
+                max_tokens=700,
+                temperature=0.2,
+                timeout=timeout,
+                allow_local_fallback=True,
+                prefer_local=True,
+            )
             get_tracker().record(
                 component=cloud_provider(), task_type="crystallize_llm",
                 success=True, latency_ms=round((perf_counter() - started) * 1000, 1),

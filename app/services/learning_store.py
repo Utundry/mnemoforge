@@ -733,6 +733,8 @@ class LearningStore:
         episode_id: Optional[str] = None,
         context_signature: Optional[str] = None,
         since_ts: Optional[float] = None,
+        before_ts: Optional[float] = None,
+        before_id: Optional[int] = None,
         limit: int = 100,
     ) -> list[dict]:
         clauses: list[str] = []
@@ -752,13 +754,20 @@ class LearningStore:
         if since_ts is not None:
             clauses.append("ts >= ?")
             params.append(since_ts)
+        if before_ts is not None:
+            if before_id is not None:
+                clauses.append("(ts < ? OR (ts = ? AND id < ?))")
+                params.extend([before_ts, before_ts, int(before_id)])
+            else:
+                clauses.append("ts < ?")
+                params.append(before_ts)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         params.append(limit)
 
         def _do() -> list[dict]:
             with self._lock:
                 rows = self._conn.execute(
-                    f"SELECT * FROM events {where} ORDER BY ts DESC LIMIT ?",
+                    f"SELECT * FROM events {where} ORDER BY ts DESC, id DESC LIMIT ?",
                     params,
                 ).fetchall()
             return [dict(r) for r in rows]
@@ -819,13 +828,22 @@ class LearningStore:
     async def list_feedback(
         self,
         artifact_id: Optional[str] = None,
+        source: Optional[str] = None,
+        since_ts: Optional[float] = None,
         limit: int = 50,
     ) -> list[dict]:
         params: list = []
-        where = ""
+        clauses = []
         if artifact_id:
-            where = "WHERE artifact_id = ?"
+            clauses.append("artifact_id = ?")
             params.append(artifact_id)
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        if since_ts is not None:
+            clauses.append("ts >= ?")
+            params.append(float(since_ts))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(limit)
 
         def _do() -> list[dict]:
@@ -1306,14 +1324,21 @@ class LearningStore:
 
         return await self._run_sync(_do)
 
-    async def promote_artifact(self, artifact_id: UUID, promoted_by: str) -> Optional[dict]:
+    async def promote_artifact(
+        self,
+        artifact_id: UUID,
+        promoted_by: str,
+        *,
+        promotion_source: str = "inline_user_approval",
+        promotion_reason: str = "",
+    ) -> Optional[dict]:
         """Advance scope one step in lifecycle. Returns updated row or None if at max/candidate."""
         now = time.time()
 
         def _do() -> Optional[dict]:
             with self._lock:
                 row = self._conn.execute(
-                    "SELECT artifact_scope FROM artifacts WHERE id = ?",
+                    "SELECT artifact_scope, meta_json FROM artifacts WHERE id = ?",
                     (str(artifact_id),),
                 ).fetchone()
                 if row is None:
@@ -1327,11 +1352,19 @@ class LearningStore:
                     next_scope = _ARTIFACT_SCOPE_ORDER[idx + 1]
                 except (ValueError, IndexError):
                     return None
+                meta = json.loads(row["meta_json"] or "{}")
+                meta["last_promoted_by"] = (promoted_by or "").strip()
+                meta["last_promotion_source"] = (promotion_source or "inline_user_approval").strip() or "inline_user_approval"
+                meta["last_promoted_at"] = now
+                meta["last_promotion_from"] = current
+                meta["last_promotion_to"] = next_scope
+                if promotion_reason.strip():
+                    meta["last_promotion_reason"] = promotion_reason.strip()
                 self._conn.execute(
                     """UPDATE artifacts
-                       SET artifact_scope = ?, promoted_by = ?, updated_at = ?
+                       SET artifact_scope = ?, promoted_by = ?, updated_at = ?, meta_json = ?
                        WHERE id = ?""",
-                    (next_scope, promoted_by, now, str(artifact_id)),
+                    (next_scope, promoted_by, now, json.dumps(meta), str(artifact_id)),
                 )
                 self._conn.commit()
                 updated = self._conn.execute(
@@ -1343,14 +1376,21 @@ class LearningStore:
 
     # ── Candidate review ──────────────────────────────────────────────────────
 
-    async def approve_candidate(self, artifact_id: UUID) -> Optional[dict]:
+    async def approve_candidate(
+        self,
+        artifact_id: UUID,
+        *,
+        approved_by: str = "user",
+        approval_source: str = "inline_user_approval",
+        approval_reason: str = "",
+    ) -> Optional[dict]:
         """Promote candidate → runtime_hint (status=active)."""
         now = time.time()
 
         def _do() -> Optional[dict]:
             with self._lock:
                 row = self._conn.execute(
-                    "SELECT artifact_scope, status FROM artifacts WHERE id = ?",
+                    "SELECT artifact_scope, status, meta_json FROM artifacts WHERE id = ?",
                     (str(artifact_id),),
                 ).fetchone()
                 if (
@@ -1359,11 +1399,20 @@ class LearningStore:
                     or row["status"] != "pending_review"
                 ):
                     return None
+                meta = json.loads(row["meta_json"] or "{}")
+                meta["approved_by"] = (approved_by or "user").strip() or "user"
+                meta["approval_source"] = (approval_source or "inline_user_approval").strip() or "inline_user_approval"
+                meta["approved_at"] = now
+                if approval_reason.strip():
+                    meta["approval_reason"] = approval_reason.strip()
                 self._conn.execute(
                     """UPDATE artifacts
-                       SET artifact_scope = 'runtime_hint', status = 'active', updated_at = ?
+                       SET artifact_scope = 'runtime_hint',
+                           status = 'active',
+                           updated_at = ?,
+                           meta_json = ?
                        WHERE id = ?""",
-                    (now, str(artifact_id)),
+                    (now, json.dumps(meta), str(artifact_id)),
                 )
                 self._conn.commit()
                 updated = self._conn.execute(
@@ -1391,14 +1440,21 @@ class LearningStore:
                 logger.debug("Learning vector index payload update skipped (non-fatal): %s", exc)
         return updated
 
-    async def reject_candidate(self, artifact_id: UUID) -> Optional[dict]:
+    async def reject_candidate(
+        self,
+        artifact_id: UUID,
+        *,
+        rejected_by: str = "user",
+        rejection_source: str = "inline_user_approval",
+        rejection_reason: str = "",
+    ) -> Optional[dict]:
         """Archive candidate and record rejection."""
         now = time.time()
 
         def _do() -> Optional[dict]:
             with self._lock:
                 row = self._conn.execute(
-                    "SELECT artifact_scope, status FROM artifacts WHERE id = ?",
+                    "SELECT artifact_scope, status, meta_json FROM artifacts WHERE id = ?",
                     (str(artifact_id),),
                 ).fetchone()
                 if (
@@ -1407,11 +1463,19 @@ class LearningStore:
                     or row["status"] != "pending_review"
                 ):
                     return None
+                meta = json.loads(row["meta_json"] or "{}")
+                meta["rejected_by"] = (rejected_by or "user").strip() or "user"
+                meta["rejection_source"] = (
+                    (rejection_source or "inline_user_approval").strip() or "inline_user_approval"
+                )
+                meta["rejected_at"] = now
+                if rejection_reason.strip():
+                    meta["rejection_reason"] = rejection_reason.strip()
                 self._conn.execute(
                     """UPDATE artifacts
-                       SET status = 'archived', rejects = rejects + 1, updated_at = ?
+                       SET status = 'archived', rejects = rejects + 1, updated_at = ?, meta_json = ?
                        WHERE id = ?""",
-                    (now, str(artifact_id)),
+                    (now, json.dumps(meta), str(artifact_id)),
                 )
                 self._conn.commit()
                 updated = self._conn.execute(
@@ -1433,6 +1497,11 @@ class LearningStore:
                         "artifact_scope": "candidate",
                         "status": "archived",
                         "updated_at": now,
+                        "rejected_by": (rejected_by or "user").strip() or "user",
+                        "rejection_source": (
+                            (rejection_source or "inline_user_approval").strip() or "inline_user_approval"
+                        ),
+                        "rejected_at": now,
                     },
                 )
             except Exception as exc:
@@ -1440,7 +1509,13 @@ class LearningStore:
         return updated
 
     async def defer_candidate(
-        self, artifact_id: UUID, defer_days: Optional[int] = None
+        self,
+        artifact_id: UUID,
+        defer_days: Optional[int] = None,
+        *,
+        deferred_by: str = "user",
+        defer_source: str = "inline_user_approval",
+        defer_reason: str = "",
     ) -> Optional[dict]:
         """
         Defer a candidate:
@@ -1454,7 +1529,7 @@ class LearningStore:
         def _do() -> Optional[dict]:
             with self._lock:
                 row = self._conn.execute(
-                    "SELECT artifact_scope, status, defer_count FROM artifacts WHERE id = ?",
+                    "SELECT artifact_scope, status, defer_count, meta_json FROM artifacts WHERE id = ?",
                     (str(artifact_id),),
                 ).fetchone()
                 if (
@@ -1469,13 +1544,21 @@ class LearningStore:
                 effective_days = min(base * (2 ** (defer_count - 1)), _DEFER_MAX_DAYS)
                 next_surface = now + effective_days * 86400
                 status = "archived" if effective_days >= _DEFER_MAX_DAYS else "pending_review"
+                meta = json.loads(row["meta_json"] or "{}")
+                meta["last_deferred_by"] = (deferred_by or "user").strip() or "user"
+                meta["last_defer_source"] = (
+                    (defer_source or "inline_user_approval").strip() or "inline_user_approval"
+                )
+                meta["last_deferred_at"] = now
+                if defer_reason.strip():
+                    meta["last_defer_reason"] = defer_reason.strip()
 
                 self._conn.execute(
                     """UPDATE artifacts
                        SET defer_count = ?, next_surface_after = ?, status = ?,
-                           updated_at = ?
+                           updated_at = ?, meta_json = ?
                        WHERE id = ?""",
-                    (defer_count, next_surface, status, now, str(artifact_id)),
+                    (defer_count, next_surface, status, now, json.dumps(meta), str(artifact_id)),
                 )
                 self._conn.commit()
                 updated = self._conn.execute(
@@ -1497,6 +1580,11 @@ class LearningStore:
                         "artifact_scope": "candidate",
                         "status": str(updated.get("status") or "pending_review"),
                         "updated_at": now,
+                        "last_deferred_by": (deferred_by or "user").strip() or "user",
+                        "last_defer_source": (
+                            (defer_source or "inline_user_approval").strip() or "inline_user_approval"
+                        ),
+                        "last_deferred_at": now,
                     },
                 )
             except Exception as exc:
@@ -1700,6 +1788,59 @@ class LearningStore:
         return await self._run_sync(_do)
 
     # ── Decay ─────────────────────────────────────────────────────────────────
+
+    async def set_artifact_status(
+        self,
+        artifact_id: UUID,
+        *,
+        status: str,
+        acted_by: str = "system",
+        action_source: str = "inline_user_approval",
+        reason: str = "",
+    ) -> Optional[dict]:
+        now = time.time()
+
+        def _do() -> Optional[dict]:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT * FROM artifacts WHERE id = ?",
+                    (str(artifact_id),),
+                ).fetchone()
+                if row is None:
+                    return None
+                meta = json.loads(row["meta_json"] or "{}")
+                meta["status_updated_by"] = (acted_by or "system").strip() or "system"
+                meta["status_update_source"] = (action_source or "inline_user_approval").strip() or "inline_user_approval"
+                meta["status_updated_at"] = now
+                meta["last_review_action"] = f"set_status:{status}"
+                if reason.strip():
+                    meta["status_update_reason"] = reason.strip()
+                self._conn.execute(
+                    "UPDATE artifacts SET status = ?, updated_at = ?, meta_json = ? WHERE id = ?",
+                    (status, now, json.dumps(meta), str(artifact_id)),
+                )
+                self._conn.commit()
+                updated = self._conn.execute(
+                    "SELECT * FROM artifacts WHERE id = ?",
+                    (str(artifact_id),),
+                ).fetchone()
+            return _row_to_dict(updated) if updated else None
+
+        updated = await self._run_sync(_do)
+        if updated is not None:
+            try:
+                from app.dependencies import get_qdrant
+                from app.services.learning_vector_index import set_artifact_payload
+
+                qdrant = get_qdrant()
+                await set_artifact_payload(
+                    qdrant._client,
+                    artifact_id=artifact_id,
+                    payload={"status": status, "updated_at": now},
+                )
+            except Exception as exc:
+                logger.debug("Learning vector index payload status update skipped (non-fatal): %s", exc)
+        return updated
 
     async def decay_stale_artifacts(
         self,

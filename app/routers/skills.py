@@ -23,15 +23,34 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.dependencies import JobQueueDep, OllamaDep, QdrantDep
+from app.services.data_integrity_service import SKILL_DOMAIN_TAGS_FILTER_SLICE_ID
+from app.services.new_terminology import sanitize_new_terminology_candidate
+from app.services.new_terminology import (
+    sanitize_successful_pattern_candidate,
+    should_reclassify_as_missing_skill,
+)
 from app.services.performance_tracker import get_tracker
 from app.services.adaptive_state import get_adaptive_store
-from app.services.text_localization import normalize_text_for_display, prepare_artifact_texts
+from app.services.skill_gap_domains import canonicalize_skill_gap_domain, refine_skill_gap_domains
+from app.services.text_localization import (
+    is_low_quality_text,
+    looks_like_mojibake,
+    normalize_text_for_display,
+    prepare_artifact_texts,
+)
 from qdrant_client.http import models as qmodels
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/skills", tags=["skills"])
+SELF_PROJECT_ID = settings.self_project_id
 
 MANAGER_MODEL = "qwen3:1.7b"
+
+
+class SkillReviewActionRequest(BaseModel):
+    reviewed_by: str = Field("user", min_length=1, max_length=256)
+    review_source: str = Field("inline_user_approval", max_length=128)
+    reason: str = Field("", max_length=1000)
 
 # Known domains for auto-suggestion
 KNOWN_DOMAINS = [
@@ -111,13 +130,17 @@ async def _load_user_preferences(qdrant, agent_id: Optional[str], limit: int = 1
         qmodels.FieldCondition(key="category", match=qmodels.MatchValue(value="user_preference")),
         qmodels.FieldCondition(key="agent_id", match=qmodels.MatchValue(value=agent_id)),
     ]
-    results, _ = await qdrant._client.scroll(
-        collection_name=qdrant._collection,
-        scroll_filter=qmodels.Filter(must=must),
-        limit=limit,
-        with_payload=True,
-        with_vectors=False,
-    )
+    try:
+        results, _ = await qdrant._client.scroll(
+            collection_name=qdrant._collection,
+            scroll_filter=qmodels.Filter(must=must),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+    except Exception as e:
+        logger.warning("user preference scroll failed, continuing without preferences: %s", e)
+        return []
     preferences: list[str] = []
     seen: set[str] = set()
     for result in results:
@@ -194,10 +217,20 @@ class GenerateForDomainRequest(BaseModel):
 
 async def _llm(prompt: str) -> str:
     """Call cloud LLM if configured, otherwise fall back to local Ollama."""
-    from app.services.cloud_llm import cloud_available, cloud_complete
+    from app.services.cloud_llm import cloud_available
+    from app.services.llm_gateway import get_cloud_gateway
     if cloud_available():
         try:
-            return await cloud_complete(prompt, timeout=60.0)
+            return await get_cloud_gateway().generate(
+                prompt,
+                task_type="text_summarization",
+                mode="economy",
+                max_tokens=700,
+                temperature=0.2,
+                timeout=60.0,
+                allow_local_fallback=True,
+                prefer_local=True,
+            )
         except Exception as e:
             logger.warning("Cloud LLM failed in skills, falling back to local: %s", e)
 
@@ -315,13 +348,41 @@ async def _write_skill_to_store(
     description: str,
     platform: str,
     reference_url: str | None = None,
+    *,
+    domain_tags: list[str] | None = None,
+    importance_score: float | None = None,
+    agent_id: str | None = None,
+    suppressed: bool | None = None,
+    pinned: bool | None = None,
+    timestamp: str | None = None,
+    source: str | None = None,
+    tags: list[str] | None = None,
+    memory_type: str | None = None,
+    review_status: str | None = None,
+    auto_generated: bool | None = None,
 ) -> None:
     """Dual-write skill content + metadata to SQLite memory_store."""
     from app.services.memory_store import get_memory_store
     await get_memory_store().upsert(
         memory_id, "skill", content,
-        {"skill_name": skill_name, "description": description,
-         "platform": platform, "reference_url": reference_url},
+        {
+            "category": "skill",
+            "skill_name": skill_name,
+            "description": description,
+            "platform": platform,
+            "reference_url": reference_url,
+            "domain_tags": domain_tags or [],
+            "importance_score": importance_score if importance_score is not None else 0.5,
+            "agent_id": agent_id or "shared",
+            "timestamp": timestamp or "",
+            "source": source or "",
+            "tags": list(tags or []),
+            "memory_type": memory_type or "context",
+            "suppressed": bool(suppressed) if suppressed is not None else False,
+            "pinned": bool(pinned) if pinned is not None else False,
+            "review_status": review_status,
+            "auto_generated": bool(auto_generated) if auto_generated is not None else False,
+        },
     )
 
 
@@ -362,6 +423,178 @@ async def _hydrate_content_bulk(skills: list[dict]) -> list[dict]:
     return skills
 
 
+def _fallback_skill_record_from_store(row: dict) -> dict:
+    meta = row.get("metadata", {})
+    content = row.get("content", "")
+    heading_match = re.search(r"^\s{0,3}#\s+(.+)$", content, re.MULTILINE)
+    inferred_name = heading_match.group(1).strip() if heading_match else ""
+    name = _derive_fallback_skill_name(row, meta, inferred_name, content)
+    description = meta.get("description") or content[:100]
+    domain_tags = meta.get("domain_tags") or []
+    return {
+        "id": row["memory_id"],
+        "name": name,
+        "description": description,
+        "platform": meta.get("platform", "claude"),
+        "agent_id": meta.get("agent_id", "shared"),
+        "domain_tags": domain_tags,
+        "importance_score": meta.get("importance_score", 0.5),
+        "timestamp": "",
+        "content": content,
+        "install_path": f"~/.claude/skills/{name}/SKILL.md",
+        "usage_count": 0,
+        "helpful_count": 0,
+        "usefulness_score": 1.0,
+        "suppressed": bool(meta.get("suppressed", False)),
+        "pinned": bool(meta.get("pinned", False)),
+        "reference_url": meta.get("reference_url"),
+    }
+
+
+_WEAK_SKILL_NAMES = {
+    "",
+    "unknown",
+    "skill",
+    "legacy-skill",
+    "unnamed",
+    "untitled",
+    "none",
+    "na",
+    "n-a",
+}
+
+
+def _slugify_skill_name(raw: str) -> str:
+    slug = re.sub(r"[\s_/]+", "-", raw.strip().lower())
+    slug = re.sub(r"[^a-z0-9-]+", "-", slug)
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return slug[:64]
+
+
+def _is_weak_skill_name(name: str) -> bool:
+    compact = _slugify_skill_name(name)
+    if compact in _WEAK_SKILL_NAMES:
+        return True
+    return compact.startswith("unknown")
+
+
+def _derive_fallback_skill_name(row: dict, meta: dict, inferred_name: str, content: str) -> str:
+    candidates: list[str] = []
+
+    stored_name = str(meta.get("skill_name") or "").strip()
+    if stored_name:
+        candidates.append(stored_name)
+
+    if inferred_name:
+        candidates.append(inferred_name)
+
+    for tag in meta.get("domain_tags") or []:
+        tag_text = str(tag).strip()
+        if tag_text:
+            candidates.append(f"{tag_text}-skill")
+
+    if not inferred_name:
+        # If markdown heading is absent, use the first meaningful line as weak signal.
+        for line in content.splitlines():
+            cleaned = re.sub(r"^[#>*\-\d.\s]+", "", line).strip()
+            if cleaned:
+                candidates.append(cleaned)
+                break
+
+    description = str(meta.get("description") or "").strip()
+    if description:
+        candidates.append(description.splitlines()[0])
+
+    memory_suffix = str(row.get("memory_id", ""))[:8]
+    if memory_suffix:
+        candidates.append(f"legacy-skill-{memory_suffix}")
+    else:
+        candidates.append("legacy-skill")
+
+    for candidate in candidates:
+        slug = _slugify_skill_name(candidate)
+        if slug and not _is_weak_skill_name(slug):
+            return slug
+    return "legacy-skill"
+
+
+def _derive_fallback_skill_tags(meta: dict, content: str) -> list[str]:
+    tags: list[str] = []
+    seen: set[str] = set()
+    alias_map = {
+        "dev": "development",
+        "ops": "devops",
+        "db": "database",
+    }
+
+    def _push(value: str) -> None:
+        normalized = _slugify_skill_name(alias_map.get(value.strip().lower(), value))
+        token = normalized.replace("-", "")
+        if not token:
+            return
+        if not normalized or normalized in seen:
+            return
+        seen.add(normalized)
+        tags.append(normalized[:32])
+
+    for item in meta.get("domain_tags") or []:
+        _push(str(item))
+
+    haystack = content.lower()
+    for domain in KNOWN_DOMAINS:
+        if domain in haystack:
+            _push(domain)
+        if len(tags) >= 6:
+            break
+
+    if len(tags) < 2:
+        name_hint = str(meta.get("skill_name") or meta.get("name") or "")
+        for piece in _slugify_skill_name(name_hint).split("-"):
+            if len(piece) >= 4 and piece not in _WEAK_SKILL_NAMES:
+                _push(piece)
+            if len(tags) >= 6:
+                break
+
+    if len(tags) < 2:
+        heading_match = re.search(r"^#\s+(.+)", content, re.MULTILINE)
+        line_hint = heading_match.group(1).strip() if heading_match else ""
+        if not line_hint:
+            for line in content.splitlines():
+                cleaned = re.sub(r"^[#>*\-\d.\s]+", "", line).strip()
+                if cleaned:
+                    line_hint = cleaned
+                    break
+        for piece in _slugify_skill_name(line_hint).split("-"):
+            if len(piece) >= 3 and piece not in _WEAK_SKILL_NAMES:
+                _push(piece)
+            if len(tags) >= 6:
+                break
+
+    if not tags:
+        _push("workflow")
+    if len(tags) == 1:
+        _push("automation")
+    return tags[:6]
+
+
+def _store_skill_matches_domains(skill: dict, domain_filter: Optional[list[str]]) -> bool:
+    if not domain_filter:
+        return True
+    tags = {str(tag).lower() for tag in skill.get("domain_tags", [])}
+    haystack = " ".join(
+        [
+            skill.get("name", ""),
+            skill.get("description", ""),
+            skill.get("content", "")[:1000],
+        ]
+    ).lower()
+    for domain in domain_filter:
+        token = str(domain).lower()
+        if token in tags or token in haystack:
+            return True
+    return False
+
+
 async def _scroll_skills(
     qdrant,
     domain_filter: Optional[list[str]] = None,
@@ -369,24 +602,43 @@ async def _scroll_skills(
     include_suppressed: bool = False,
 ) -> list[dict]:
     must: list = [qmodels.FieldCondition(key="category", match=qmodels.MatchValue(value="skill"))]
-    if domain_filter:
-        must.append(qmodels.FieldCondition(
-            key="domain_tags",
-            match=qmodels.MatchAny(any=domain_filter),
-        ))
     must_not: list = []
     if not include_suppressed:
         must_not.append(qmodels.FieldCondition(key="suppressed", match=qmodels.MatchValue(value=True)))
-    results, _ = await qdrant._client.scroll(
-        collection_name=qdrant._collection,
-        scroll_filter=qmodels.Filter(must=must, must_not=must_not or None),
-        limit=limit,
-        with_payload=True,
-        with_vectors=False,
-    )
-    skills = [_to_skill_record(r) for r in results]
-    skills = await _hydrate_content_bulk(skills)
-    return await _hydrate_counters_bulk(skills)
+    scroll_limit = max(limit * 5, 50) if domain_filter else limit
+    try:
+        results, _ = await qdrant._client.scroll(
+            collection_name=qdrant._collection,
+            scroll_filter=qmodels.Filter(must=must, must_not=must_not or None),
+            limit=scroll_limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        skills = [_to_skill_record(r) for r in results]
+        skills = await _hydrate_content_bulk(skills)
+        if domain_filter:
+            skills = [s for s in skills if _store_skill_matches_domains(s, domain_filter)]
+        skills = await _hydrate_counters_bulk(skills)
+        return skills[:limit]
+    except Exception as e:
+        logger.warning("skill scroll failed, falling back to SQLite skill store: %s", e)
+        from app.services.memory_store import get_memory_store
+        from app.services.data_integrity_service import get_data_integrity_store
+
+        rows = await get_memory_store().list_by_category("skill", limit=max(limit * 5, 50))
+        skills = [_fallback_skill_record_from_store(row) for row in rows]
+        skills = [s for s in skills if include_suppressed or not s.get("suppressed", False)]
+        skills = [s for s in skills if _store_skill_matches_domains(s, domain_filter)]
+        skills = await _hydrate_counters_bulk(skills)
+        get_data_integrity_store().upsert_slice(
+            slice_id=SKILL_DOMAIN_TAGS_FILTER_SLICE_ID,
+            subsystem="qdrant",
+            status="degraded",
+            source="skills._scroll_skills",
+            error=str(e),
+            details={"fallback": "sqlite_skill_store", "domain_filter": domain_filter or []},
+        )
+        return skills[:limit]
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -497,6 +749,13 @@ async def publish_skill(body: SkillPublish, qdrant: QdrantDep, ollama: OllamaDep
     await _write_skill_to_store(
         str(memory_id), body.content, body.name, description,
         body.platform, body.reference_url,
+        domain_tags=domain_tags,
+        importance_score=body.importance_score,
+        agent_id=body.agent_id,
+        pinned=body.pinned,
+        source=f"skill-publish:{body.name}",
+        tags=[body.name, body.platform] + domain_tags,
+        memory_type=MemoryType.context.value,
     )
 
     # If description or tags still missing — schedule background LLM retag (non-blocking)
@@ -509,14 +768,14 @@ async def publish_skill(body: SkillPublish, qdrant: QdrantDep, ollama: OllamaDep
     from app.services.event_emitter import emit
     duration_s = max(0.0, perf_counter() - t0)
     ctx_sig_tool = make_context_signature(
-        project="supermemory",
+        project=SELF_PROJECT_ID,
         task_type="tool",
         phase="call",
         category="skill_publish",
         transport="api",
     )
     ctx_sig_evt = make_context_signature(
-        project="supermemory",
+        project=SELF_PROJECT_ID,
         task_type="skills",
         phase="publish",
         category="skill",
@@ -526,7 +785,7 @@ async def publish_skill(body: SkillPublish, qdrant: QdrantDep, ollama: OllamaDep
         emit,
         "tool_call",
         agent_id=body.agent_id or "",
-        project="supermemory",
+        project=SELF_PROJECT_ID,
         transport="api",
         context_signature=ctx_sig_tool,
         payload={"tool_name": "skill_publish", "duration_s": duration_s},
@@ -535,14 +794,14 @@ async def publish_skill(body: SkillPublish, qdrant: QdrantDep, ollama: OllamaDep
         emit,
         "tool_result",
         agent_id=body.agent_id or "",
-        project="supermemory",
+        project=SELF_PROJECT_ID,
         transport="api",
         context_signature=ctx_sig_tool,
         payload={"tool_name": "skill_publish", "success": True, "empty": False},
     )
     background_tasks.add_task(emit, "skill_published",
         agent_id=body.agent_id or "",
-        project="supermemory",
+        project=SELF_PROJECT_ID,
         transport="api",
         context_signature=ctx_sig_evt,
         payload={"skill_name": body.name, "platform": body.platform,
@@ -702,7 +961,8 @@ Start directly with "# ". Do not add any preamble. Be concise — aim for ~400-6
 
 async def _regenerate_single_skill(skill_id: str, name: str, description: str, tags: list[str], qdrant, ollama) -> bool:
     """Generate SKILL.md content for a skill that has no content. Returns True on success."""
-    from app.services.cloud_llm import cloud_available, cloud_complete
+    from app.services.cloud_llm import cloud_available
+    from app.services.llm_gateway import get_cloud_gateway
     title = name.replace("-", " ").title()
     prompt = _REGENERATE_SKILL_PROMPT.format(
         name=name,
@@ -712,7 +972,16 @@ async def _regenerate_single_skill(skill_id: str, name: str, description: str, t
     )
     try:
         if cloud_available():
-            content = await cloud_complete(prompt, max_tokens=1024, temperature=0.3)
+            content = await get_cloud_gateway().generate(
+                prompt,
+                system="You generate concise reusable SKILL.md documents.",
+                task_type="text_summarization",
+                mode="economy",
+                max_tokens=700,
+                temperature=0.2,
+                allow_local_fallback=True,
+                prefer_local=True,
+            )
         else:
             async with httpx.AsyncClient(timeout=60.0) as c:
                 r = await c.post(
@@ -951,7 +1220,22 @@ async def generate_skill_for_domain(body: GenerateForDomainRequest, qdrant: Qdra
         points=[str(memory_id)],
     )
     # Dual-write to SQLite
-    await _write_skill_to_store(str(memory_id), skill_content, skill_name, description, body.platform)
+    await _write_skill_to_store(
+        str(memory_id),
+        skill_content,
+        skill_name,
+        description,
+        body.platform,
+        domain_tags=all_tags,
+        importance_score=0.6,
+        agent_id=body.agent_id,
+        suppressed=True,
+        source=f"skill-generate:{skill_name}",
+        tags=[skill_name, body.platform] + all_tags,
+        memory_type=MemoryType.context.value,
+        review_status="pending_review",
+        auto_generated=True,
+    )
 
     logger.info("Auto-generated skill '%s' for domains %s (id=%s, pending review)", skill_name, domains, memory_id)
 
@@ -1221,6 +1505,8 @@ class PackResponse(BaseModel):
     confidence: float
     enrichment_pending: bool
     created_at: str
+    degraded: bool = False
+    degraded_reason: str = ""
 
 
 class SkillOutcomeRequest(BaseModel):
@@ -1326,7 +1612,17 @@ async def _do_enrich(pack_id: str, domains: list[str], agent_id: str,
                 points=[str(memory_id)],
             )
             # Dual-write to SQLite
-            await _write_skill_to_store(str(memory_id), skill_content, skill_name, enrich_desc, "claude")
+            await _write_skill_to_store(
+                str(memory_id),
+                skill_content,
+                skill_name,
+                enrich_desc,
+                "claude",
+                domain_tags=domains,
+                importance_score=0.6,
+                agent_id=agent_id,
+                suppressed=False,
+            )
             logger.info("Enrichment: generated skill '%s' for pack %s (active, task_enrichment)", skill_name, pack_id)
 
         # Mark pack as enriched in Qdrant
@@ -1386,6 +1682,17 @@ async def create_skill_pack(
 
     skill_ids = [s["id"] for s in skills_raw]
     enrichment_pending = len(skills_raw) < 2 or body.confidence < 0.4
+    degraded = False
+    degraded_reason = ""
+    try:
+        from app.services.data_integrity_service import get_data_integrity_store
+
+        overview = get_data_integrity_store().overview()
+        if SKILL_DOMAIN_TAGS_FILTER_SLICE_ID in overview.get("degraded_slices", []):
+            degraded = True
+            degraded_reason = "Qdrant skill/domain filter is degraded; skill pack may be served from fallback storage."
+    except Exception:
+        pass
 
     # Store pack trace (non-blocking, best-effort)
     background_tasks.add_task(
@@ -1413,6 +1720,8 @@ async def create_skill_pack(
         confidence=body.confidence,
         enrichment_pending=enrichment_pending,
         created_at=now,
+        degraded=degraded,
+        degraded_reason=degraded_reason,
     )
     _track_adaptive(
         "skill_pack_create",
@@ -1809,6 +2118,91 @@ Transcript:
 """
 
 
+_OPERATIONAL_NOISE_MARKERS = frozenset({
+    "x-api-key",
+    "api-key",
+    "unauthorized_client",
+    "invalid or missing x-api-key",
+})
+def _clean_dialogue_text(value: str) -> str:
+    return re.sub(r"\s+", " ", normalize_text_for_display(value or "")).strip()
+
+
+def _contains_operational_noise(value: str) -> bool:
+    lowered = (value or "").casefold()
+    return any(marker in lowered for marker in _OPERATIONAL_NOISE_MARKERS)
+
+
+def _sanitize_learning_transcript(transcript: str) -> str:
+    kept: list[str] = []
+    for raw_line in (transcript or "").splitlines():
+        line = _clean_dialogue_text(raw_line)
+        if not line:
+            continue
+        if looks_like_mojibake(line) or is_low_quality_text(line):
+            continue
+        if _contains_operational_noise(line):
+            continue
+        kept.append(line)
+    return "\n".join(kept)[-8000:]
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+    return out
+
+
+def _sanitize_new_term(value: str, *, transcript: str = "") -> Optional[str]:
+    cleaned = _clean_dialogue_text(value)[:60]
+    if not cleaned or looks_like_mojibake(cleaned) or _contains_operational_noise(cleaned):
+        return None
+    return sanitize_new_terminology_candidate(cleaned, transcript=transcript)
+
+
+def _canonicalize_skill_domain(value: str) -> Optional[str]:
+    cleaned = _clean_dialogue_text(value)[:60]
+    if not cleaned or looks_like_mojibake(cleaned) or _contains_operational_noise(cleaned):
+        return None
+    if "|" in cleaned:
+        return cleaned
+    return canonicalize_skill_gap_domain(cleaned)
+
+
+def _sanitize_dialogue_list(values: list[str], *, kind: str, transcript: str = "") -> list[str]:
+    cleaned: list[str] = []
+    for raw in values:
+        if kind == "new_terminology":
+            normalized = _sanitize_new_term(raw, transcript=transcript)
+        elif kind == "missing_skill":
+            normalized = _canonicalize_skill_domain(raw)
+        elif kind == "successful_pattern":
+            normalized = sanitize_successful_pattern_candidate(raw, transcript=transcript)
+        else:
+            normalized = _clean_dialogue_text(raw)[:60]
+            if not normalized or looks_like_mojibake(normalized) or _contains_operational_noise(normalized):
+                normalized = None
+        if normalized:
+            cleaned.append(normalized)
+    return _dedupe_preserve_order(cleaned)
+
+
+def _sanitize_dialogue_signal(signal: DialogueSignal, *, transcript: str = "") -> DialogueSignal:
+    return DialogueSignal(
+        new_terminology=_sanitize_dialogue_list(signal.new_terminology, kind="new_terminology", transcript=transcript)[:5],
+        missing_skill=_sanitize_dialogue_list(signal.missing_skill, kind="missing_skill", transcript=transcript)[:4],
+        domain_drift=_sanitize_dialogue_list(signal.domain_drift, kind="domain_drift")[:3],
+        user_preference=_sanitize_dialogue_list(signal.user_preference, kind="user_preference")[:3],
+        successful_pattern=_sanitize_dialogue_list(signal.successful_pattern, kind="successful_pattern", transcript=transcript)[:3],
+    )
+
+
 def _parse_dialogue_signal(raw: str) -> DialogueSignal:
     signal = DialogueSignal()
     match = re.search(r'\{.*\}', raw, re.DOTALL)
@@ -1833,6 +2227,11 @@ def _dialogue_excerpt(transcript: str, max_chars: int = 320) -> str:
     if len(compact) <= max_chars:
         return compact
     return "…" + compact[-(max_chars - 1):]
+
+
+def _dialogue_subject_marker(value: str) -> str:
+    marker = re.sub(r"[^a-z0-9]+", "-", (value or "").casefold()).strip("-")
+    return marker[:48] or "generic"
 
 
 async def _create_dialogue_candidates(
@@ -1901,14 +2300,17 @@ async def _create_dialogue_candidates(
             },
         )
         base_sig = make_context_signature(
-            project="supermemory",
+            project=SELF_PROJECT_ID,
             task_type="dialogue_analysis",
             phase="pending_review",
             category=f"dialogue_{suggestion.type}",
             transport=transport,
             agent=agent_id or None,
         )
-        context_signature = f"{base_sig};signal={suggestion.type};source={source_marker}"
+        subject_marker = _dialogue_subject_marker(subject)
+        context_signature = (
+            f"{base_sig};signal={suggestion.type};subject={subject_marker};source={source_marker}"
+        )
         artifact_id, created = await store.upsert_candidate(
             agent_id=agent_id,
             action_type="suggest_create_improvement",
@@ -1929,7 +2331,7 @@ async def _create_dialogue_candidates(
             await store.write_event(
                 event_type="artifact_suggested",
                 agent_id=agent_id,
-                project="supermemory",
+                project=SELF_PROJECT_ID,
                 transport=transport,
                 episode_id=session_id or "",
                 context_signature=context_signature,
@@ -1937,6 +2339,7 @@ async def _create_dialogue_candidates(
                     "artifact_id": str(artifact_id),
                     "action_type": "suggest_create_improvement",
                     "signal_type": suggestion.type,
+                    "subject": subject,
                     "source_path": source_path,
                     "file_hash": file_hash,
                 },
@@ -1964,9 +2367,24 @@ async def analyze_dialogue_transcript(
     from app.services.learning_store import get_learning_store, make_context_signature
 
     started_at = perf_counter()
+    clean_transcript = _sanitize_learning_transcript(transcript)
+    if len(clean_transcript.strip()) < 20:
+        _track_adaptive(
+            "dialogue_analyze",
+            success=True,
+            started_at=started_at,
+            agent_id=agent_id,
+            session_id=session_id,
+            metadata={"reason": "insufficient_clean_dialogue_context", "transport": transport},
+        )
+        return {
+            "recorded": False,
+            "signals": DialogueSignal().model_dump(),
+            "reason": "insufficient clean dialogue context",
+        }
 
     try:
-        raw = await _llm(_DIALOGUE_ANALYSIS_PROMPT.format(transcript=transcript[-4000:]))
+        raw = await _llm(_DIALOGUE_ANALYSIS_PROMPT.format(transcript=clean_transcript[-4000:]))
     except Exception as e:
         logger.warning("Dialogue analysis LLM failed: %s", e)
         _track_adaptive(
@@ -1979,13 +2397,32 @@ async def analyze_dialogue_transcript(
         )
         return {"recorded": False, "error": str(e), "signals": DialogueSignal().model_dump()}
 
-    signal = _parse_dialogue_signal(raw)
+    parsed_signal = _parse_dialogue_signal(raw)
+    reclassified_terms = [
+        term for term in parsed_signal.new_terminology
+        if should_reclassify_as_missing_skill(term, transcript=clean_transcript)
+    ]
+    refined_missing_skill = refine_skill_gap_domains(
+        parsed_signal.missing_skill + reclassified_terms,
+        clean_transcript,
+    )[:4]
+    signal = _sanitize_dialogue_signal(parsed_signal, transcript=clean_transcript)
+    signal = signal.model_copy(update={"missing_skill": refined_missing_skill})
+    missing_skill_terms = {term.casefold() for term in signal.missing_skill}
+    reclassified_terms_cf = {term.casefold() for term in reclassified_terms}
+    signal = signal.model_copy(update={
+        "new_terminology": [
+            term for term in signal.new_terminology
+            if term.casefold() not in missing_skill_terms
+            and term.casefold() not in reclassified_terms_cf
+        ][:5],
+    })
 
     has_signals = any([
         signal.new_terminology, signal.missing_skill, signal.domain_drift,
         signal.user_preference, signal.successful_pattern,
     ])
-    excerpt = _dialogue_excerpt(transcript)
+    excerpt = _dialogue_excerpt(clean_transcript)
     if not has_signals:
         _track_adaptive(
             "dialogue_analyze",
@@ -2000,7 +2437,7 @@ async def analyze_dialogue_transcript(
     try:
         store = get_learning_store()
         excerpt_ctx = make_context_signature(
-            project="supermemory",
+            project=SELF_PROJECT_ID,
             task_type="dialogue",
             phase="excerpt",
             category="dialogue_excerpt",
@@ -2008,7 +2445,7 @@ async def analyze_dialogue_transcript(
             agent=agent_id or None,
         )
         signal_ctx = make_context_signature(
-            project="supermemory",
+            project=SELF_PROJECT_ID,
             task_type="dialogue",
             phase="signals",
             category="dialogue_signal",
@@ -2018,7 +2455,7 @@ async def analyze_dialogue_transcript(
         await store.write_event(
             event_type="dialogue_excerpt",
             agent_id=agent_id,
-            project="supermemory",
+            project=SELF_PROJECT_ID,
             transport=transport,
             episode_id=session_id or "",
             context_signature=f"{excerpt_ctx};source={(file_hash or session_id or 'dialogue')[:24]}",
@@ -2032,7 +2469,7 @@ async def analyze_dialogue_transcript(
         await store.write_event(
             event_type="dialogue_signal",
             agent_id=agent_id,
-            project="supermemory",
+            project=SELF_PROJECT_ID,
             transport=transport,
             episode_id=session_id or "",
             context_signature=f"{signal_ctx};source={(file_hash or session_id or 'dialogue')[:24]}",
@@ -2164,7 +2601,7 @@ async def analyze_dialogue_transcript(
                         f"provided no adequate coverage.\n\n"
                         f"Recommendation: publish or generate a skill for domain '{domain}'."
                     ),
-                    project="supermemory",
+                    project=SELF_PROJECT_ID,
                     agent_id=agent_id,
                     importance_score=0.65,
                     tags=["skill-gap", "auto-detected", domain],
@@ -2178,7 +2615,7 @@ async def analyze_dialogue_transcript(
     candidate_stats = await _create_dialogue_candidates(
         signal=signal,
         suggestions=suggestions,
-        transcript=transcript,
+        transcript=clean_transcript,
         agent_id=agent_id,
         session_id=session_id,
         source_path=source_path,
@@ -2632,7 +3069,7 @@ async def get_review_queue(
 
 
 @router.post("/review/{skill_id}/approve")
-async def approve_skill(skill_id: str, qdrant: QdrantDep) -> dict:
+async def approve_skill(skill_id: str, qdrant: QdrantDep, body: SkillReviewActionRequest | None = None) -> dict:
     """
     Approve an auto-generated skill — makes it active and visible in packs.
     Sets review_status=approved, suppressed=False.
@@ -2655,17 +3092,39 @@ async def approve_skill(skill_id: str, qdrant: QdrantDep) -> dict:
     if results[0].payload.get("review_status") not in ("pending_review", "rejected"):
         raise HTTPException(status_code=409, detail="Skill is not in a reviewable state")
 
+    review = body or SkillReviewActionRequest()
     await qdrant._client.set_payload(
         collection_name=qdrant._collection,
-        payload={"review_status": "approved", "suppressed": False},
+        payload={
+            "review_status": "approved",
+            "suppressed": False,
+            "last_review_action": "approve_skill",
+            "last_reviewed_by": review.reviewed_by,
+            "last_review_source": review.review_source,
+            "last_reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "last_review_reason": review.reason or None,
+        },
         points=[str(uid)],
     )
     logger.info("Skill %s approved — now active", skill_id)
-    return {"id": skill_id, "review_status": "approved", "active": True}
+    return {
+        "id": skill_id,
+        "review_status": "approved",
+        "active": True,
+        "last_review_action": "approve_skill",
+        "last_reviewed_by": review.reviewed_by,
+        "last_review_source": review.review_source,
+        "last_review_reason": review.reason or None,
+    }
 
 
 @router.post("/review/{skill_id}/reject")
-async def reject_skill(skill_id: str, qdrant: QdrantDep, reason: Optional[str] = Query(None, max_length=512)) -> dict:
+async def reject_skill(
+    skill_id: str,
+    qdrant: QdrantDep,
+    reason: Optional[str] = Query(None, max_length=512),
+    body: SkillReviewActionRequest | None = None,
+) -> dict:
     """
     Reject an auto-generated skill — keeps it suppressed.
     Sets review_status=rejected. Safe: skill is never deleted.
@@ -2686,16 +3145,36 @@ async def reject_skill(skill_id: str, qdrant: QdrantDep, reason: Optional[str] =
     if results[0].payload.get("category") != "skill":
         raise HTTPException(status_code=404, detail="Not a skill record")
 
-    payload: dict = {"review_status": "rejected", "suppressed": True}
-    if reason:
-        payload["reject_reason"] = reason
+    if body is not None:
+        review = body.model_copy(update={"reason": (body.reason or reason or "")})
+    else:
+        review = SkillReviewActionRequest(reason=reason or "")
+    payload: dict = {
+        "review_status": "rejected",
+        "suppressed": True,
+        "last_review_action": "reject_skill",
+        "last_reviewed_by": review.reviewed_by,
+        "last_review_source": review.review_source,
+        "last_reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "last_review_reason": review.reason or None,
+    }
+    if review.reason:
+        payload["reject_reason"] = review.reason
     await qdrant._client.set_payload(
         collection_name=qdrant._collection,
         payload=payload,
         points=[str(uid)],
     )
-    logger.info("Skill %s rejected: %s", skill_id, reason or "no reason given")
-    return {"id": skill_id, "review_status": "rejected", "active": False}
+    logger.info("Skill %s rejected: %s", skill_id, review.reason or "no reason given")
+    return {
+        "id": skill_id,
+        "review_status": "rejected",
+        "active": False,
+        "last_review_action": "reject_skill",
+        "last_reviewed_by": review.reviewed_by,
+        "last_review_source": review.review_source,
+        "last_review_reason": review.reason or None,
+    }
 
 
 # ── Workflow Guidance (Observe/Suggest mode) ────────────────────────────────
@@ -3043,7 +3522,11 @@ async def promote_adaptive_artifact(
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     current_scope = existing.get("artifact_scope", "runtime_hint")
-    updated = await get_learning_store().promote_artifact(uid, agent_id)
+    updated = await get_learning_store().promote_artifact(
+        uid,
+        agent_id,
+        promotion_source="dashboard_review",
+    )
     if updated is None:
         raise HTTPException(status_code=400, detail=f"Already at max scope: {current_scope}")
 
@@ -3230,35 +3713,109 @@ async def _retag_handler(payload: dict) -> dict:
     qdrant = get_qdrant()
     ollama = get_ollama()
     limit = payload.get("limit", 20)
-    return await _run_retag(qdrant, ollama, limit)
+    record_ids = list(payload.get("record_ids") or [])
+    return await _run_retag(qdrant, ollama, limit, record_ids=record_ids)
 
 
-async def _run_retag(qdrant, ollama, limit: int) -> dict:
+async def _run_retag(qdrant, ollama, limit: int, *, record_ids: list[str] | None = None) -> dict:
     """Core retag logic shared between sync endpoint and background handler."""
+    from app.services.memory_store import get_memory_store
+    from app.services.qdrant_rebuild_service import _skill_point_from_store_row
+
+    requested_ids = [str(item) for item in (record_ids or []) if item]
+
     # Scroll all skills including suppressed ones
-    results, _ = await qdrant._client.scroll(
-        collection_name=qdrant._collection,
-        scroll_filter=qmodels.Filter(must=[
-            qmodels.FieldCondition(key="category", match=qmodels.MatchValue(value="skill")),
-        ]),
-        limit=limit * 3,
-        with_payload=True,
-        with_vectors=False,
-    )
+    if record_ids:
+        results = await qdrant._client.retrieve(
+            collection_name=qdrant._collection,
+            ids=requested_ids,
+            with_payload=True,
+            with_vectors=False,
+        )
+    else:
+        results, _ = await qdrant._client.scroll(
+            collection_name=qdrant._collection,
+            scroll_filter=qmodels.Filter(must=[
+                qmodels.FieldCondition(key="category", match=qmodels.MatchValue(value="skill")),
+            ]),
+            limit=limit * 3,
+            with_payload=True,
+            with_vectors=False,
+        )
+
+    candidates = results
+    if record_ids:
+        wanted = set(requested_ids)
+        candidates = [r for r in results if str(r.id) in wanted]
+
+    store_lookup_ids = requested_ids or [str(r.id) for r in candidates]
+    store_rows = await get_memory_store().get_many(store_lookup_ids)
+
+    details_by_id: dict[str, dict] = {}
+    recovered_from_sqlite = 0
+
+    if requested_ids:
+        present_ids = {str(r.id) for r in candidates}
+        missing_ids = [item for item in requested_ids if item not in present_ids]
+        if missing_ids:
+            recovery_batch: list[qmodels.PointStruct] = []
+            for missing_id in missing_ids:
+                row = store_rows.get(missing_id)
+                point = _skill_point_from_store_row(row or {})
+                if point is None:
+                    continue
+                memory_id, embed_text, payload = point
+                try:
+                    vector = await ollama.embed(embed_text)
+                except Exception as exc:
+                    logger.warning("retag sqlite recovery embed failed for %s: %s", memory_id, exc)
+                    continue
+                recovery_batch.append(qmodels.PointStruct(id=memory_id, vector=vector, payload=payload))
+                details_by_id[memory_id] = {
+                    "id": memory_id,
+                    "name": str(payload.get("skill_name") or "unknown"),
+                    "domains": list(payload.get("domain_tags") or []),
+                }
+            if recovery_batch:
+                await qdrant._client.upsert(
+                    collection_name=qdrant._collection,
+                    points=recovery_batch,
+                )
+                recovered_from_sqlite = len(recovery_batch)
+                results = await qdrant._client.retrieve(
+                    collection_name=qdrant._collection,
+                    ids=requested_ids,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                candidates = [r for r in results if str(r.id) in set(requested_ids)]
+
+    def _is_broken_skill(point) -> bool:
+        payload = dict(point.payload or {})
+        store_row = store_rows.get(str(point.id)) or {}
+        store_meta = dict(store_row.get("metadata") or {})
+        meta = store_meta or payload
+        skill_name = str(meta.get("skill_name") or payload.get("skill_name") or "").strip()
+        domain_tags = list(meta.get("domain_tags") or payload.get("domain_tags") or [])
+        description = str(
+            meta.get("description")
+            or payload.get("skill_description")
+            or ""
+        ).strip()
+        return skill_name in {"", "unknown"} or not domain_tags or not description
 
     broken = [
-        r for r in results
-        if r.payload.get("skill_name", "unknown") == "unknown"
-        or not r.payload.get("domain_tags")
+        r for r in candidates
+        if _is_broken_skill(r)
     ][:limit]
 
-    fixed = 0
     skipped = 0
-    details = []
 
     for point in broken:
-        p = point.payload
-        content = p.get("skill_description") or p.get("content") or ""
+        p = dict(point.payload or {})
+        store_row = store_rows.get(str(point.id)) or {}
+        store_meta = dict(store_row.get("metadata") or {})
+        content = str(store_row.get("content") or p.get("content") or p.get("skill_description") or "")
         if not content or len(content.strip()) < 20:
             skipped += 1
             continue
@@ -3268,6 +3825,38 @@ async def _run_retag(qdrant, ollama, limit: int) -> dict:
             logger.warning("retag LLM failed for %s: %s", point.id, e)
             skipped += 1
             continue
+
+        fallback_meta = {
+            "skill_name": str(store_meta.get("skill_name") or p.get("skill_name") or ""),
+            "domain_tags": list(store_meta.get("domain_tags") or p.get("domain_tags") or []),
+            "description": str(
+                store_meta.get("description")
+                or p.get("skill_description")
+                or p.get("content")
+                or ""
+            ).strip(),
+        }
+        normalized_name = _slugify_skill_name(str(meta.get("name") or ""))
+        if not normalized_name or _is_weak_skill_name(normalized_name):
+            normalized_name = _derive_fallback_skill_name(
+                {"memory_id": str(point.id)},
+                fallback_meta,
+                normalized_name,
+                content,
+            )
+        normalized_description = str(meta.get("description") or "").strip() or fallback_meta["description"] or normalized_name
+        normalized_tags = [
+            _slugify_skill_name(str(tag))
+            for tag in (meta.get("domain_tags") or [])
+            if _slugify_skill_name(str(tag))
+        ]
+        if not normalized_tags:
+            normalized_tags = _derive_fallback_skill_tags(fallback_meta, content)
+        meta = {
+            "name": normalized_name[:30],
+            "description": normalized_description[:120],
+            "domain_tags": normalized_tags[:8],
+        }
 
         embed_text = f"{meta['name']} {meta['description']} {' '.join(meta['domain_tags'])}"
         try:
@@ -3293,12 +3882,40 @@ async def _run_retag(qdrant, ollama, limit: int) -> dict:
                 points=[qm.PointVectors(id=str(point.id), vector=vector)],
             )
         # Dual-write to SQLite
-        await _write_skill_to_store(str(point.id), content, meta["name"], meta["description"], p.get("platform", "claude"))
-        details.append({"id": str(point.id), "name": meta["name"], "domains": meta["domain_tags"]})
-        fixed += 1
+        await _write_skill_to_store(
+            str(point.id),
+            content,
+            meta["name"],
+            meta["description"],
+            str(store_meta.get("platform") or p.get("platform") or "claude"),
+            domain_tags=meta.get("domain_tags", []),
+            importance_score=store_meta.get("importance_score", p.get("importance_score", 0.5)),
+            agent_id=str(store_meta.get("agent_id") or p.get("agent_id") or "shared"),
+            suppressed=bool(store_meta.get("suppressed", p.get("suppressed", False))),
+            pinned=bool(store_meta.get("pinned", p.get("pinned", False))),
+            reference_url=store_meta.get("reference_url") or p.get("reference_url"),
+            timestamp=str(store_meta.get("timestamp") or p.get("timestamp") or ""),
+            source=str(store_meta.get("source") or p.get("source") or ""),
+            tags=list(store_meta.get("tags") or p.get("tags") or []),
+            memory_type=str(store_meta.get("memory_type") or p.get("memory_type") or "context"),
+            review_status=store_meta.get("review_status"),
+            auto_generated=bool(store_meta.get("auto_generated", False)),
+        )
+        details_by_id[str(point.id)] = {
+            "id": str(point.id),
+            "name": meta["name"],
+            "domains": meta["domain_tags"],
+        }
         logger.info("retag: %s -> name=%s domains=%s", point.id, meta["name"], meta["domain_tags"])
 
-    return {"fixed": fixed, "skipped": skipped, "total_broken": len(broken), "details": details}
+    details = list(details_by_id.values())
+    return {
+        "fixed": len(details),
+        "recovered_from_sqlite": recovered_from_sqlite,
+        "skipped": skipped,
+        "total_broken": len(broken),
+        "details": details,
+    }
 
 
 @router.post("/retag")
@@ -3311,6 +3928,9 @@ async def retag_skills(qdrant: QdrantDep, ollama: OllamaDep, queue: JobQueueDep,
     Use `?background=true` to submit as a background job.
     """
     if background:
+        # Defensive bootstrap: background queue can be reset independently of app startup.
+        # Re-registering is idempotent and prevents "No handler registered" failures.
+        queue.register("skills_retag", _retag_handler)
         job_id = await queue.submit("skills_retag", {"limit": limit})
         return {"job_id": job_id, "status": "queued", "poll": f"/api/v1/tasks/{job_id}"}
     # Scroll all skills including suppressed ones
@@ -3378,7 +3998,19 @@ async def retag_skills(qdrant: QdrantDep, ollama: OllamaDep, queue: JobQueueDep,
             )
 
         # Dual-write to SQLite
-        await _write_skill_to_store(str(point.id), content, meta["name"], meta["description"], p.get("platform", "claude"))
+        await _write_skill_to_store(
+            str(point.id),
+            content,
+            meta["name"],
+            meta["description"],
+            p.get("platform", "claude"),
+            domain_tags=meta.get("domain_tags", []),
+            importance_score=p.get("importance_score", 0.5),
+            agent_id=p.get("agent_id", "shared"),
+            suppressed=p.get("suppressed", False),
+            pinned=p.get("pinned", False),
+            reference_url=p.get("reference_url"),
+        )
         details.append({"id": str(point.id), "name": meta["name"], "domains": meta["domain_tags"]})
         fixed += 1
         logger.info("retag: %s -> name=%s domains=%s", point.id, meta["name"], meta["domain_tags"])

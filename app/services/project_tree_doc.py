@@ -10,6 +10,8 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from app.services.governed_artifact import stage_buffered_revision
+
 if TYPE_CHECKING:
     from app.services.project_tree_store import ProjectTreeStore
 
@@ -44,16 +46,16 @@ Write the documentation following this structure:
 <1-2 sentences: what this node represents and why it exists>
 
 ### Goal
-<what success looks like — skip if empty>
+<what success looks like Ð²Ð‚â€ skip if empty>
 
 ### Context
-<key facts from related memories and artifacts — bullet points, max 5>
+<key facts from related memories and artifacts Ð²Ð‚â€ bullet points, max 5>
 
 ### Canonical Links
-<reusable canonicals linked to this topic_path — bullet points, skip if none>
+<reusable canonicals linked to this topic_path Ð²Ð‚â€ bullet points, skip if none>
 
 ### Notes
-<implementation details, constraints, open questions — skip if none>
+<implementation details, constraints, open questions Ð²Ð‚â€ skip if none>
 """
 
 _TRANSLATE_PROMPT = """\
@@ -67,7 +69,8 @@ Keep the same Markdown structure.
 
 async def generate_doc(node: dict, qdrant=None, ollama=None) -> str:
     """Generate English markdown doc for a tree node using semantic search + LLM."""
-    from app.services.cloud_llm import cloud_available, cloud_complete
+    from app.services.cloud_llm import cloud_available
+    from app.services.llm_gateway import get_cloud_gateway
 
     topic_path = node.get("topic_path", "")
     memories_text = ""
@@ -77,7 +80,7 @@ async def generate_doc(node: dict, qdrant=None, ollama=None) -> str:
     canonical_count = 0
     art_count = 0
 
-    # Pull related memories via topic_path search — strictly filtered by project
+    # Pull related memories via topic_path search Ð²Ð‚â€ strictly filtered by project
     project_name = topic_path.split("/")[0] if topic_path else ""
     if qdrant and ollama and topic_path:
         try:
@@ -90,7 +93,6 @@ async def generate_doc(node: dict, qdrant=None, ollama=None) -> str:
                 is_canonical = r.scope in {"domain", "principle", "meta"}
                 if not is_canonical and r.project != project_name:
                     continue
-                # topic_path must match node prefix (if memory has one)
                 if r.topic_path and not r.topic_path.startswith(topic_path):
                     continue
                 relevant.append(r)
@@ -103,16 +105,16 @@ async def generate_doc(node: dict, qdrant=None, ollama=None) -> str:
             canonicals = [r for r in relevant if r.scope in {"domain", "principle", "meta"}]
             canonical_count = len(canonicals)
             canonicals_text = "\n".join(
-                f"- [{r.scope}] {r.topic_path or 'unknown'} — {r.content[:120]}" for r in canonicals
+                f"- [{r.scope}] {r.topic_path or 'unknown'} Ð²Ð‚â€ {r.content[:120]}" for r in canonicals
             ) or "none"
         except Exception as e:
             logger.debug("Memory search for doc failed: %s", e)
             memories_text = "none"
             canonicals_text = "none"
 
-    # Pull related artifacts
     try:
         from app.services.learning_store import get_learning_store
+
         ls = get_learning_store()
         project = topic_path.split("/")[0] if topic_path else ""
         arts = await ls.get_artifacts(project=project, status="active", limit=5)
@@ -124,7 +126,6 @@ async def generate_doc(node: dict, qdrant=None, ollama=None) -> str:
         artifacts_text = "none"
 
     if not cloud_available():
-        # Fallback: simple template without LLM
         return (
             f"## {node.get('title','')}\n\n"
             f"**Status:** {node.get('status','?')} | **Type:** {node.get('type','?')} "
@@ -150,11 +151,14 @@ async def generate_doc(node: dict, qdrant=None, ollama=None) -> str:
     )
 
     try:
-        doc = await cloud_complete(
+        doc = await get_cloud_gateway().generate(
             prompt,
             system="You are a precise technical writer. Always write in English. Be concise.",
-            max_tokens=600,
+            task_type="text_summarization",
+            mode="economy",
+            max_tokens=450,
             temperature=0.2,
+            allow_local_fallback=True,
         )
         return doc.strip()
     except Exception as e:
@@ -164,16 +168,21 @@ async def generate_doc(node: dict, qdrant=None, ollama=None) -> str:
 
 async def translate_doc(doc: str, language: str) -> str:
     """Translate doc to target language, keeping code/paths in English."""
-    from app.services.cloud_llm import cloud_available, cloud_complete, describe_cloud_error
+    from app.services.cloud_llm import cloud_available, describe_cloud_error
+    from app.services.llm_gateway import get_cloud_gateway
+
     if not cloud_available():
-        raise RuntimeError("Translation unavailable — no cloud LLM configured.")
+        raise RuntimeError("Translation unavailable Ð²Ð‚â€ no cloud LLM configured.")
     prompt = _TRANSLATE_PROMPT.format(language=language, doc=doc)
     try:
-        return await cloud_complete(
+        return await get_cloud_gateway().generate(
             prompt,
             system=f"You are a translator. Translate to {language}. Keep technical terms and code in English.",
-            max_tokens=800,
+            task_type="text_summarization",
+            mode="economy",
+            max_tokens=500,
             temperature=0.1,
+            allow_local_fallback=False,
         )
     except Exception as e:
         detail = describe_cloud_error(e)
@@ -193,9 +202,22 @@ async def regenerate_node_doc(node_id: str, store: "ProjectTreeStore", qdrant=No
         return ""
     doc = await generate_doc(node, qdrant=qdrant, ollama=ollama)
     locked = (node.get("meta_json") or {}).get("doc_locked", False)
+    generated_at = time.time()
+    effective_doc, effective_generated_at, candidate_doc, candidate_generated_at = stage_buffered_revision(
+        effective_value=node.get("doc", ""),
+        effective_updated_at=node.get("doc_generated_at"),
+        replacement_value=doc,
+        replacement_updated_at=generated_at,
+        preserve_effective=bool(locked and not force),
+        empty_factory=str,
+    )
+    store.update_node(
+        node_id,
+        doc=effective_doc,
+        doc_candidate=candidate_doc,
+        doc_generated_at=effective_generated_at,
+        doc_candidate_generated_at=candidate_generated_at,
+    )
     if locked and not force:
-        store.update_node(node_id, doc_candidate=doc)
-        logger.debug("Node %s is locked — saved to doc_candidate", node_id)
-    else:
-        store.update_node(node_id, doc=doc, doc_candidate="", doc_generated_at=time.time())
+        logger.debug("Node %s is locked; saved to doc_candidate", node_id)
     return doc

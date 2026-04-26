@@ -1,0 +1,5 @@
+{"content":"The demo project uses a local-first memory server for coding agents.","agent_id":"demo-user","memory_type":"fact","importance_score":0.8}
+{"content":"Project laws and runtime hints should stay distinct from raw dialogue traces.","agent_id":"demo-user","memory_type":"fact","importance_score":0.8}
+{"content":"Data hygiene excludes service telemetry and synthetic test data from learning by default.","agent_id":"demo-operator","memory_type":"context","importance_score":0.7}
+{"content":"Storage trust warnings should be surfaced to agents during onboarding.","agent_id":"demo-operator","memory_type":"fact","importance_score":0.75}
+{"content":"Experimental modules can be disabled in public alpha with DISABLED_MODULES.","agent_id":"demo-operator","memory_type":"context","importance_score":0.7}

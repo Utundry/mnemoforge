@@ -19,8 +19,11 @@ Task types:
 import json
 import logging
 import math
+import os
 from pathlib import Path
 from typing import Optional
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -99,12 +102,32 @@ class CapabilityRegistry:
             return 0.0
         return _wilson_score(entry.get("success", 0), entry.get("fail", 0))
 
+    def _visible_components(self) -> set[str]:
+        local_components = {
+            "cloud-llm",
+            "qwen3:1.7b",
+            str(settings.learning_mirror_model or "").strip(),
+            str(os.getenv("LOCAL_GENERATE_MODEL", "")).strip(),
+        }
+        visible = {component for component in local_components if component}
+
+        try:
+            from app.services.model_registry import get_model_registry
+
+            visible.update(get_model_registry()._models.keys())
+        except Exception as e:
+            logger.debug("ModelRegistry unavailable while listing visible capabilities: %s", e)
+
+        visible.update(component for component in self._data if component.startswith("skill:"))
+        return visible
+
     def best_for(self, task_type: str, exclude: Optional[list[str]] = None) -> list[tuple[str, float]]:
         """Return components sorted by score for a task type (best first)."""
         exclude = exclude or []
+        visible_components = self._visible_components()
         results = []
         for component, caps in self._data.items():
-            if component in exclude:
+            if component in exclude or component not in visible_components:
                 continue
             if task_type in caps:
                 s = self.score(component, task_type)
@@ -140,8 +163,11 @@ class CapabilityRegistry:
 
     def components(self) -> dict[str, dict[str, dict]]:
         """Return full registry with computed scores."""
+        visible_components = self._visible_components()
         result = {}
         for comp, caps in self._data.items():
+            if comp not in visible_components:
+                continue
             result[comp] = {}
             for task, entry in caps.items():
                 result[comp][task] = {

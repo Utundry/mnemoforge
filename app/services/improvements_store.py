@@ -3,8 +3,8 @@ Improvements Store — SQLite-backed storage for improvement records.
 
 Schema:
     improvements(id PK, project, title, norm_title, description, status,
-                 importance_score, tags JSON, agent_id, created_at REAL,
-                 resolved_at REAL|NULL, report_count INT, report_history JSON)
+                 stage, verdict, importance_score, tags JSON, agent_id, created_at REAL,
+                 resolved_at REAL|NULL, last_status_action*, last_quality_review*, report_count INT, report_history JSON)
 
 Dedup: upsert_by_title() matches on (norm_title, project, status='open').
 On collision: merges tags, bumps importance_score, appends to report_history.
@@ -21,6 +21,8 @@ from threading import Lock
 from typing import Optional
 from uuid import UUID, uuid4
 
+from app.services.skill_gap_domains import canonicalize_skill_gap_title
+
 logger = logging.getLogger(__name__)
 
 _DB_PATH = Path("qdrant_data") / "improvements.db"
@@ -33,11 +35,22 @@ CREATE TABLE IF NOT EXISTS improvements (
     norm_title      TEXT NOT NULL DEFAULT '',
     description     TEXT NOT NULL DEFAULT '',
     status          TEXT NOT NULL DEFAULT 'open',
+    stage           TEXT NOT NULL DEFAULT 'proposal',
+    verdict         TEXT,
     importance_score REAL NOT NULL DEFAULT 0.7,
     tags            TEXT NOT NULL DEFAULT '[]',
     agent_id        TEXT NOT NULL DEFAULT 'llm',
     created_at      REAL NOT NULL,
     resolved_at     REAL,
+    last_status_action TEXT,
+    last_status_acted_by TEXT,
+    last_status_action_source TEXT,
+    last_status_action_at REAL,
+    last_status_action_reason TEXT,
+    last_quality_review_by TEXT,
+    last_quality_review_source TEXT,
+    last_quality_review_at REAL,
+    last_quality_review_reason TEXT,
     report_count    INTEGER NOT NULL DEFAULT 1,
     report_history  TEXT NOT NULL DEFAULT '[]'
 );
@@ -52,15 +65,39 @@ _MIGRATE_SQL = [
     "ALTER TABLE improvements ADD COLUMN report_count INTEGER DEFAULT 1",
     "ALTER TABLE improvements ADD COLUMN report_history TEXT DEFAULT '[]'",
     "ALTER TABLE improvements ADD COLUMN node_id TEXT DEFAULT ''",
+    "ALTER TABLE improvements ADD COLUMN stage TEXT DEFAULT 'proposal'",
+    "ALTER TABLE improvements ADD COLUMN verdict TEXT",
+    "ALTER TABLE improvements ADD COLUMN last_status_action TEXT",
+    "ALTER TABLE improvements ADD COLUMN last_status_acted_by TEXT",
+    "ALTER TABLE improvements ADD COLUMN last_status_action_source TEXT",
+    "ALTER TABLE improvements ADD COLUMN last_status_action_at REAL",
+    "ALTER TABLE improvements ADD COLUMN last_status_action_reason TEXT",
+    "ALTER TABLE improvements ADD COLUMN last_quality_review_by TEXT",
+    "ALTER TABLE improvements ADD COLUMN last_quality_review_source TEXT",
+    "ALTER TABLE improvements ADD COLUMN last_quality_review_at REAL",
+    "ALTER TABLE improvements ADD COLUMN last_quality_review_reason TEXT",
     "CREATE INDEX IF NOT EXISTS idx_improvements_norm ON improvements(norm_title, project, status)",
 ]
 
 
 def _normalize_title(title: str) -> str:
     """Canonical form for dedup: lowercase, punctuation→space, collapse whitespace."""
+    canonical = canonicalize_skill_gap_title(title)
+    if canonical:
+        title = canonical
     t = title.lower()
     t = re.sub(r"[^\w\s]", " ", t)
     return re.sub(r"\s+", " ", t).strip()
+
+
+def _normalize_stage(stage: str | None) -> str:
+    value = str(stage or "").strip().lower()
+    return value if value in {"proposal", "beta_test", "experimental", "stable", "deprecated"} else "proposal"
+
+
+def _normalize_verdict(verdict: str | None) -> str | None:
+    value = str(verdict or "").strip().lower()
+    return value if value in {"effective", "ineffective"} else None
 
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
@@ -69,6 +106,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     d["report_history"] = json.loads(d.get("report_history") or "[]")
     d["report_count"] = d.get("report_count") or 1
     d["node_id"] = d.get("node_id") or ""
+    d["stage"] = d.get("stage") or "proposal"
+    d["verdict"] = d.get("verdict") or None
     return d
 
 
@@ -120,6 +159,8 @@ class ImprovementsStore:
         agent_id: str = "llm",
         importance_score: float = 0.7,
         tags: list[str] | None = None,
+        stage: str | None = None,
+        verdict: str | None = None,
         improvement_id: Optional[UUID] = None,
         created_at: Optional[float] = None,
     ) -> UUID:
@@ -127,15 +168,17 @@ class ImprovementsStore:
         uid = improvement_id or uuid4()
         now = created_at if created_at is not None else time.time()
         norm = _normalize_title(title)
+        stage_value = _normalize_stage(stage)
+        verdict_value = _normalize_verdict(verdict)
         with self._lock:
             self._conn.execute(
                 """
                 INSERT OR IGNORE INTO improvements
-                    (id, project, title, norm_title, description, status,
+                    (id, project, title, norm_title, description, status, stage, verdict,
                      importance_score, tags, agent_id, created_at, report_count, report_history)
-                VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, 1, '[]')
+                VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, 1, '[]')
                 """,
-                (str(uid), project, title, norm, description,
+                (str(uid), project, title, norm, description, stage_value, verdict_value,
                  importance_score, json.dumps(tags or []), agent_id, now),
             )
             self._conn.commit()
@@ -150,6 +193,8 @@ class ImprovementsStore:
         agent_id: str = "llm",
         importance_score: float = 0.7,
         tags: list[str] | None = None,
+        stage: str | None = None,
+        verdict: str | None = None,
     ) -> tuple[UUID, bool]:
         """
         Insert improvement only if no open record with same (norm_title, project) exists.
@@ -158,9 +203,11 @@ class ImprovementsStore:
         """
         norm = _normalize_title(title)
         now = time.time()
+        stage_value = _normalize_stage(stage)
+        verdict_value = _normalize_verdict(verdict)
         with self._lock:
             existing = self._conn.execute(
-                "SELECT id, tags, importance_score, report_count, report_history "
+                "SELECT id, tags, importance_score, report_count, report_history, stage, verdict "
                 "FROM improvements WHERE norm_title = ? AND project = ? AND status = 'open'",
                 (norm, project),
             ).fetchone()
@@ -179,12 +226,22 @@ class ImprovementsStore:
                     "importance_score": importance_score,
                     "description_snippet": description[:200],
                 })
+                existing_stage = _normalize_stage(existing["stage"])
+                merged_stage = stage_value if existing_stage == "proposal" and stage_value != "proposal" else existing_stage
+                merged_verdict = _normalize_verdict(existing["verdict"]) or verdict_value
                 self._conn.execute(
                     """UPDATE improvements
                        SET tags = ?, importance_score = ?, report_count = report_count + 1,
-                           report_history = ?
+                           report_history = ?, stage = ?, verdict = ?
                        WHERE id = ?""",
-                    (json.dumps(merged_tags), new_score, json.dumps(history), existing["id"]),
+                    (
+                        json.dumps(merged_tags),
+                        new_score,
+                        json.dumps(history),
+                        merged_stage,
+                        merged_verdict,
+                        existing["id"],
+                    ),
                 )
                 self._conn.commit()
                 return UUID(existing["id"]), False
@@ -193,15 +250,61 @@ class ImprovementsStore:
             self._conn.execute(
                 """
                 INSERT INTO improvements
-                    (id, project, title, norm_title, description, status,
+                    (id, project, title, norm_title, description, status, stage, verdict,
                      importance_score, tags, agent_id, created_at, report_count, report_history)
-                VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, 1, '[]')
+                VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, 1, '[]')
                 """,
-                (str(uid), project, title, norm, description,
+                (str(uid), project, title, norm, description, stage_value, verdict_value,
                  importance_score, json.dumps(tags or []), agent_id, now),
             )
             self._conn.commit()
         return uid, True
+
+    async def review(
+        self,
+        improvement_id: UUID,
+        *,
+        stage: str | None = None,
+        verdict: str | None = None,
+        reviewed_by: str = "user",
+        review_source: str = "manual_review",
+        reason: str = "",
+    ) -> Optional[str]:
+        """Set review metadata for an improvement without changing its lifecycle status."""
+        now = time.time()
+        stage_value = _normalize_stage(stage)
+        verdict_value = _normalize_verdict(verdict)
+        if stage is None and verdict is None:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT project FROM improvements WHERE id = ?", (str(improvement_id),)
+            ).fetchone()
+            if row is None:
+                return None
+            project = row["project"]
+            sets: list[str] = []
+            params: list = []
+            if stage is not None:
+                sets.append("stage = ?")
+                params.append(stage_value)
+            if verdict is not None:
+                sets.append("verdict = ?")
+                params.append(verdict_value)
+            sets.extend([
+                "last_quality_review_by = ?",
+                "last_quality_review_source = ?",
+                "last_quality_review_at = ?",
+                "last_quality_review_reason = ?",
+            ])
+            params.extend([reviewed_by, review_source, now, reason or None])
+            params.append(str(improvement_id))
+            self._conn.execute(
+                f"UPDATE improvements SET {', '.join(sets)} WHERE id = ?",
+                params,
+            )
+            self._conn.commit()
+        return project
 
     def set_node_id(self, improvement_id: UUID, node_id: str) -> None:
         with self._lock:
@@ -211,7 +314,23 @@ class ImprovementsStore:
             )
             self._conn.commit()
 
-    async def resolve(self, improvement_id: UUID) -> Optional[str]:
+    def replace_node_id(self, old_node_id: str, new_node_id: str) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE improvements SET node_id = ? WHERE node_id = ?",
+                (new_node_id, old_node_id),
+            )
+            self._conn.commit()
+        return int(cur.rowcount or 0)
+
+    async def resolve(
+        self,
+        improvement_id: UUID,
+        *,
+        acted_by: str = "user",
+        action_source: str = "inline_user_approval",
+        reason: str = "",
+    ) -> Optional[str]:
         """Mark as resolved. Returns project name or None if not found."""
         now = time.time()
         with self._lock:
@@ -222,8 +341,67 @@ class ImprovementsStore:
                 return None
             project = row["project"]
             self._conn.execute(
-                "UPDATE improvements SET status = 'resolved', resolved_at = ? WHERE id = ?",
-                (now, str(improvement_id)),
+                """
+                UPDATE improvements
+                SET status = 'resolved',
+                    resolved_at = ?,
+                    last_status_action = ?,
+                    last_status_acted_by = ?,
+                    last_status_action_source = ?,
+                    last_status_action_at = ?,
+                    last_status_action_reason = ?
+                WHERE id = ?
+                """,
+                (
+                    now,
+                    "resolve_improvement",
+                    acted_by,
+                    action_source,
+                    now,
+                    reason or None,
+                    str(improvement_id),
+                ),
+            )
+            self._conn.commit()
+        return project
+
+    async def reopen(
+        self,
+        improvement_id: UUID,
+        *,
+        acted_by: str = "user",
+        action_source: str = "inline_user_approval",
+        reason: str = "",
+    ) -> Optional[str]:
+        """Переоткрыть resolved improvement. Возвращает project name или None если не найден."""
+        now = time.time()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT project FROM improvements WHERE id = ?", (str(improvement_id),)
+            ).fetchone()
+            if row is None:
+                return None
+            project = row["project"]
+            self._conn.execute(
+                """
+                UPDATE improvements
+                SET status = 'open',
+                    resolved_at = NULL,
+                    last_status_action = ?,
+                    last_status_acted_by = ?,
+                    last_status_action_source = ?,
+                    last_status_action_at = ?,
+                    last_status_action_reason = ?
+                WHERE id = ?
+                """,
+                (
+                    "reopen_improvement",
+                    acted_by,
+                    action_source,
+                    now,
+                    reason or None,
+                    str(improvement_id),
+                ),
             )
             self._conn.commit()
         return project

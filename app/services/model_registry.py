@@ -21,6 +21,7 @@ from threading import Lock
 from typing import Optional
 
 from app.services.capability_registry import get_registry
+from app.services.cloud_llm import configured_cloud_model_profiles
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ CREATE TABLE IF NOT EXISTS handoff_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     ts          REAL    NOT NULL,
     task_id     TEXT    NOT NULL,
+    handoff_label TEXT,
     from_agent  TEXT    NOT NULL,
     to_agent    TEXT    NOT NULL,
     memory_id   TEXT    NOT NULL,
@@ -56,52 +58,14 @@ CREATE TABLE IF NOT EXISTS handoff_log (
 );
 """
 
-# Default model registry seeded on first run
-_DEFAULT_MODELS = [
-    {
-        "model_id": "claude-sonnet",
-        "display_name": "Claude Sonnet",
-        "provider": "anthropic",
-        "daily_limit": 100000,
-        "limit_unit": "tokens",
-        "priority": 1,
-        "weekly_limit": 700000,
-        "task_capabilities": ["code_generation", "code_review", "architecture", "text_summarization", "fact_extraction"],
-        "initial_scores": {"code_generation": 0.93, "code_review": 0.91, "architecture": 0.95},
-    },
-    {
-        "model_id": "gpt-4o",
-        "display_name": "GPT-4o",
-        "provider": "openai",
-        "daily_limit": 80000,
-        "limit_unit": "tokens",
-        "priority": 2,
-        "weekly_limit": 560000,
-        "task_capabilities": ["code_generation", "code_review", "text_summarization", "fact_extraction"],
-        "initial_scores": {"code_generation": 0.91, "code_review": 0.89},
-    },
-    {
-        "model_id": "glm-4",
-        "display_name": "GLM-4",
-        "provider": "zhipuai",
-        "daily_limit": 200000,
-        "limit_unit": "tokens",
-        "priority": 3,
-        "weekly_limit": 1400000,
-        "task_capabilities": ["code_generation", "text_summarization"],
-        "initial_scores": {"code_generation": 0.82},
-    },
-    {
-        "model_id": "qwen-max",
-        "display_name": "Qwen Max",
-        "provider": "alibaba",
-        "daily_limit": 300000,
-        "limit_unit": "tokens",
-        "priority": 4,
-        "weekly_limit": 2100000,
-        "task_capabilities": ["code_generation", "text_summarization"],
-        "initial_scores": {"code_generation": 0.80},
-    },
+_DEFAULT_DAILY_LIMIT = 100_000
+_DEFAULT_LIMIT_UNIT = "tokens"
+_DEFAULT_TASK_CAPABILITIES = [
+    "code_generation",
+    "code_review",
+    "architecture",
+    "text_summarization",
+    "fact_extraction",
 ]
 
 
@@ -139,23 +103,73 @@ class ModelRegistry:
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         with self._lock:
             self._conn.executescript(_CREATE_SQL)
+            self._ensure_schema()
             self._conn.commit()
         self._models: dict[str, dict] = {}
         self._load_config()
         logger.info("Model registry initialized: %d models", len(self._models))
 
+    def _ensure_schema(self) -> None:
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(handoff_log)").fetchall()}
+        if "handoff_label" not in columns:
+            self._conn.execute("ALTER TABLE handoff_log ADD COLUMN handoff_label TEXT")
+
     def _load_config(self) -> None:
+        loaded_models: dict[str, dict] = {}
         if self._config_path.exists():
             try:
-                self._models = json.loads(self._config_path.read_text(encoding="utf-8"))
-                return
+                payload = json.loads(self._config_path.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    loaded_models = payload
             except Exception as e:
                 logger.warning("Failed to load model_registry.json: %s", e)
-        # Seed defaults
-        self._models = {m["model_id"]: m for m in _DEFAULT_MODELS}
-        self._save_config()
-        # Seed capability registry with initial scores
+
+        manual_models = {
+            model_id: model
+            for model_id, model in loaded_models.items()
+            if isinstance(model, dict) and str(model.get("managed_by") or "").strip().lower() == "manual"
+        }
+        configured_models = self._configured_models(existing_models=loaded_models)
+        self._models = {**manual_models, **configured_models}
+
+        if self._models != loaded_models:
+            self._save_config()
+
         self._seed_capability_registry()
+
+    def _configured_models(self, *, existing_models: dict[str, dict] | None = None) -> dict[str, dict]:
+        existing_models = existing_models or {}
+        profiles = configured_cloud_model_profiles()
+        models: dict[str, dict] = {}
+
+        for priority, (model_id, profile) in enumerate(profiles.items(), start=1):
+            existing = existing_models.get(model_id, {}) if isinstance(existing_models.get(model_id), dict) else {}
+            daily_limit = int(existing.get("daily_limit") or _DEFAULT_DAILY_LIMIT)
+            limit_unit = str(existing.get("limit_unit") or _DEFAULT_LIMIT_UNIT).strip() or _DEFAULT_LIMIT_UNIT
+            weekly_limit = existing.get("weekly_limit")
+            if weekly_limit is None:
+                weekly_limit = daily_limit * 7
+            task_capabilities = existing.get("task_capabilities")
+            if not isinstance(task_capabilities, list) or not task_capabilities:
+                task_capabilities = list(_DEFAULT_TASK_CAPABILITIES)
+            initial_scores = existing.get("initial_scores")
+            if not isinstance(initial_scores, dict):
+                initial_scores = {}
+
+            models[model_id] = {
+                "model_id": model_id,
+                "display_name": str(existing.get("display_name") or profile.model).strip() or model_id,
+                "provider": str(profile.provider or existing.get("provider") or "openai-compatible").strip(),
+                "daily_limit": daily_limit,
+                "limit_unit": limit_unit,
+                "priority": int(existing.get("priority") or priority),
+                "weekly_limit": weekly_limit,
+                "task_capabilities": task_capabilities,
+                "initial_scores": initial_scores,
+                "managed_by": "config",
+            }
+
+        return models
 
     def _save_config(self) -> None:
         try:
@@ -278,6 +292,7 @@ class ModelRegistry:
         task_capabilities: Optional[list] = None,
         initial_scores: Optional[dict] = None,
         weekly_limit: Optional[int] = None,
+        managed_by: str = "manual",
     ) -> ModelQuota:
         """Register or update a model config."""
         self._models[model_id] = {
@@ -290,6 +305,7 @@ class ModelRegistry:
             "task_capabilities": task_capabilities or [],
             "initial_scores": initial_scores or {},
             "weekly_limit": weekly_limit,
+            "managed_by": managed_by,
         }
         self._save_config()
         # Seed capability registry for new scores
@@ -394,6 +410,7 @@ class ModelRegistry:
     def log_handoff(
         self,
         task_id: str,
+        handoff_label: Optional[str],
         from_agent: str,
         to_agent: str,
         memory_id: str,
@@ -401,21 +418,27 @@ class ModelRegistry:
     ) -> int:
         with self._lock:
             cursor = self._conn.execute(
-                "INSERT INTO handoff_log (ts, task_id, from_agent, to_agent, memory_id, reason) VALUES (?, ?, ?, ?, ?, ?)",
-                (time.time(), task_id, from_agent, to_agent, memory_id, reason),
+                "INSERT INTO handoff_log (ts, task_id, handoff_label, from_agent, to_agent, memory_id, reason) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (time.time(), task_id, handoff_label, from_agent, to_agent, memory_id, reason),
             )
             self._conn.commit()
         return cursor.lastrowid
 
-    def handoff_log(self, limit: int = 20) -> list[dict]:
+    def handoff_log(self, limit: int = 20, handoff_label: Optional[str] = None) -> list[dict]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT id, ts, task_id, from_agent, to_agent, memory_id, reason FROM handoff_log ORDER BY ts DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+            if handoff_label:
+                rows = self._conn.execute(
+                    "SELECT id, ts, task_id, handoff_label, from_agent, to_agent, memory_id, reason FROM handoff_log WHERE handoff_label = ? ORDER BY ts DESC LIMIT ?",
+                    (handoff_label, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT id, ts, task_id, handoff_label, from_agent, to_agent, memory_id, reason FROM handoff_log ORDER BY ts DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
         return [
-            {"id": r[0], "ts": r[1], "task_id": r[2], "from_agent": r[3],
-             "to_agent": r[4], "memory_id": r[5], "reason": r[6]}
+            {"id": r[0], "ts": r[1], "task_id": r[2], "handoff_label": r[3], "from_agent": r[4],
+             "to_agent": r[5], "memory_id": r[6], "reason": r[7]}
             for r in rows
         ]
 

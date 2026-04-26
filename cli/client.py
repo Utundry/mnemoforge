@@ -194,6 +194,7 @@ def ingest_file(
     """Parse a file from disk and store its chunks as memories."""
     payload = {
         "path": path,
+        "cwd": os.getcwd() if not os.path.isabs(path) else None,
         "agent_id": agent,
         "memory_type": type,
         "category": category,
@@ -223,6 +224,7 @@ def ingest_dir(
     """Recursively parse all supported files in a directory and store as memories."""
     payload = {
         "path": path,
+        "cwd": os.getcwd() if not os.path.isabs(path) else None,
         "agent_id": agent,
         "memory_type": type,
         "category": category,

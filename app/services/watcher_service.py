@@ -45,6 +45,7 @@ if not _WATCHDOG_AVAILABLE:
 _qdrant_svc = None
 _ollama_svc = None
 _processed_conversation_hashes: dict[str, str] = {}
+_inflight_conversation_hashes: set[tuple[str, str]] = set()
 
 
 def set_services(qdrant, ollama) -> None:
@@ -151,22 +152,27 @@ async def _analyze_conversation(conversation: ParsedConversation, agent_id: str,
         return
 
     last_hash = _processed_conversation_hashes.get(conversation.source_path)
-    if last_hash == conversation.file_hash:
+    convo_key = (conversation.source_path, conversation.file_hash)
+    if last_hash == conversation.file_hash or convo_key in _inflight_conversation_hashes:
         return
 
     from app.routers.skills import analyze_dialogue_transcript
 
-    await analyze_dialogue_transcript(
-        transcript=conversation.transcript,
-        agent_id=agent_id,
-        qdrant=_qdrant_svc,
-        ollama=_ollama_svc,
-        session_id=conversation.session_id or None,
-        source_path=f"watcher:{conversation.source_path}",
-        file_hash=conversation.file_hash,
-        transport=transport,
-    )
-    _processed_conversation_hashes[conversation.source_path] = conversation.file_hash
+    _inflight_conversation_hashes.add(convo_key)
+    try:
+        await analyze_dialogue_transcript(
+            transcript=conversation.transcript,
+            agent_id=agent_id,
+            qdrant=_qdrant_svc,
+            ollama=_ollama_svc,
+            session_id=conversation.session_id or None,
+            source_path=f"watcher:{conversation.source_path}",
+            file_hash=conversation.file_hash,
+            transport=transport,
+        )
+        _processed_conversation_hashes[conversation.source_path] = conversation.file_hash
+    finally:
+        _inflight_conversation_hashes.discard(convo_key)
 
 
 # ── Watcher singleton ──────────────────────────────────────────────────────────

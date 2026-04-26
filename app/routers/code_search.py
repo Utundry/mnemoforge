@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -194,6 +195,7 @@ async def index_codebase(body: CodeIndexRequest, qdrant: QdrantDep, ollama: Olla
                 decay_rate=0.0,
             )
             try:
+                timestamp = datetime.now(timezone.utc).isoformat()
                 imports_text = " ".join(chunk.imports[:20]) if chunk.imports else ""
                 embed_text = (
                     f"{chunk.language} {chunk.chunk_type} {chunk.symbol} {rel_path}"
@@ -220,6 +222,21 @@ async def index_codebase(body: CodeIndexRequest, qdrant: QdrantDep, ollama: Olla
                 await get_memory_store().upsert(
                     str(memory_id), "code_component", chunk.content,
                     {
+                        "category": "code_component",
+                        "agent_id": body.agent_id,
+                        "memory_type": MemoryType.context.value,
+                        "importance_score": body.importance_score,
+                        "timestamp": timestamp,
+                        "source": f"code-index:{rel_path}",
+                        "tags": [
+                            "code",
+                            f"language:{chunk.language}",
+                            f"kind:{chunk.chunk_type}",
+                            f"path:{rel_path}",
+                            f"symbol:{chunk.symbol}",
+                        ],
+                        "session_id": body.session_id,
+                        "decay_rate": 0.0,
                         "code_path": rel_path,
                         "code_symbol": chunk.symbol,
                         "code_chunk_type": chunk.chunk_type,

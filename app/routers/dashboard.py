@@ -38,6 +38,13 @@ _HTML = """<!DOCTYPE html>
 html, body { width: 100%; min-height: 100vh; }
 body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
 
+/* ── Scrollbars & Focus ─────────────────────── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+*:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* ── Status bar ─────────────────────────────── */
 #statusbar {
   position: sticky; top: 0; z-index: 100;
@@ -70,10 +77,12 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 }
 .tile {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 16px; cursor: pointer; transition: border-color .15s, background .15s;
+  padding: 16px; cursor: pointer; transition: all 0.2s ease;
   display: flex; flex-direction: column; gap: 6px; user-select: none;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
 }
-.tile:hover { border-color: var(--accent); background: #1e2133; }
+.tile:hover { border-color: var(--accent); background: #1e2133; transform: translateY(-3px); box-shadow: 0 8px 15px rgba(0,0,0,0.3); }
+.tile:active { transform: translateY(-1px); }
 .tile-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .tile-count { font-size: 36px; font-weight: 800; line-height: 1; }
 .tile-sub   { font-size: 11px; color: var(--muted); }
@@ -108,15 +117,19 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 
 /* ── Modal ──────────────────────────────────── */
 #modal-overlay {
-  display: none; position: fixed; inset: 0; z-index: 200;
+  visibility: hidden; opacity: 0; position: fixed; inset: 0; z-index: 200;
   background: rgba(0,0,0,.65); backdrop-filter: blur(3px);
-  align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto;
+  display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
-#modal-overlay.open { display: flex; }
+#modal-overlay.open { visibility: visible; opacity: 1; }
 #modal-box {
   background: var(--card); border: 1px solid var(--border); border-radius: 14px;
   width: min(92vw, 1600px); padding: 24px; position: relative;
+  transform: scale(0.95) translateY(10px); transition: all 0.25s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
 }
+#modal-overlay.open #modal-box { transform: scale(1) translateY(0); }
 #modal-close {
   position: absolute; top: 14px; right: 16px;
   background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer;
@@ -141,9 +154,9 @@ details.acc[open] .acc-arrow { transform: rotate(90deg); }
 .acc-body { padding: 12px 14px; }
 
 /* ── Table ──────────────────────────────────── */
-.tbl-wrap { overflow-x: auto; }
+.tbl-wrap { overflow-x: auto; max-height: 60vh; border: 1px solid var(--border); border-radius: 8px; }
 table.data { border-collapse: collapse; width: 100%; font-size: 12px; }
-table.data th { text-align: left; padding: 6px 10px; border-bottom: 2px solid var(--border); color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; white-space: nowrap; }
+table.data th { position: sticky; top: 0; background: var(--surface); z-index: 10; text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--border); color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; white-space: nowrap; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
 table.data td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; max-width: 320px; overflow-wrap: break-word; word-break: break-all; }
 table.data tr:last-child td { border-bottom: none; }
 table.data tr:hover td { background: #1e2133; }

@@ -26,14 +26,14 @@ wheels/
 *.egg
 
 # Virtual environments
-.venv/
+.venv*/
 venv/
 ENV/
 env/
 .conda/
 
 # Testing
-.pytest_cache/
+.pytest*/
 .coverage
 .coverage.*
 htmlcov/
@@ -53,6 +53,7 @@ htmlcov/
 
 # Project specific
 qdrant_data/
+backups/
 logs/
 *.log
 *.pid
@@ -62,14 +63,16 @@ server.log
 # Claude/Codex specific
 .claude/
 .roo/
-.supermemory
+.codex
 
 # Database files
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
+*.sqlite-journal
 
 # Temporary files
 *.tmp

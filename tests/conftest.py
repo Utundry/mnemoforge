@@ -62,6 +62,27 @@ def _reset_improvements_store():
         _is._store = None
 
 
+@pytest.fixture(autouse=True)
+def _reset_project_tasks_store():
+    """Use fresh in-memory project task store for each test to avoid stale SQLite state."""
+    import app.services.project_tasks_store as _pts
+    from pathlib import Path
+
+    if _pts._STORE is not None:
+        try:
+            _pts._STORE.close()
+        except Exception:
+            pass
+    _pts._STORE = _pts.ProjectTasksStore(Path(":memory:"))
+    yield
+    if _pts._STORE is not None:
+        try:
+            _pts._STORE.close()
+        except Exception:
+            pass
+        _pts._STORE = None
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_learning_store():
     """Use fresh in-memory learning store for each test — avoids leaking background writer tasks."""
@@ -107,6 +128,48 @@ def _reset_memory_store():
 
 
 @pytest.fixture(autouse=True)
+def _reset_docs_cache_store():
+    """Use fresh in-memory docs cache store for each test."""
+    import app.services.docs_cache_store as _dcs
+    from pathlib import Path
+
+    if _dcs._store is not None:
+        try:
+            _dcs._store.close()
+        except Exception:
+            pass
+    _dcs._store = _dcs.DocsCacheStore(Path(":memory:"))
+    yield
+    if _dcs._store is not None:
+        try:
+            _dcs._store.close()
+        except Exception:
+            pass
+        _dcs._store = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_component_docs_store():
+    """Use fresh in-memory component docs store for each test."""
+    import app.services.component_docs_store as _cds
+    from pathlib import Path
+
+    if _cds._STORE is not None:
+        try:
+            _cds._STORE.close()
+        except Exception:
+            pass
+    _cds._STORE = _cds.ComponentDocsStore(Path(":memory:"))
+    yield
+    if _cds._STORE is not None:
+        try:
+            _cds._STORE.close()
+        except Exception:
+            pass
+        _cds._STORE = None
+
+
+@pytest.fixture(autouse=True)
 def _reset_skill_counters_store():
     """Use fresh in-memory skill counters store for each test (avoid writing qdrant_data/skills.db)."""
     import app.services.skill_counters as _sc
@@ -128,6 +191,48 @@ def _reset_skill_counters_store():
 
 
 @pytest.fixture(autouse=True)
+def _reset_data_integrity_store():
+    """Use fresh in-memory integrity store for each test."""
+    import app.services.data_integrity_service as _di
+    from pathlib import Path
+
+    if _di._store is not None:
+        try:
+            _di._store.close()
+        except Exception:
+            pass
+    _di._store = _di.DataIntegrityStore(Path(":memory:"))
+    yield
+    if _di._store is not None:
+        try:
+            _di._store.close()
+        except Exception:
+            pass
+        _di._store = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_data_hygiene_store():
+    """Use fresh in-memory data hygiene store for each test."""
+    import app.services.data_hygiene_service as _dh
+    from pathlib import Path
+
+    if _dh._store is not None:
+        try:
+            _dh._store.close()
+        except Exception:
+            pass
+    _dh._store = _dh.DataHygieneStore(Path(":memory:"))
+    yield
+    if _dh._store is not None:
+        try:
+            _dh._store.close()
+        except Exception:
+            pass
+        _dh._store = None
+
+
+@pytest.fixture(autouse=True)
 def _reset_performance_tracker():
     """Use fresh in-memory performance tracker for each test (avoid writing qdrant_data/performance.db)."""
     import app.services.performance_tracker as _pt
@@ -146,6 +251,15 @@ def _reset_performance_tracker():
         except Exception:
             pass
         _pt._tracker = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_unified_artifact_service():
+    """Reset unified artifact service to use fresh stores for each test."""
+    import app.services.unified_artifact_service as _uas
+    _uas._service = None
+    yield
+    _uas._service = None
 
 
 @pytest_asyncio.fixture(autouse=True)

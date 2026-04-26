@@ -22,7 +22,11 @@ from typing import Optional
 
 import httpx
 
-from app.services.text_localization import normalize_text_for_display
+from app.services.text_localization import (
+    is_low_quality_text,
+    looks_like_mojibake,
+    normalize_text_for_display,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +74,10 @@ def _extract_message_text(raw_content) -> str:
                 parts.append(block.get("text", ""))
         raw_content = " ".join(parts)
     if isinstance(raw_content, str):
-        return normalize_text_for_display(raw_content)
+        normalized = normalize_text_for_display(raw_content)
+        if is_low_quality_text(normalized):
+            return ""
+        return normalized
     return ""
 
 
@@ -107,7 +114,7 @@ def _load_jsonl_messages(path: Path) -> tuple[str, list[tuple[str, str]]]:
             continue
 
         content = _extract_message_text(raw_content)
-        if content:
+        if content and not looks_like_mojibake(content):
             messages.append((role, content[:1000]))
 
     return file_hash, messages

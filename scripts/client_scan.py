@@ -12,8 +12,8 @@ Usage:
     python client_scan.py [options]
 
 Options:
-    --server  http://192.168.1.138:8000   Memory server URL
-    --ollama  http://192.168.1.138:11434  Ollama URL (local or network)
+    --server  <SERVER_URL>                Memory server URL
+    --ollama  <OLLAMA_URL>                Ollama URL (local or network)
     --agent   my-machine                  Agent ID (default: hostname)
     --model   qwen3:1.7b                  Ollama model for summarization
     --dry-run                             Parse but don't send
@@ -21,6 +21,8 @@ Options:
     --dirs    path1 path2                 Override directories to scan
     --no-llm                              Skip LLM, use fast rule-based parsing
     --verbose                             Verbose output
+    --api-key  <API_KEY>                  API key for authenticated server access
+    --project  <PROJECT_ID>               Optional project_id for project-scoped memory bootstrap
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ import os
 import re
 import socket
 import sys
+import time
 import urllib.request
 import urllib.error
 from collections import defaultdict
@@ -41,8 +44,8 @@ from typing import Optional
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-DEFAULT_SERVER = "http://192.168.1.138:8000"
-DEFAULT_OLLAMA = "http://localhost:11434"
+DEFAULT_SERVER = os.environ.get("SUPERMEMORY_SERVER_URL", "http://127.0.0.1:8000")
+DEFAULT_OLLAMA = os.environ.get("SUPERMEMORY_OLLAMA_URL", "http://127.0.0.1:11434")
 DEFAULT_MODEL  = "qwen3:1.7b"
 STATE_FILE     = Path.home() / ".supermemory_scan_state.json"
 LOG_FILE       = Path.home() / ".supermemory_scan.log"
@@ -50,6 +53,9 @@ BATCH_SIZE     = 20       # memories per API call
 MAX_FILE_BYTES = 512_000  # skip files larger than this
 MAX_CHUNK_CHARS = 2000    # max chars per memory chunk
 MAX_JSONL_LINES = 200     # max lines to read from conversation history
+API_BATCH_RETRY_ATTEMPTS = 3
+API_BATCH_RETRY_BASE_DELAY = 1.0
+_RETRYABLE_HTTP_CODES = {429, 502, 503, 504}
 
 _SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", "extensions",
               "vendor_imports", "marketplaces", "cache"}
@@ -72,6 +78,14 @@ def _log(msg: str, verbose: bool = False) -> None:
         pass
     if verbose:
         print(line, file=sys.stderr)
+
+
+def api_headers(api_key: str = "") -> dict[str, str]:
+    key = api_key or os.environ.get("MEMORY_SERVER_API_KEY", "") or os.environ.get("API_KEY", "")
+    headers = {"Content-Type": "application/json; charset=utf-8"}
+    if key:
+        headers["X-Api-Key"] = key
+    return headers
 
 
 # ── State (deduplication by file hash) ────────────────────────────────────────
@@ -245,6 +259,83 @@ def parse_python(path: Path) -> list[dict]:
              "category": "context", "importance": 0.5, "tags": ["python", "hook"]}]
 
 
+def parse_ini(path: Path) -> list[dict]:
+    text = path.read_text(errors="replace")
+    lines = []
+    for line in text.splitlines()[:120]:
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith(("[", "#", ";")):
+            lines.append(line)
+            continue
+        if "=" in s:
+            key, value = s.split("=", 1)
+            lines.append(f"{key.strip()} = {value.strip()}")
+    if not lines:
+        return []
+    return [{
+        "content": f"INI {path.name}:\n" + "\n".join(lines[:80]),
+        "category": "config",
+        "importance": 0.72,
+        "tags": ["ini", "config"],
+    }]
+
+
+def parse_shell(path: Path) -> list[dict]:
+    text = path.read_text(errors="replace")
+    lines = []
+    for line in text.splitlines()[:120]:
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("#!"):
+            lines.append(line)
+            continue
+        if s.startswith("#"):
+            lines.append(line)
+            continue
+        if any(
+            s.startswith(prefix)
+            for prefix in ("export ", "source ", ".", "cd ", "exec ", "linuxcnc ", "halcmd ")
+        ):
+            lines.append(line)
+            continue
+        if "=" in s and " " not in s.split("=", 1)[0]:
+            lines.append(line)
+    if not lines:
+        return []
+    return [{
+        "content": f"Shell script {path.name}:\n" + "\n".join(lines[:80]),
+        "category": "context",
+        "importance": 0.62,
+        "tags": ["shell", "startup"],
+    }]
+
+
+def parse_hal(path: Path) -> list[dict]:
+    text = path.read_text(errors="replace")
+    lines = []
+    interesting = ("loadrt ", "loadusr ", "addf ", "net ", "setp ", "source ", "call ", "sets ")
+    for line in text.splitlines()[:200]:
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("#"):
+            lines.append(line)
+            continue
+        if s.startswith(interesting):
+            lines.append(line)
+    if not lines:
+        return []
+    return [{
+        "content": f"HAL {path.name}:\n" + "\n".join(lines[:120]),
+        "category": "config",
+        "importance": 0.74,
+        "tags": ["hal", "linuxcnc"],
+    }]
+
+
 def parse_jsonl(path: Path, use_llm: bool, model: str, ollama_url: str = DEFAULT_OLLAMA) -> list[dict]:
     """Parse conversation history — use LLM to extract facts if available."""
     raw = path.read_text(errors="replace")
@@ -303,6 +394,12 @@ def parse_file(path: Path, use_llm: bool, model: str, ollama_url: str = DEFAULT_
     name = path.name.lower()
     if suffix == ".md":
         return parse_markdown(path)
+    if suffix == ".ini":
+        return parse_ini(path)
+    if suffix == ".sh":
+        return parse_shell(path)
+    if suffix == ".hal":
+        return parse_hal(path)
     if suffix == ".toml":
         return parse_toml(path)
     if suffix == ".py":
@@ -331,21 +428,51 @@ def find_ai_dirs() -> list[Path]:
 
 # ── Server API ────────────────────────────────────────────────────────────────
 
-def api_batch_store(server: str, memories: list[dict]) -> dict:
+def _is_retryable_batch_error(exc: Exception) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return int(getattr(exc, "code", 0) or 0) in _RETRYABLE_HTTP_CODES
+    if isinstance(exc, urllib.error.URLError):
+        return True
+    if isinstance(exc, TimeoutError):
+        return True
+    text = str(exc).lower()
+    return "timed out" in text or "temporarily unavailable" in text or "connection reset" in text
+
+
+def api_batch_store(server: str, memories: list[dict], api_key: str = "") -> dict:
     body = json.dumps({"memories": memories}, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        f"{server}/api/v1/memories/batch",
-        data=body,
-        headers={"Content-Type": "application/json; charset=utf-8"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read())
+    last_error: Exception | None = None
+    for attempt in range(1, API_BATCH_RETRY_ATTEMPTS + 1):
+        req = urllib.request.Request(
+            f"{server}/api/v1/memories/batch",
+            data=body,
+            headers=api_headers(api_key),
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read())
+        except Exception as exc:
+            last_error = exc
+            if attempt >= API_BATCH_RETRY_ATTEMPTS or not _is_retryable_batch_error(exc):
+                break
+            delay = API_BATCH_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            log.warning(
+                "memories/batch temporary failure (attempt %d/%d): %s; retry in %.1fs",
+                attempt,
+                API_BATCH_RETRY_ATTEMPTS,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("memories/batch request failed with unknown error")
 
 
-def api_health(server: str) -> bool:
+def api_health(server: str, api_key: str = "") -> bool:
     try:
-        req = urllib.request.Request(f"{server}/api/v1/health", method="GET")
+        req = urllib.request.Request(f"{server}/api/v1/health", headers=api_headers(api_key), method="GET")
         with urllib.request.urlopen(req, timeout=5) as r:
             return r.status == 200
     except Exception:
@@ -359,6 +486,8 @@ def scan(
     agent_id: str,
     model: str,
     ollama_url: str,
+    api_key: str,
+    project: str,
     dirs: list[Path],
     dry_run: bool,
     force: bool,
@@ -420,6 +549,15 @@ def scan(
                 ch["source"] = prefix + path_part
                 ch.setdefault("memory_type", "context")
                 ch.setdefault("importance_score", ch.pop("importance", 0.5))
+                ch.setdefault("meta", {})
+                ch["meta"]["source_path"] = path_key
+                if project:
+                    ch["project"] = project
+                    tags = list(ch.get("tags") or [])
+                    project_tag = f"project:{project}"
+                    if project_tag not in tags:
+                        tags.append(project_tag)
+                    ch["tags"] = tags
 
             chunks_to_send.extend(chunks)
             new_state[path_key] = fhash
@@ -449,7 +587,7 @@ def scan(
         batch_num = i // BATCH_SIZE + 1
         _log(f"  sending batch {batch_num}/{total_batches} ({len(batch)} chunks)...", verbose)
         try:
-            result = api_batch_store(server, batch)
+            result = api_batch_store(server, batch, api_key=api_key)
             stored += len(result.get("created_ids", []))
             failed += result.get("failed_count", 0)
         except Exception as e:
@@ -473,6 +611,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="SuperMemory client scanner")
     parser.add_argument("--server", default=DEFAULT_SERVER)
     parser.add_argument("--ollama", default=DEFAULT_OLLAMA, help="Ollama URL (local or network)")
+    parser.add_argument("--api-key", default="", help="API key for authenticated SuperMemory server access")
+    parser.add_argument("--project", default="", help="Optional project_id to attach to stored memories")
     parser.add_argument("--agent", default=socket.gethostname().lower())
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--dirs", nargs="*", default=None)
@@ -488,7 +628,7 @@ def main() -> None:
     _log(f"=== client_scan start (pid={os.getpid()}) ===", args.verbose)
 
     # Check server
-    if not api_health(args.server):
+    if not api_health(args.server, api_key=args.api_key):
         _log(f"ERROR server not reachable: {args.server}", True)
         sys.exit(1)
 
@@ -506,6 +646,8 @@ def main() -> None:
         agent_id=args.agent,
         model=args.model,
         ollama_url=args.ollama,
+        api_key=args.api_key,
+        project=args.project,
         dirs=dirs,
         dry_run=args.dry_run,
         force=args.force,

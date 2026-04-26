@@ -116,11 +116,27 @@ class RateRequest(BaseModel):
 
 class PromoteRequest(BaseModel):
     promoted_by: str = Field(..., max_length=256)
+    promotion_source: str = Field("inline_user_approval", max_length=128)
+    reason: str = Field("", max_length=1000)
 
 
 class DeferRequest(BaseModel):
     defer_days: Optional[int] = Field(None, ge=1, le=90)
+    deferred_by: str = Field("user", min_length=1, max_length=256)
+    defer_source: str = Field("inline_user_approval", max_length=128)
     reason: str = Field("", max_length=500)
+
+
+class CandidateApproveRequest(BaseModel):
+    approved_by: str = Field("user", min_length=1, max_length=256)
+    approval_source: str = Field("inline_user_approval", max_length=128)
+    reason: str = Field("", max_length=1000)
+
+
+class CandidateRejectRequest(BaseModel):
+    rejected_by: str = Field("user", min_length=1, max_length=256)
+    rejection_source: str = Field("inline_user_approval", max_length=128)
+    reason: str = Field("", max_length=1000)
 
 
 class CandidateReport(BaseModel):
@@ -274,7 +290,12 @@ async def promote_artifact(artifact_id: UUID, body: PromoteRequest, background_t
     """Advance artifact scope one step (runtime_hint → persistent_rule → promoted_pattern)."""
     store = get_learning_store()
     before = await store.get_artifact(artifact_id)
-    updated = await store.promote_artifact(artifact_id, body.promoted_by)
+    updated = await store.promote_artifact(
+        artifact_id,
+        body.promoted_by,
+        promotion_source=body.promotion_source,
+        promotion_reason=body.reason,
+    )
     if updated is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -301,6 +322,8 @@ async def promote_artifact(artifact_id: UUID, body: PromoteRequest, background_t
                 "artifact_type": (before or {}).get("artifact_type") or "",
                 "action_type": (before or {}).get("action_type") or "",
                 "promoted_by": body.promoted_by,
+                "promotion_source": body.promotion_source,
+                "reason": body.reason,
             },
         )
     except Exception:
@@ -433,6 +456,7 @@ async def create_candidate(body: CandidateCreate):
 async def approve_candidate(
     artifact_id: UUID,
     background_tasks: BackgroundTasks,
+    body: CandidateApproveRequest | None = None,
 ):
     """
     Approve a candidate: promotes scope to runtime_hint (status=active).
@@ -441,6 +465,7 @@ async def approve_candidate(
     """
     from app.services.event_emitter import emit
     store = get_learning_store()
+    approval = body or CandidateApproveRequest()
 
     # Fetch before approval to check action_type and metadata
     artifact = await store.get_artifact(artifact_id)
@@ -451,12 +476,23 @@ async def approve_candidate(
         )
 
     canonical_memory_id: str | None = None
+    updated = await store.approve_candidate(
+        artifact_id,
+        approved_by=approval.approved_by,
+        approval_source=approval.approval_source,
+        approval_reason=approval.reason,
+    )
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Candidate not found or not in candidate scope",
+        )
 
-    # Intercept crystallize_knowledge candidates
     if artifact.get("action_type") == "crystallize_knowledge":
         from app.dependencies import get_qdrant, get_ollama
         from app.config import settings as _settings
         from app.services.crystallization_service import apply_crystallization, CrystallizationCandidate
+
         meta = artifact.get("meta") or {}
         try:
             qdrant = get_qdrant()
@@ -479,28 +515,30 @@ async def approve_candidate(
         except Exception as _cryst_exc:
             import logging as _log
             _log.getLogger(__name__).warning(
-                "crystallize_knowledge approve: failed to create canonical memory: %s", _cryst_exc
+                "crystallize_knowledge approve: failed to create canonical memory after candidate approval: %s",
+                _cryst_exc,
             )
 
-    updated = await store.approve_candidate(artifact_id)
-    if updated is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Candidate not found or not in candidate scope",
-        )
     await store.write_feedback(
         artifact_id=str(artifact_id),
         valence="positive",
         magnitude=1.0,
         source="user",
-        payload={"action": "approve"},
+        payload={
+            "action": "approve",
+            "approved_by": approval.approved_by,
+            "approval_source": approval.approval_source,
+            "reason": approval.reason,
+        },
     )
     background_tasks.add_task(emit, "candidate_approved",
-        agent_id="user",
+        agent_id=approval.approved_by,
         payload={"artifact_id": str(artifact_id),
                  "action_type": updated.get("action_type", ""),
                  "artifact_type": updated.get("artifact_type", ""),
-                 "canonical_memory_id": canonical_memory_id})
+                 "canonical_memory_id": canonical_memory_id,
+                 "approval_source": approval.approval_source,
+                 "reason": approval.reason})
     result = dict(updated)
     if canonical_memory_id:
         result["canonical_memory_id"] = canonical_memory_id
@@ -508,13 +546,23 @@ async def approve_candidate(
 
 
 @router.post("/candidates/{artifact_id}/reject")
-async def reject_candidate(artifact_id: UUID, background_tasks: BackgroundTasks):
+async def reject_candidate(
+    artifact_id: UUID,
+    background_tasks: BackgroundTasks,
+    body: CandidateRejectRequest | None = None,
+):
     """
     Reject a candidate: archives it and records a negative feedback signal.
     """
     from app.services.event_emitter import emit
     store = get_learning_store()
-    updated = await store.reject_candidate(artifact_id)
+    review = body or CandidateRejectRequest()
+    updated = await store.reject_candidate(
+        artifact_id,
+        rejected_by=review.rejected_by,
+        rejection_source=review.rejection_source,
+        rejection_reason=review.reason,
+    )
     if updated is None:
         raise HTTPException(status_code=404, detail="Candidate not found")
     await store.write_feedback(
@@ -522,13 +570,20 @@ async def reject_candidate(artifact_id: UUID, background_tasks: BackgroundTasks)
         valence="negative",
         magnitude=1.0,
         source="user",
-        payload={"action": "reject"},
+        payload={
+            "action": "reject",
+            "rejected_by": review.rejected_by,
+            "rejection_source": review.rejection_source,
+            "reason": review.reason,
+        },
     )
     background_tasks.add_task(emit, "candidate_rejected",
-        agent_id="user",
+        agent_id=review.rejected_by,
         payload={"artifact_id": str(artifact_id),
                  "action_type": updated.get("action_type", ""),
-                 "artifact_type": updated.get("artifact_type", "")})
+                 "artifact_type": updated.get("artifact_type", ""),
+                 "rejection_source": review.rejection_source,
+                 "reason": review.reason})
     return updated
 
 
@@ -543,7 +598,13 @@ async def defer_candidate(artifact_id: UUID, body: DeferRequest):
     - Auto-archived when effective_days reaches 90
     """
     store = get_learning_store()
-    updated = await store.defer_candidate(artifact_id, defer_days=body.defer_days)
+    updated = await store.defer_candidate(
+        artifact_id,
+        defer_days=body.defer_days,
+        deferred_by=body.deferred_by,
+        defer_source=body.defer_source,
+        defer_reason=body.reason,
+    )
     if updated is None:
         raise HTTPException(status_code=404, detail="Candidate not found")
     return {
@@ -553,21 +614,23 @@ async def defer_candidate(artifact_id: UUID, body: DeferRequest):
         "status": updated.get("status"),
         "evidence_count": updated.get("evidence_count"),
         "reason": body.reason,
+        "deferred_by": body.deferred_by,
+        "defer_source": body.defer_source,
     }
 
 
-# ── GLM Mirror ─────────────────────────────────────────────────────────────────
+# ── Model Mirror ───────────────────────────────────────────────────────────────
 
 @router.post("/mirror/run")
-async def run_glm_mirror():
+async def run_model_mirror():
     """
-    Manually trigger a GLM mirror analysis cycle.
+    Manually trigger a model mirror analysis cycle.
 
     Analyzes recent events, generates up to 2-3 candidate artifacts for human review.
     Returns a summary of what was found and created/updated.
     """
     from app.dependencies import get_ollama
-    from app.services.glm_mirror import get_glm_mirror
+    from app.services.model_mirror import get_model_mirror
 
     store = get_learning_store()
     try:
@@ -578,21 +641,21 @@ async def run_glm_mirror():
             detail="Ollama service not available",
         )
 
-    mirror = get_glm_mirror()
+    mirror = get_model_mirror()
     result = await mirror.run(ollama, store)
     return result.to_dict()
 
 
 @router.get("/mirror/status")
-async def glm_mirror_status():
-    """Return the result of the last GLM mirror run."""
-    from app.services.glm_mirror import get_glm_mirror, GLM_MIRROR_INTERVAL_HOURS
+async def model_mirror_status():
+    """Return the result of the last model mirror run."""
+    from app.services.model_mirror import get_model_mirror, MODEL_MIRROR_INTERVAL_HOURS
 
-    mirror = get_glm_mirror()
+    mirror = get_model_mirror()
     last = mirror.last_result()
     return {
         "last_run": last.to_dict() if last else None,
-        "interval_hours": GLM_MIRROR_INTERVAL_HOURS,
+        "interval_hours": MODEL_MIRROR_INTERVAL_HOURS,
         "next_run_at": mirror.next_run_at,
     }
 
@@ -825,7 +888,12 @@ async def react_to_hint(artifact_id: UUID, body: HintReactRequest, background_ta
     from app.services.event_emitter import emit
     store = get_learning_store()
     if body.accept:
-        updated = await store.approve_candidate(artifact_id)
+        updated = await store.approve_candidate(
+            artifact_id,
+            approved_by="user",
+            approval_source="hint_review_accept",
+            approval_reason=body.reason,
+        )
         if updated is None:
             raise HTTPException(status_code=404, detail="Hint not found")
         await store.write_feedback(
@@ -840,7 +908,11 @@ async def react_to_hint(artifact_id: UUID, body: HintReactRequest, background_ta
             from app.routers.learning import promote_artifact, PromoteRequest
             await promote_artifact(
                 artifact_id,
-                PromoteRequest(promoted_by="user"),
+                PromoteRequest(
+                    promoted_by="user",
+                    promotion_source="hint_review_accept",
+                    reason=body.reason,
+                ),
                 background_tasks,
             )
         except Exception:

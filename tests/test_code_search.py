@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
+from app.services.memory_store import get_memory_store
 
-async def test_index_codebase_and_search_by_symbol(client, tmp_path: Path):
-    project_dir = tmp_path / "sample_project"
-    project_dir.mkdir()
+
+def _workspace_tmp(name: str) -> Path:
+    root = Path("tmp_test_code_search") / name
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+async def test_index_codebase_and_search_by_symbol(client):
+    project_dir = _workspace_tmp("sample_project")
     (project_dir / "service.py").write_text(
         "class ReviewQueue:\n"
         "    def approve(self):\n"
@@ -37,8 +47,8 @@ async def test_index_codebase_and_search_by_symbol(client, tmp_path: Path):
     assert results["hits"][0]["path"] == "service.py"
 
 
-async def test_code_search_filters_by_path_prefix_and_language(client, tmp_path: Path):
-    root = tmp_path / "repo"
+async def test_code_search_filters_by_path_prefix_and_language(client):
+    root = _workspace_tmp("repo")
     app_dir = root / "app"
     tests_dir = root / "tests"
     app_dir.mkdir(parents=True)
@@ -74,3 +84,32 @@ async def test_code_search_filters_by_path_prefix_and_language(client, tmp_path:
     assert len(results) >= 1
     assert all(hit["path"].startswith("app/") for hit in results)
     assert all(hit["language"] == "python" for hit in results)
+
+
+async def test_code_index_persists_rebuild_metadata_in_sqlite(client):
+    project_dir = _workspace_tmp("code_meta")
+    (project_dir / "worker.py").write_text(
+        "from pathlib import Path\n\n"
+        "def rebuild_index() -> Path:\n"
+        "    return Path('ok')\n",
+        encoding="utf-8",
+    )
+
+    index = await client.post("/api/v1/code/index", json={
+        "path": str(project_dir),
+        "agent_id": "code-meta-test",
+        "extensions": ["py"],
+    })
+    assert index.status_code == 200, index.text
+    assert index.json()["inserted"] >= 1
+
+    rows = await get_memory_store().list_by_category("code_component", limit=10)
+    assert rows
+    row = rows[0]
+    meta = row["metadata"]
+    assert meta["category"] == "code_component"
+    assert meta["agent_id"] == "code-meta-test"
+    assert meta["memory_type"] == "context"
+    assert meta["source"].startswith("code-index:")
+    assert "language:python" in meta["tags"]
+    assert meta["code_path"] == "worker.py"

@@ -9,11 +9,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.services.learning_store import get_learning_store
 from tests.conftest import MOCK_VECTOR, _build_client
 
 
@@ -267,6 +269,24 @@ class TestCandidateReviewApi:
         assert body["artifact_scope"] == "runtime_hint"
         assert body["status"] == "active"
 
+    async def test_approve_records_explicit_approval_metadata(self, client):
+        cid = await self._create(client)
+        r = await client.post(
+            f"{BASE}/candidates/{cid}/approve",
+            json={
+                "approved_by": "owner",
+                "approval_source": "inline_user_approval",
+                "reason": "Useful for this project",
+            },
+        )
+        assert r.status_code == 200
+        row = await get_learning_store().get_artifact(UUID(cid))
+        assert row is not None
+        assert row["meta"]["approved_by"] == "owner"
+        assert row["meta"]["approval_source"] == "inline_user_approval"
+        assert row["meta"]["approval_reason"] == "Useful for this project"
+        assert row["meta"]["approved_at"] > 0
+
     async def test_approve_records_positive_feedback(self, client):
         cid = await self._create(client)
         await client.post(f"{BASE}/candidates/{cid}/approve")
@@ -281,11 +301,70 @@ class TestCandidateReviewApi:
         r = await client.post(f"{BASE}/candidates/{cid}/approve")
         assert r.status_code == 404
 
+    async def test_second_approve_does_not_trigger_crystallization_side_effect(self, client, monkeypatch):
+        cid = await self._create(client, action_type="crystallize_knowledge", content="Promote this pattern.")
+        called = {"count": 0}
+
+        async def fake_apply_crystallization(*args, **kwargs):
+            called["count"] += 1
+            return "canonical-1"
+
+        monkeypatch.setattr("app.services.crystallization_service.apply_crystallization", fake_apply_crystallization)
+        first = await client.post(f"{BASE}/candidates/{cid}/approve")
+        assert first.status_code == 200
+        assert called["count"] == 1
+
+        second = await client.post(f"{BASE}/candidates/{cid}/approve")
+        assert second.status_code == 404
+        assert called["count"] == 1
+
+    async def test_hint_accept_records_hint_review_approval_metadata(self, client):
+        store = get_learning_store()
+        artifact_id, _ = await store.upsert_candidate(
+            agent_id="scout",
+            action_type="suggest_save_result",
+            content="Adopt this external practice.",
+            context_signature="project=sm;category=best-practice",
+            observation="Pros and cons",
+            why_it_matters="Reusable practice",
+            risk_level="low",
+            confidence=0.65,
+            tags=["external", "best-practice"],
+            domain="python",
+            artifact_type="meta_guidance",
+            meta={"title": "Use practice"},
+        )
+
+        r = await client.post(f"{BASE}/hints/{artifact_id}/react", json={"accept": True, "reason": "Looks valid"})
+        assert r.status_code == 200
+        row = await store.get_artifact(artifact_id)
+        assert row is not None
+        assert row["meta"]["approved_by"] == "user"
+        assert row["meta"]["approval_source"] == "hint_review_accept"
+        assert row["meta"]["approval_reason"] == "Looks valid"
+
     async def test_reject_candidate(self, client):
         cid = await self._create(client)
         r = await client.post(f"{BASE}/candidates/{cid}/reject")
         assert r.status_code == 200
         assert r.json()["status"] == "archived"
+
+    async def test_reject_records_explicit_rejection_metadata(self, client):
+        cid = await self._create(client)
+        r = await client.post(
+            f"{BASE}/candidates/{cid}/reject",
+            json={
+                "rejected_by": "owner",
+                "rejection_source": "dashboard_review",
+                "reason": "Not a good fit",
+            },
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["meta"]["rejected_by"] == "owner"
+        assert body["meta"]["rejection_source"] == "dashboard_review"
+        assert body["meta"]["rejection_reason"] == "Not a good fit"
+        assert body["meta"]["rejected_at"] is not None
 
     async def test_reject_nonexistent(self, client):
         from uuid import uuid4
@@ -316,6 +395,30 @@ class TestCandidateReviewApi:
         assert r.status_code == 200
         assert r.json()["reason"] == "Need more data before deciding"
 
+    async def test_defer_records_explicit_defer_metadata(self, client):
+        cid = await self._create(client)
+        r = await client.post(
+            f"{BASE}/candidates/{cid}/defer",
+            json={
+                "defer_days": 14,
+                "deferred_by": "owner",
+                "defer_source": "dashboard_review",
+                "reason": "Need broader evidence",
+            },
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["deferred_by"] == "owner"
+        assert body["defer_source"] == "dashboard_review"
+
+        store = get_learning_store()
+        artifact = await store.get_artifact(UUID(cid))
+        assert artifact is not None
+        assert artifact["meta"]["last_deferred_by"] == "owner"
+        assert artifact["meta"]["last_defer_source"] == "dashboard_review"
+        assert artifact["meta"]["last_defer_reason"] == "Need broader evidence"
+        assert artifact["meta"]["last_deferred_at"] is not None
+
     async def test_promote_after_approve(self, client):
         cid = await self._create(client)
         await client.post(f"{BASE}/candidates/{cid}/approve")
@@ -323,6 +426,24 @@ class TestCandidateReviewApi:
                                json={"promoted_by": "test"})
         assert r.status_code == 200
         assert r.json()["artifact_scope"] == "persistent_rule"
+
+    async def test_promote_records_promotion_metadata(self, client):
+        cid = await self._create(client)
+        await client.post(f"{BASE}/candidates/{cid}/approve")
+        r = await client.post(
+            f"{BASE}/artifacts/{cid}/promote",
+            json={
+                "promoted_by": "owner",
+                "promotion_source": "dashboard_review",
+                "reason": "Reviewed in dashboard",
+            },
+        )
+        assert r.status_code == 200
+        row = await get_learning_store().get_artifact(UUID(cid))
+        assert row is not None
+        assert row["meta"]["last_promoted_by"] == "owner"
+        assert row["meta"]["last_promotion_source"] == "dashboard_review"
+        assert row["meta"]["last_promotion_reason"] == "Reviewed in dashboard"
 
     async def test_promote_candidate_directly_fails(self, client):
         cid = await self._create(client)
@@ -449,8 +570,9 @@ class TestGlmMirrorApi:
         ctx = make_context_signature(project="sm")
         for _ in range(_MIN_PATTERN_FREQ):
             await _ls_mod._store.write_event(
-                event_type="memory_write",
+                event_type="dialogue_signal",
                 context_signature=ctx,
+                payload={"missing_skill": ["nginx"], "excerpt": "USER: help with nginx"},
             )
 
         r = await glm_client.post(f"{BASE}/mirror/run")
@@ -481,8 +603,9 @@ class TestGlmMirrorApi:
         ctx = make_context_signature(project="sm2")
         for _ in range(_MIN_PATTERN_FREQ):
             await _ls_mod._store.write_event(
-                event_type="tool_call",
+                event_type="dialogue_signal",
                 context_signature=ctx,
+                payload={"missing_skill": ["docker"], "excerpt": "USER: help with docker"},
             )
 
         await glm_client.post(f"{BASE}/mirror/run")

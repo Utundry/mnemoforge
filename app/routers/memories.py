@@ -117,6 +117,14 @@ async def create_memory(body: MemoryCreate, qdrant: QdrantDep, ollama: OllamaDep
     except Exception as e:
         logger.debug("Behavior reflex record skipped: %s", e)
 
+    if body.scope in {"domain", "principle", "meta"} and body.topic_path:
+        try:
+            from app.services.crystallization_service import _sync_canonical_to_tree
+
+            await _sync_canonical_to_tree(body.topic_path, str(memory_id))
+        except Exception as exc:
+            logger.debug("Canonical tree sync skipped for %s: %s", memory_id, exc)
+
     return await qdrant.get(memory_id)
 
 
@@ -216,6 +224,7 @@ async def search_memories(body: SearchRequest, qdrant: QdrantDep, ollama: Ollama
         agent_id=body.agent_id,
         memory_type=body.memory_type,
         category=body.category,
+        topic_prefix=body.topic_prefix,
         limit=body.limit,
         since_minutes=body.since_minutes,
     )
@@ -304,6 +313,7 @@ async def assemble_context(
         agent_id=body.agent_id,
         memory_type=body.memory_type,
         category=body.category,
+        topic_prefix=body.topic_prefix,
         limit=body.limit,
         since_minutes=body.since_minutes,
     )
@@ -326,6 +336,7 @@ async def assemble_context(
                     vector=vector,
                     limit=5,
                     scope_filter=_CANONICAL_SCOPES,
+                    topic_prefix=body.topic_prefix,
                 )
                 if canonical_raw:
                     existing_ids = {r.memory.id for r in ranked}
@@ -519,6 +530,12 @@ class CanonicalItemResponse(BaseModel):
     suppressed: bool = False
     canonical_status: str = "active"
     merged_into: Optional[str] = None
+    candidate_revision: Optional[dict] = None
+    last_review_action: Optional[str] = None
+    last_reviewed_by: Optional[str] = None
+    last_review_source: Optional[str] = None
+    last_reviewed_at: Optional[str] = None
+    last_review_reason: Optional[str] = None
     project: Optional[str] = None
     timestamp: str
 
@@ -540,6 +557,8 @@ class KnowledgeHierarchyResponse(BaseModel):
 class CanonicalStatusUpdateRequest(BaseModel):
     suppressed: bool
     reason: Optional[str] = None
+    reviewed_by: str = "user"
+    review_source: str = "inline_user_approval"
 
 
 class CanonicalStatusResponse(BaseModel):
@@ -547,10 +566,18 @@ class CanonicalStatusResponse(BaseModel):
     suppressed: bool
     canonical_status: str
     reason: Optional[str] = None
+    last_review_action: Optional[str] = None
+    last_reviewed_by: Optional[str] = None
+    last_review_source: Optional[str] = None
+    last_reviewed_at: Optional[str] = None
+    last_review_reason: Optional[str] = None
 
 
 class CanonicalMergeRequest(BaseModel):
     target_id: str
+    reviewed_by: str = "user"
+    review_source: str = "inline_user_approval"
+    reason: Optional[str] = None
 
 
 class CanonicalMergeResponse(BaseModel):
@@ -558,6 +585,38 @@ class CanonicalMergeResponse(BaseModel):
     target_id: str
     merged_support_count: int
     topic_path: str
+    last_review_action: Optional[str] = None
+    last_reviewed_by: Optional[str] = None
+    last_review_source: Optional[str] = None
+    last_reviewed_at: Optional[str] = None
+    last_review_reason: Optional[str] = None
+
+
+class CanonicalCandidateActionResponse(BaseModel):
+    id: str
+    topic_path: str
+    scope: str
+    content: str
+    supports: list[str]
+    support_count: int
+    confidence: float
+    suppressed: bool = False
+    canonical_status: str = "active"
+    merged_into: Optional[str] = None
+    candidate_revision: Optional[dict] = None
+    last_review_action: Optional[str] = None
+    last_reviewed_by: Optional[str] = None
+    last_review_source: Optional[str] = None
+    last_reviewed_at: Optional[str] = None
+    last_review_reason: Optional[str] = None
+    project: Optional[str] = None
+    timestamp: str
+
+
+class CanonicalCandidateReviewRequest(BaseModel):
+    reviewed_by: str = "user"
+    review_source: str = "inline_user_approval"
+    reason: Optional[str] = None
 
 
 @hierarchy_router.get("/canonicals/by-scope", response_model=CanonicalsByScopeResponse)
@@ -620,6 +679,8 @@ async def update_canonical_status(
             canonical_id=canonical_id,
             suppressed=body.suppressed,
             reason=body.reason,
+            reviewed_by=body.reviewed_by,
+            review_source=body.review_source,
         )
     except ValueError as exc:
         from fastapi import HTTPException
@@ -643,6 +704,9 @@ async def merge_canonical_endpoint(
             settings.qdrant_collection_name,
             source_id=canonical_id,
             target_id=body.target_id,
+            reviewed_by=body.reviewed_by,
+            review_source=body.review_source,
+            reason=body.reason,
         )
     except ValueError as exc:
         from fastapi import HTTPException
@@ -650,3 +714,61 @@ async def merge_canonical_endpoint(
         status_code = 400 if "same" in str(exc).lower() or "scope" in str(exc).lower() else 404
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     return CanonicalMergeResponse(**data)
+
+
+@hierarchy_router.post("/canonicals/{canonical_id}/apply-candidate", response_model=CanonicalCandidateActionResponse)
+async def apply_canonical_candidate_endpoint(
+    canonical_id: str,
+    qdrant: QdrantDep,
+    ollama: OllamaDep,
+    body: CanonicalCandidateReviewRequest | None = None,
+):
+    from app.config import settings
+    from app.services.crystallization_service import apply_canonical_candidate
+
+    review = body or CanonicalCandidateReviewRequest()
+    try:
+        data = await apply_canonical_candidate(
+            qdrant._client,
+            settings.qdrant_collection_name,
+            canonical_id=canonical_id,
+            ollama_svc=ollama,
+            reviewed_by=review.reviewed_by,
+            review_source=review.review_source,
+            reason=review.reason,
+        )
+    except ValueError as exc:
+        from fastapi import HTTPException
+
+        detail = str(exc)
+        status_code = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return CanonicalCandidateActionResponse(**data)
+
+
+@hierarchy_router.post("/canonicals/{canonical_id}/discard-candidate", response_model=CanonicalCandidateActionResponse)
+async def discard_canonical_candidate_endpoint(
+    canonical_id: str,
+    qdrant: QdrantDep,
+    body: CanonicalCandidateReviewRequest | None = None,
+):
+    from app.config import settings
+    from app.services.crystallization_service import discard_canonical_candidate
+
+    review = body or CanonicalCandidateReviewRequest()
+    try:
+        data = await discard_canonical_candidate(
+            qdrant._client,
+            settings.qdrant_collection_name,
+            canonical_id=canonical_id,
+            reviewed_by=review.reviewed_by,
+            review_source=review.review_source,
+            reason=review.reason,
+        )
+    except ValueError as exc:
+        from fastapi import HTTPException
+
+        detail = str(exc)
+        status_code = 404 if "not found" in detail.lower() else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return CanonicalCandidateActionResponse(**data)

@@ -135,6 +135,136 @@ class TestDialogueAnalyze:
         assert r.status_code == 200
         assert r.json()["recorded"] is True
 
+    async def test_analyze_normalizes_missing_skill_case(self, client):
+        mixed_case = json.dumps({
+            "new_terminology": [],
+            "missing_skill": ["Qdrant maintenance", "API_Setup"],
+            "domain_drift": [],
+            "user_preference": [],
+            "successful_pattern": [],
+        })
+        with patch("app.routers.skills._llm", new=AsyncMock(return_value=mixed_case)):
+            r = await client.post("/api/v1/skills/dialogue/analyze", json={
+                "transcript": _SAMPLE_TRANSCRIPT,
+                "agent_id": "test",
+            })
+        assert r.status_code == 200
+        body = r.json()
+        assert body["signals"]["missing_skill"] == ["qdrant maintenance", "api configuration"]
+
+    async def test_analyze_creates_distinct_candidates_per_missing_skill(self, client):
+        multi_gap = json.dumps({
+            "new_terminology": [],
+            "missing_skill": ["nginx", "ssl termination"],
+            "domain_drift": [],
+            "user_preference": [],
+            "successful_pattern": [],
+        })
+        with patch("app.routers.skills._llm", new=AsyncMock(return_value=multi_gap)):
+            r = await client.post("/api/v1/skills/dialogue/analyze", json={
+                "transcript": _SAMPLE_TRANSCRIPT,
+                "agent_id": "test",
+                "session_id": "multi-gap-session",
+            })
+        assert r.status_code == 200
+        artifacts = await client.get("/api/v1/learning/artifacts?scope=candidate&status=pending_review&limit=50")
+        assert artifacts.status_code == 200
+        pending = [
+            item for item in artifacts.json()["artifacts"]
+            if item.get("context_signature", "").startswith("agent=test;category=dialogue_skill_gap")
+            or "dialogue_skill_gap" in (item.get("context_signature") or "")
+        ]
+        observations = [str(item.get("observation") or "").lower() for item in pending]
+        assert any("nginx" in observation for observation in observations)
+        assert any("ssl termination" in observation for observation in observations)
+
+    async def test_analyze_refines_missing_skill_with_transcript_context(self, client):
+        contextual_gap = json.dumps({
+            "new_terminology": [],
+            "missing_skill": ["database operations", "storage recovery", "rollback verification"],
+            "domain_drift": [],
+            "user_preference": [],
+            "successful_pattern": [],
+        })
+        transcript = (
+            "USER: We need a runbook for storage recovery and rollback verification.\n"
+            "ASSISTANT: We lack guidance for that operational path.\n"
+        )
+        with patch("app.routers.skills._llm", new=AsyncMock(return_value=contextual_gap)):
+            r = await client.post("/api/v1/skills/dialogue/analyze", json={
+                "transcript": transcript,
+                "agent_id": "test",
+            })
+        assert r.status_code == 200
+        body = r.json()
+        assert body["signals"]["missing_skill"] == ["storage recovery", "rollback verification"]
+
+    async def test_analyze_drops_new_terms_that_duplicate_missing_skill(self, client):
+        contextual_gap = json.dumps({
+            "new_terminology": ["storage recovery", "memory shard taxonomy"],
+            "missing_skill": ["Storage Recovery", "database operations"],
+            "domain_drift": [],
+            "user_preference": [],
+            "successful_pattern": [],
+        })
+        transcript = (
+            "USER: We need storage recovery guidance after a failed rollout.\n"
+            "ASSISTANT: We lack a runbook and should document it.\n"
+        )
+        with patch("app.routers.skills._llm", new=AsyncMock(return_value=contextual_gap)):
+            r = await client.post("/api/v1/skills/dialogue/analyze", json={
+                "transcript": transcript,
+                "agent_id": "test",
+            })
+        assert r.status_code == 200
+        body = r.json()
+        assert body["signals"]["missing_skill"] == ["storage recovery"]
+        assert body["signals"]["new_terminology"] == ["memory shard taxonomy"]
+
+    async def test_analyze_reclassifies_procedural_new_terms_into_missing_skill(self, client):
+        contextual_gap = json.dumps({
+            "new_terminology": ["storage recovery", "rollback verification", "memory shard taxonomy"],
+            "missing_skill": ["operational guidance"],
+            "domain_drift": [],
+            "user_preference": ["procedures over terminology", "operational skills"],
+            "successful_pattern": [],
+        })
+        transcript = (
+            "USER: Need operational guidance for storage recovery and rollback verification.\n"
+            "ASSISTANT: We do not have validated project guidance for those procedures yet.\n"
+            "USER: This is a missing operational skill, not new terminology.\n"
+        )
+        with patch("app.routers.skills._llm", new=AsyncMock(return_value=contextual_gap)):
+            r = await client.post("/api/v1/skills/dialogue/analyze", json={
+                "transcript": transcript,
+                "agent_id": "test",
+            })
+        assert r.status_code == 200
+        body = r.json()
+        assert body["signals"]["missing_skill"] == ["storage recovery", "rollback verification"]
+        assert body["signals"]["new_terminology"] == ["memory shard taxonomy"]
+
+    async def test_analyze_drops_successful_patterns_without_success_evidence(self, client):
+        llm_signal = json.dumps({
+            "new_terminology": [],
+            "missing_skill": ["release automation"],
+            "domain_drift": [],
+            "user_preference": [],
+            "successful_pattern": ["capturing comprehensive documentation", "acknowledging knowledge gaps"],
+        })
+        transcript = (
+            "USER: We still do not have release automation guidance.\n"
+            "ASSISTANT: I do not know the procedure yet.\n"
+        )
+        with patch("app.routers.skills._llm", new=AsyncMock(return_value=llm_signal)):
+            r = await client.post("/api/v1/skills/dialogue/analyze", json={
+                "transcript": transcript,
+                "agent_id": "test",
+            })
+        assert r.status_code == 200
+        body = r.json()
+        assert body["signals"]["successful_pattern"] == []
+
 
 class TestSkillSuppression:
     """Test that suppressed skills are excluded from pack selection."""

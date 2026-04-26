@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     max_search_results: int = Field(20, alias="MAX_SEARCH_RESULTS")
     cleanup_min_importance: float = Field(0.2, alias="CLEANUP_MIN_IMPORTANCE")
     cleanup_max_age_days: int = Field(30, alias="CLEANUP_MAX_AGE_DAYS")
+    self_project_id: str = Field("supermemory", alias="SELF_PROJECT_ID")
 
     # Module control — comma-separated list of module names to disable
     # Example: DISABLED_MODULES=watcher,layout_fixer,log_filter
@@ -58,7 +59,7 @@ class Settings(BaseSettings):
     # Prefer CLOUD_LLM_* for new setups. Legacy GLM_* stays as fallback.
     cloud_llm_provider: str = Field("", alias="CLOUD_LLM_PROVIDER")
     cloud_llm_api_key: str = Field("", alias="CLOUD_LLM_API_KEY")
-    cloud_llm_model: str = Field("gemini-2.5-flash", alias="CLOUD_LLM_MODEL")
+    cloud_llm_model: str = Field("", alias="CLOUD_LLM_MODEL")
     cloud_llm_base_url: str = Field(
         "https://generativelanguage.googleapis.com/v1beta/openai",
         alias="CLOUD_LLM_BASE_URL",
@@ -70,18 +71,55 @@ class Settings(BaseSettings):
     glm_model: str = Field("glm-4.5-air", alias="GLM_MODEL")
     glm_base_url: str = Field("https://api.z.ai/api/coding/paas/v4", alias="GLM_BASE_URL")
 
+    # Gemini native config (first-class simple setup)
+    gemini_api_key: str = Field("", alias="GEMINI_API_KEY")
+    gemini_model: str = Field("", alias="GEMINI_MODEL")
+    gemini_base_url: str = Field("https://generativelanguage.googleapis.com/v1beta", alias="GEMINI_BASE_URL")
+
+    # DeepSeek OpenAI-compatible config/profile key
+    deepseek_api_key: str = Field("", alias="DEEPSEEK_API_KEY")
+
     # Learning Ledger / GLM Mirror
     glm_generate_model: str = Field("qwen3:1.7b", alias="GLM_GENERATE_MODEL")
     glm_response_language: str = Field("Russian", alias="GLM_RESPONSE_LANGUAGE")
     glm_mirror_interval_hours: float = Field(0.1667, alias="GLM_MIRROR_INTERVAL_HOURS")
     glm_skip_evidence_threshold: bool = Field(False, alias="GLM_SKIP_EVIDENCE_THRESHOLD")
 
+    # Cloud routing tiers
+    primary_cloud_llm: str = Field("", alias="PRIMARY_CLOUD_LLM")
+    fallback_cloud_llms: str = Field("", alias="FALLBACK_CLOUD_LLMS")
+    economy_cloud_llms: str = Field("", alias="ECONOMY_CLOUD_LLMS")
+    balanced_cloud_llms: str = Field("", alias="BALANCED_CLOUD_LLMS")
+    reasoning_cloud_llms: str = Field("", alias="REASONING_CLOUD_LLMS")
+    cloud_llm_model_profiles: str = Field("", alias="CLOUD_LLM_MODEL_PROFILES")
+    disabled_cloud_llms: str = Field("", alias="DISABLED_CLOUD_LLMS")
+
     # AI directory watcher / dialogue learning
     watcher_auto_start: bool = Field(False, alias="WATCHER_AUTO_START")
     watcher_agent_id: str = Field("ai-dirs", alias="WATCHER_AGENT_ID")
     watcher_enable_dialogue_analysis: bool = Field(True, alias="WATCHER_ENABLE_DIALOGUE_ANALYSIS")
 
-    model_config = {"env_file": ".env", "populate_by_name": True}
+    model_config = {
+        "env_file": ".env",
+        "populate_by_name": True,
+        "extra": "ignore",
+    }
+
+    @property
+    def learning_mirror_model(self) -> str:
+        return self.glm_generate_model
+
+    @property
+    def response_language(self) -> str:
+        return self.glm_response_language
+
+    @property
+    def learning_mirror_interval_hours(self) -> float:
+        return self.glm_mirror_interval_hours
+
+    @property
+    def learning_mirror_skip_evidence_threshold(self) -> bool:
+        return self.glm_skip_evidence_threshold
 
 
 settings = Settings()

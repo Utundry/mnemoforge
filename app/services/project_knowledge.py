@@ -22,6 +22,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qm
 
 from app.config import settings
+from app.services.component_docs_store import get_component_docs_store
 from app.services.ollama_service import OllamaService
 
 logger = logging.getLogger(__name__)
@@ -31,12 +32,46 @@ SEARCH_THRESHOLD = 0.45
 SEARCH_LIMIT = 5
 
 
+def _component_payload_from_row(row: dict | None, fallback: dict | None = None) -> Optional[dict]:
+    if row:
+        payload = {
+            "project_id": row["project_id"],
+            "component_id": row["component_id"],
+            "name": row["name"],
+            "purpose": row["purpose"],
+            "implementation": row["implementation"],
+            "key_files": row.get("key_files") or [],
+            "endpoints": row.get("endpoints") or [],
+            "status": row.get("status") or "",
+            "file_hash": row.get("file_hash") or "",
+            "version_note": row.get("version_note") or "",
+            "snapshot": row.get("snapshot") or {},
+            "category": "component_doc",
+            "point_id": row["id"],
+        }
+        extra = row.get("extra_payload") or {}
+        for key, value in extra.items():
+            payload.setdefault(key, value)
+        return payload
+    if fallback:
+        payload = dict(fallback)
+        payload.setdefault("key_files", payload.get("key_files") or [])
+        payload.setdefault("endpoints", payload.get("endpoints") or [])
+        payload.setdefault("snapshot", payload.get("snapshot") or {})
+        payload.setdefault("status", payload.get("status") or "")
+        payload.setdefault("category", payload.get("category") or "component_doc")
+        payload.setdefault("point_id", payload.get("point_id") or fallback.get("component_id"))
+        return payload
+    return None
+
+
 class ProjectKnowledgeService:
     """Vector-backed store for project component documentation."""
 
     def __init__(self, qdrant: AsyncQdrantClient, ollama: OllamaService) -> None:
         self._q = qdrant
         self._ollama = ollama
+        self._store = get_component_docs_store()
 
     # ── Setup ──────────────────────────────────────────────────────────────────
 
@@ -114,6 +149,8 @@ class ProjectKnowledgeService:
         status: str,
         file_hash: str,
         version_note: str = "",
+        snapshot: dict | None = None,
+        extra_payload: dict | None = None,
     ) -> str:
         """Store or update a component doc. Returns point ID."""
         existing = await self._find_point(project_id, component_id)
@@ -132,6 +169,15 @@ class ProjectKnowledgeService:
             "version_note": version_note,
             "category": "component_doc",
         }
+        if snapshot:
+            payload["snapshot"] = snapshot
+            payload["source_mode"] = snapshot.get("source_mode") or "workspace"
+            payload["repo"] = snapshot.get("repo") or ""
+            payload["branch"] = snapshot.get("branch") or ""
+            payload["commit_sha"] = snapshot.get("commit_sha") or ""
+            payload["pr_ref"] = snapshot.get("pr_ref") or ""
+        if extra_payload:
+            payload.update(extra_payload)
 
         embed_text = self._build_embed_text(name, purpose, implementation, endpoints, key_files)
         vector = await self._ollama.embed(embed_text)
@@ -141,25 +187,49 @@ class ProjectKnowledgeService:
             points=[qm.PointStruct(id=point_id, vector=vector, payload=payload)],
         )
         logger.info("Upserted component %s/%s (hash=%s)", project_id, component_id, file_hash)
+        await self._store.upsert_component(
+            point_id=point_id,
+            project_id=project_id,
+            component_id=component_id,
+            name=name,
+            purpose=purpose,
+            implementation=implementation,
+            key_files=key_files,
+            endpoints=endpoints,
+            status=status,
+            file_hash=file_hash,
+            version_note=version_note,
+            snapshot=snapshot,
+            extra_payload=extra_payload,
+        )
         return point_id
+
+    async def delete_component(self, project_id: str, component_id: str) -> bool:
+        """Delete one stored component. Returns True when a point was removed."""
+        existing = await self._find_point(project_id, component_id)
+        if not existing:
+            return False
+        await self._q.delete(
+            collection_name=COLLECTION,
+            points_selector=qm.PointIdsList(points=[existing[0]]),
+        )
+        logger.info("Deleted component %s/%s", project_id, component_id)
+        await self._store.delete(existing[0])
+        return True
 
     # ── Read ───────────────────────────────────────────────────────────────────
 
     async def get_component(self, project_id: str, component_id: str) -> Optional[dict]:
-        result = await self._find_point(project_id, component_id)
-        return result[1] if result else None
+        row = await self._store.get_by_key(project_id, component_id)
+        return _component_payload_from_row(row)
 
     async def list_components(self, project_id: str) -> list[dict]:
-        results, _ = await self._q.scroll(
-            collection_name=COLLECTION,
-            scroll_filter=qm.Filter(must=[
-                qm.FieldCondition(key="project_id", match=qm.MatchValue(value=project_id)),
-            ]),
-            limit=500,
-            with_payload=True,
-            with_vectors=False,
-        )
-        return [r.payload for r in results if r.payload]
+        rows = await self._store.list_by_project(project_id, limit=500)
+        return [
+            comp
+            for row in rows
+            if (comp := _component_payload_from_row(row))
+        ]
 
     async def search(self, project_id: str, query: str, limit: int = SEARCH_LIMIT) -> list[dict]:
         """Semantic search across components of a project."""
@@ -181,7 +251,17 @@ class ProjectKnowledgeService:
             score_threshold=SEARCH_THRESHOLD,
             with_payload=True,
         )
-        return [{**hit.payload, "_score": round(hit.score, 3)} for hit in hits]
+        ids = [str(hit.id) for hit in hits]
+        rows = await self._store.get_many(ids)
+        results: list[dict] = []
+        for hit in hits:
+            point_id = str(hit.id)
+            payload = _component_payload_from_row(rows.get(point_id), fallback=hit.payload or {})
+            if not payload:
+                continue
+            payload["_score"] = round(hit.score or 0.0, 3)
+            results.append(payload)
+        return results
 
     async def get_stale_components(self, project_id: str,
                                    current_hashes: dict[str, str]) -> list[str]:

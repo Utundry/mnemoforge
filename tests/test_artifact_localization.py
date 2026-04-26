@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services.text_localization import repair_mojibake
+from app.services.text_localization import (
+    is_low_quality_text,
+    normalize_text_for_display,
+    repair_mojibake,
+)
 
 PREFIX = "/api/v1"
 
@@ -21,6 +25,24 @@ def test_repair_mojibake_recovers_windows_utf8_cp1251_mix():
     assert repair_mojibake(mojibake) == original
 
 
+def test_is_low_quality_text_keeps_short_clean_technical_terms():
+    assert is_low_quality_text("nginx") is False
+    assert is_low_quality_text("respx") is False
+    assert is_low_quality_text("ssl termination") is False
+
+
+def test_normalize_text_for_display_recovers_second_order_mojibake():
+    original = (
+        "\u0412\u043e\u0437\u043c\u043e\u0436\u043d\u044b\u0435 "
+        "\u043f\u0440\u0438\u0447\u0438\u043d\u044b: "
+        "\u0441\u0435\u0440\u0432\u0435\u0440 \u043d\u0435 "
+        "\u0437\u0430\u043f\u0443\u0449\u0435\u043d"
+    )
+    mojibake_once = original.encode("utf-8").decode("latin-1")
+    mojibake_twice = mojibake_once.encode("utf-8").decode("latin-1")
+    assert normalize_text_for_display(mojibake_twice) == original
+
+
 @pytest.mark.asyncio
 async def test_artifact_translation_endpoint_matches_tree_style_contract(client, tmp_path):
     broken_russian = (
@@ -31,13 +53,13 @@ async def test_artifact_translation_endpoint_matches_tree_style_contract(client,
     ).encode("utf-8").decode("cp1251")
     convo = tmp_path / "session.jsonl"
     messages = [
-        {"role": "user", "content": "Please inspect supermemory terminology handling."},
+        {"role": "user", "content": "Please inspect respx terminology handling."},
         {"role": "assistant", "content": broken_russian},
     ]
     convo.write_text("\n".join(json.dumps(m) for m in messages), encoding="utf-8")
 
     signal = json.dumps({
-        "new_terminology": ["supermemory"],
+        "new_terminology": ["respx"],
         "missing_skill": [],
         "domain_drift": [],
         "user_preference": [],
@@ -71,12 +93,12 @@ async def test_artifact_translation_endpoint_matches_tree_style_contract(client,
 
         assert "\u0412\u043e\u0437\u043c\u043e\u0436\u043d\u044b\u0435 \u043f\u0440\u0438\u0447\u0438\u043d\u044b" in localized["observation"]
         assert "Р’РѕР·РјРѕР¶" not in localized["observation"]
-        assert localized["display_content"].startswith("New term 'supermemory'")
+        assert localized["display_content"].startswith("New term 'respx'")
 
         translated = await client.get(f"/api/v1/learning/artifacts/{localized['id']}/translate")
         assert translated.status_code == 200
         body = translated.json()
-        assert body["original"].startswith("New term 'supermemory'")
+        assert body["original"].startswith("New term 'respx'")
         assert body["translated"].startswith("\u041d\u043e\u0432\u044b\u0439 \u0442\u0435\u0440\u043c\u0438\u043d \u0437\u0430\u043c\u0435\u0447\u0435\u043d")
         assert body["translated_observation"].startswith("\u0410\u043d\u0430\u043b\u0438\u0437 \u0434\u0438\u0430\u043b\u043e\u0433\u0430")
         assert body["translated_why_it_matters"].startswith("\u0424\u0438\u043a\u0441\u0430\u0446\u0438\u044f \u0442\u0435\u0440\u043c\u0438\u043d\u043e\u043b\u043e\u0433\u0438\u0438")

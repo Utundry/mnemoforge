@@ -31,12 +31,10 @@ import os
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-BASE_URL     = os.environ.get("SUPERMEMORY_URL", "http://localhost:8000")
+from api_helpers import BASE_URL, get_json, post_json
 POLL_SEC     = int(os.environ.get("WATCHDOG_POLL_SEC", "30"))
 SOFT_FAILS   = int(os.environ.get("WATCHDOG_SOFT_FAILS", "3"))
 HARD_FAILS   = int(os.environ.get("WATCHDOG_HARD_FAILS", "5"))
@@ -54,32 +52,15 @@ logging.basicConfig(
 log = logging.getLogger("watchdog")
 
 
-def _get(path: str, timeout: int = 5) -> dict:
-    url = f"{BASE_URL}{path}"
-    req = urllib.request.Request(url)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
-
-
-def _post(path: str, timeout: int = 15) -> dict:
-    url = f"{BASE_URL}{path}"
-    req = urllib.request.Request(url, data=b"{}", headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())
-
-
 def check_health() -> bool:
-    try:
-        data = _get("/api/v1/health", timeout=5)
-        return data.get("status") == "ok"
-    except Exception:
-        return False
+    data = get_json("health", auth=True)
+    return data.get("status") == "ok"
 
 
 def soft_reload() -> bool:
     """Try POST /admin/reload — reconnects services, restarts failed tasks."""
     try:
-        data = _post("/admin/reload", timeout=15)
+        data = post_json("admin/reload", json_payload={}, auth=True)
         log.info("Soft reload response: %s", data)
         return True
     except Exception as e:
@@ -101,11 +82,8 @@ def hard_restart() -> bool:
 
     # Find PID via /admin/status or via netstat
     pid = None
-    try:
-        data = _get("/admin/status", timeout=3)
-        pid = data.get("pid")
-    except Exception:
-        pass
+    data = get_json("admin/status", auth=True)
+    pid = data.get("pid")
 
     if pid:
         log.warning("Hard restart: killing PID %d", pid)

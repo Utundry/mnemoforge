@@ -77,7 +77,16 @@ def repair_mojibake(text: str) -> str:
 
 
 def normalize_text_for_display(text: str) -> str:
-    normalized = repair_mojibake((text or "").strip())
+    normalized = (text or "").strip()
+    # Some historical artifacts were re-encoded multiple times by shell hops.
+    # Run a bounded repair loop so second-order mojibake is also recovered.
+    for _ in range(3):
+        repaired = repair_mojibake(normalized)
+        if repaired == normalized:
+            break
+        normalized = repaired.strip()
+        if not looks_like_mojibake(normalized):
+            break
     normalized = normalized.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
     normalized = "\n".join(
         re.sub(r"[ \u00a0]{2,}", " ", line).strip()
@@ -85,6 +94,19 @@ def normalize_text_for_display(text: str) -> str:
     )
     normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
     return normalized
+
+
+def is_low_quality_text(text: str, *, min_score: int = 6, max_mojibake_markers: int = 1) -> bool:
+    normalized = normalize_text_for_display(text or "")
+    if not normalized:
+        return True
+    marker_count = _mojibake_marker_count(normalized)
+    if marker_count > max_mojibake_markers:
+        return True
+    # Short, clean technical labels are often valid despite carrying little language signal.
+    if len(normalized) <= 24 and marker_count == 0 and not looks_like_mojibake(normalized):
+        return False
+    return _text_quality_score(normalized) < min_score
 
 
 def _should_translate(target_language: str, fields: dict[str, str]) -> bool:
@@ -104,7 +126,8 @@ def _should_translate(target_language: str, fields: dict[str, str]) -> bool:
 
 
 async def _translate_fields(fields: dict[str, str], *, language: str) -> dict[str, str] | None:
-    from app.services.cloud_llm import cloud_available, cloud_complete
+    from app.services.cloud_llm import cloud_available
+    from app.services.llm_gateway import get_cloud_gateway
 
     if not cloud_available():
         return None
@@ -112,14 +135,17 @@ async def _translate_fields(fields: dict[str, str], *, language: str) -> dict[st
     payload = json.dumps(fields, ensure_ascii=False)
     prompt = _TRANSLATE_FIELDS_PROMPT.format(language=language, payload=payload)
     try:
-        raw = await cloud_complete(
+        raw = await get_cloud_gateway().generate(
             prompt,
             system=(
                 f"You are a translator. Translate to {language}. "
                 "Keep commands, code, paths, and technical identifiers unchanged."
             ),
-            max_tokens=700,
+            task_type="text_summarization",
+            mode="economy",
+            max_tokens=450,
             temperature=0.1,
+            allow_local_fallback=False,
         )
     except Exception as exc:
         logger.warning("Artifact translation failed: %s", exc)

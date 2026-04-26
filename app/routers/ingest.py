@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from app.dependencies import OllamaDep, QdrantDep
 from app.models.enums import MemoryType
 from app.models.memory import MemoryCreate
-from app.core.path_security import check_path_allowed, is_path_allowed
+from app.core.path_security import allowed_roots, check_path_allowed, is_path_allowed
 from app.services.file_parser import ParsedChunk, parse_file, scan_directory
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ router = APIRouter(prefix="/ingest", tags=["ingest"])
 
 class IngestFileRequest(BaseModel):
     path: str = Field(..., description="Absolute or relative path to the file")
+    cwd: Optional[str] = Field(None, description="Base directory used to resolve a relative path")
     agent_id: str
     memory_type: MemoryType = MemoryType.context
     category: str = "document"
@@ -35,6 +36,7 @@ class IngestFileRequest(BaseModel):
 
 class IngestDirRequest(BaseModel):
     path: str = Field(..., description="Absolute or relative path to directory")
+    cwd: Optional[str] = Field(None, description="Base directory used to resolve a relative path")
     agent_id: str
     memory_type: MemoryType = MemoryType.context
     category: str = "document"
@@ -50,6 +52,62 @@ class IngestResponse(BaseModel):
     failed: int
     skipped: int
     files_processed: int
+
+
+def _resolve_ingest_path(raw_path: str, cwd: Optional[str]) -> Path:
+    raw = Path(raw_path).expanduser()
+    if raw.is_absolute():
+        return raw.resolve(strict=False)
+
+    roots = allowed_roots()
+    candidates: list[Path] = []
+    seen: set[str] = set()
+
+    def _add(candidate: Path) -> None:
+        resolved = candidate.expanduser().resolve(strict=False)
+        key = str(resolved).casefold()
+        if key not in seen:
+            seen.add(key)
+            candidates.append(resolved)
+
+    if cwd:
+        _add(Path(cwd) / raw)
+    _add(Path.cwd() / raw)
+    for root in roots:
+        _add(root / raw)
+
+    allowed_candidates = [
+        candidate
+        for candidate in candidates
+        if not roots or any(candidate == root or candidate.is_relative_to(root) for root in roots)
+    ]
+    existing_allowed = [candidate for candidate in allowed_candidates if candidate.exists()]
+    if len(existing_allowed) == 1:
+        return existing_allowed[0]
+    if len(existing_allowed) > 1:
+        matches = ", ".join(str(candidate) for candidate in existing_allowed[:3])
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Relative path is ambiguous: {raw_path}. Matching locations: {matches}",
+        )
+
+    existing_candidates = [candidate for candidate in candidates if candidate.exists()]
+    if len(existing_candidates) == 1:
+        return existing_candidates[0]
+    if len(existing_candidates) > 1:
+        if cwd and candidates and candidates[0] in existing_candidates:
+            return candidates[0]
+        matches = ", ".join(str(candidate) for candidate in existing_candidates[:3])
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Relative path is ambiguous: {raw_path}. Matching locations: {matches}",
+        )
+
+    if allowed_candidates:
+        return allowed_candidates[0]
+    if candidates:
+        return candidates[0]
+    return raw.resolve(strict=False)
 
 
 async def _ingest_chunks(
@@ -87,7 +145,7 @@ async def _ingest_chunks(
 
 @router.post("/file", response_model=IngestResponse)
 async def ingest_file(body: IngestFileRequest, qdrant: QdrantDep, ollama: OllamaDep):
-    p = Path(body.path)
+    p = _resolve_ingest_path(body.path, body.cwd)
     try:
         check_path_allowed(p)
     except ValueError as e:
@@ -107,7 +165,7 @@ async def ingest_file(body: IngestFileRequest, qdrant: QdrantDep, ollama: Ollama
 
 @router.post("/dir", response_model=IngestResponse)
 async def ingest_dir(body: IngestDirRequest, qdrant: QdrantDep, ollama: OllamaDep):
-    p = Path(body.path)
+    p = _resolve_ingest_path(body.path, body.cwd)
     try:
         check_path_allowed(p)
     except ValueError as e:
@@ -133,6 +191,7 @@ async def ingest_dir(body: IngestDirRequest, qdrant: QdrantDep, ollama: OllamaDe
     # Convert dir request fields to file-request-compatible object
     file_req = IngestFileRequest(
         path=body.path,
+        cwd=body.cwd,
         agent_id=body.agent_id,
         memory_type=body.memory_type,
         category=body.category,

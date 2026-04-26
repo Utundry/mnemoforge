@@ -15,6 +15,8 @@ from app.models.memory import MemoryCreate, MemoryRecord, MemoryUpdate
 
 logger = logging.getLogger(__name__)
 
+_HANDOFF_PAYLOAD_CONTENT_PREFIX = "handoff_ref:"
+
 # Project activity tracker — maps project name → last active timestamp (use-events only).
 # In-memory: resets on server restart, but decay job runs every 24h so this is acceptable.
 # Key insight: decay gate only needs to know "was project active today?", not exact history.
@@ -37,6 +39,10 @@ def _validate_vector(vector: list[float]) -> None:
             f"Vector dimension mismatch: got {len(vector)}, expected {expected}. "
             f"Check EMBEDDING_DIMENSIONS in .env matches the embedding model output."
         )
+
+
+def _handoff_payload_ref(memory_id: UUID | str) -> str:
+    return f"{_HANDOFF_PAYLOAD_CONTENT_PREFIX}{memory_id}"
 
 
 PAYLOAD_INDEXES = [
@@ -118,7 +124,7 @@ class QdrantService:
         else:
             memory_id = uuid4()
         now = datetime.now(timezone.utc)
-        payload = {
+        full_payload = {
             "content": memory.content,
             "agent_id": memory.agent_id,
             "memory_type": memory.memory_type.value,
@@ -129,6 +135,8 @@ class QdrantService:
             "tags": memory.tags,
             "access_count": 0,
             "session_id": memory.session_id,
+            "status": memory.status,
+            "meta": memory.meta,
             "decay_rate": memory.effective_decay_rate,
             "pinned": memory.pinned,
             "last_access_ts": None,       # updated only on USE events, not peek
@@ -141,9 +149,22 @@ class QdrantService:
             "supports": memory.supports,
             "canonical_id": memory.canonical_id,
         }
+        store_content = memory.content
+        store_metadata = _metadata_without_content(full_payload)
+        payload = dict(full_payload)
+        if memory.category == "handoff":
+            # Handoff packets keep full metadata/content in SQLite for durability.
+            payload["content"] = _handoff_payload_ref(memory_id)
+            payload["meta"] = {}
         await self._client.upsert(
             collection_name=self._collection,
             points=[qmodels.PointStruct(id=str(memory_id), vector=vector, payload=payload)],
+        )
+        await _persist_memory_to_store(
+            memory_id,
+            payload,
+            store_content=store_content,
+            store_metadata=store_metadata,
         )
         return memory_id
 
@@ -156,7 +177,8 @@ class QdrantService:
         )
         if not results:
             raise MemoryNotFoundError(str(memory_id))
-        return _point_to_record(results[0])
+        record = _point_to_record(results[0])
+        return await _hydrate_record(record)
 
     async def update(
         self,
@@ -165,7 +187,7 @@ class QdrantService:
         new_vector: Optional[list[float]] = None,
     ) -> MemoryRecord:
         # Verify exists
-        await self.get(memory_id)
+        existing = await self.get(memory_id)
         patch: dict = {}
         if update.memory_type is not None:
             patch["memory_type"] = update.memory_type.value
@@ -179,6 +201,10 @@ class QdrantService:
             patch["tags"] = update.tags
         if update.session_id is not None:
             patch["session_id"] = update.session_id
+        if update.status is not None:
+            patch["status"] = update.status
+        if update.meta is not None:
+            patch["meta"] = update.meta
         if update.content is not None:
             patch["content"] = update.content
         if update.decay_rate is not None:
@@ -196,6 +222,14 @@ class QdrantService:
         if update.canonical_id is not None:
             patch["canonical_id"] = update.canonical_id
 
+        store_patch = dict(patch)
+        store_content = store_patch.pop("content", None)
+        category_after = update.category if update.category is not None else existing.category
+        if category_after == "handoff":
+            # Keep Qdrant handoff payload lightweight; SQLite stores full packet metadata/content.
+            patch["content"] = _handoff_payload_ref(memory_id)
+            patch["meta"] = {}
+
         if patch:
             await self._client.set_payload(
                 collection_name=self._collection,
@@ -210,6 +244,9 @@ class QdrantService:
                 points=[qmodels.PointVectors(id=str(memory_id), vector=new_vector)],
             )
 
+        if store_content is not None or store_patch:
+            await _sync_memory_store(memory_id, content=store_content, metadata_patch=store_patch)
+
         return await self.get(memory_id)
 
     async def delete(self, memory_id: UUID) -> None:
@@ -218,6 +255,7 @@ class QdrantService:
             collection_name=self._collection,
             points_selector=qmodels.PointIdsList(points=[str(memory_id)]),
         )
+        await _remove_memory_from_store(memory_id)
 
     async def increment_access_count(self, memory_id: UUID) -> None:
         """Peek event: increment counter only. Does NOT update last_access_ts (use-only field)."""
@@ -304,12 +342,14 @@ class QdrantService:
         if not memory_ids:
             return
         now = datetime.now(timezone.utc)
+        iso_now = now.isoformat()
         for mid in memory_ids:
             await self._client.set_payload(
                 collection_name=self._collection,
-                payload={"last_access_ts": now.isoformat()},
+                payload={"last_access_ts": iso_now},
                 points=[str(mid)],
             )
+            await _sync_memory_store(mid, metadata_patch={"last_access_ts": iso_now})
         # Update project activity tracker (module-level dict, survives within process lifetime)
         if project:
             _update_project_activity(project, now.timestamp())
@@ -320,6 +360,7 @@ class QdrantService:
         agent_id: Optional[str] = None,
         memory_type: Optional[MemoryType] = None,
         category: Optional[str] = None,
+        topic_prefix: Optional[str] = None,
         limit: int = 10,
         overfetch_factor: int = 2,
         since_minutes: Optional[int] = None,
@@ -359,6 +400,17 @@ class QdrantService:
                     match=qmodels.MatchAny(any=scope_filter),
                 )
             )
+        if topic_prefix:
+            prefix = str(topic_prefix).strip().strip("/")
+            if prefix:
+                topic_ids = await self._collect_topic_prefix_ids(
+                    topic_prefix=prefix,
+                    must_conditions=list(must_conditions),
+                    limit=max(limit * overfetch_factor * 20, 200),
+                )
+                if not topic_ids:
+                    return []
+                must_conditions.append(qmodels.HasIdCondition(has_id=topic_ids))
 
         query_filter = qmodels.Filter(must=must_conditions) if must_conditions else None
 
@@ -370,7 +422,44 @@ class QdrantService:
             limit=limit * overfetch_factor,
             with_payload=True,
         )
-        return [(_point_to_record(r), r.score) for r in results]
+        records = [_point_to_record(r) for r in results]
+        records = await _hydrate_records(records)
+        return [(records[i], results[i].score) for i in range(len(records))]
+
+    async def _collect_topic_prefix_ids(
+        self,
+        *,
+        topic_prefix: str,
+        must_conditions: list,
+        limit: int,
+    ) -> list[str]:
+        """Collect IDs whose topic_path starts with topic_prefix under existing filters."""
+        scroll_filter = qmodels.Filter(must=must_conditions) if must_conditions else None
+        matched_ids: list[str] = []
+        offset = None
+
+        while len(matched_ids) < limit:
+            batch, next_offset = await self._client.scroll(
+                collection_name=self._collection,
+                scroll_filter=scroll_filter,
+                limit=200,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not batch:
+                break
+            for point in batch:
+                payload = point.payload or {}
+                tp = str(payload.get("topic_path") or "").strip()
+                if tp == topic_prefix or tp.startswith(topic_prefix + "/"):
+                    matched_ids.append(str(point.id))
+                    if len(matched_ids) >= limit:
+                        break
+            if next_offset is None:
+                break
+            offset = next_offset
+        return matched_ids
 
     async def scroll_by_topic_path(
         self,
@@ -415,7 +504,7 @@ class QdrantService:
                 break
             offset = next_offset
 
-        return all_records
+        return await _hydrate_records(all_records)
 
     async def delete_by_filter(
         self,
@@ -507,7 +596,14 @@ class QdrantService:
         )
         return [_point_to_improvement(r) for r in results]
 
-    async def resolve_improvement(self, memory_id: UUID) -> Optional[str]:
+    async def resolve_improvement(
+        self,
+        memory_id: UUID,
+        *,
+        acted_by: str = "user",
+        action_source: str = "inline_user_approval",
+        reason: str = "",
+    ) -> Optional[str]:
         now = datetime.now(timezone.utc)
         results = await self._client.retrieve(
             collection_name=self._collection,
@@ -521,7 +617,15 @@ class QdrantService:
         project = payload.get("project") or "supermemory"
         await self._client.set_payload(
             collection_name=self._collection,
-            payload={"status": "resolved", "resolved_at": now.isoformat()},
+            payload={
+                "status": "resolved",
+                "resolved_at": now.isoformat(),
+                "last_status_action": "resolve_improvement",
+                "last_status_acted_by": acted_by,
+                "last_status_action_source": action_source,
+                "last_status_action_at": now.isoformat(),
+                "last_status_action_reason": reason or None,
+            },
             points=[str(memory_id)],
         )
         return project
@@ -553,6 +657,7 @@ class QdrantService:
             with_vectors=False,
         )
         records = [_point_to_record(r) for r in results]
+        records = await _hydrate_records(records)
         records.sort(key=lambda r: r.timestamp, reverse=True)
         return records
 
@@ -564,33 +669,400 @@ class QdrantService:
             points=[str(memory_id)],
         )
 
-    async def get_pending_handoffs(self, to_agent: str, limit: int = 10) -> list[dict]:
+    async def _load_handoff_entries_from_store(self, *, limit: int) -> list[dict]:
+        from app.services.memory_store import get_memory_store
+
+        rows = await get_memory_store().list_by_category("memory", limit=max(limit, 100))
+        entries: list[dict] = []
+        for row in rows:
+            metadata = dict(row.get("metadata") or {})
+            if metadata.get("category") != "handoff":
+                continue
+            entries.append(
+                {
+                    "id": str(row.get("memory_id") or ""),
+                    "payload": metadata,
+                    "content": str(row.get("content") or ""),
+                }
+            )
+        return entries
+
+    async def _hydrate_handoff_entries_from_store(self, entries: list[dict]) -> list[dict]:
+        if not entries:
+            return entries
+        from app.services.memory_store import get_memory_store
+
+        ids = [str(item.get("id") or "").strip() for item in entries if str(item.get("id") or "").strip()]
+        if not ids:
+            return entries
+        store = get_memory_store()
+        rows = await store.get_many(ids)
+        hydrated: list[dict] = []
+        for item in entries:
+            memory_id = str(item.get("id") or "").strip()
+            payload = dict(item.get("payload") or {})
+            content = str(payload.get("content") or item.get("content") or "")
+            row = rows.get(memory_id)
+            if row is None and memory_id:
+                row = await store.get(memory_id)
+            if row:
+                row_meta = dict(row.get("metadata") or {})
+                payload = {**payload, **row_meta}
+                row_content = str(row.get("content") or "")
+                if row_content:
+                    content = row_content
+            payload["content"] = content
+            hydrated.append({"id": memory_id, "payload": payload, "content": content})
+        return hydrated
+
+    async def _list_handoffs(
+        self,
+        *,
+        to_agent: str,
+        limit: int = 10,
+        handoff_label: str | None = None,
+        statuses: list[str] | None = None,
+        owner_agent: str | None = None,
+        write_scope: list[str] | None = None,
+    ) -> list[dict]:
+        def _extract_line_value(content: str, prefix: str) -> str:
+            needle = f"{prefix}:"
+            for line in content.splitlines():
+                if line.startswith(needle):
+                    return line[len(needle):].strip()
+            return ""
+
+        def _extract_csv(content: str, prefix: str) -> list[str]:
+            raw = _extract_line_value(content, prefix)
+            return [item.strip() for item in raw.split(",") if item.strip()]
+
+        must_conditions: list = [
+            qmodels.FieldCondition(key="category", match=qmodels.MatchValue(value="handoff")),
+            qmodels.FieldCondition(key="tags", match=qmodels.MatchValue(value=f"to:{to_agent}")),
+        ]
+        requested_statuses = [str(item).strip() for item in (statuses or []) if str(item).strip()]
+        if len(requested_statuses) == 1:
+            must_conditions.append(qmodels.FieldCondition(key="status", match=qmodels.MatchValue(value=requested_statuses[0])))
+        elif requested_statuses:
+            must_conditions.append(
+                qmodels.FieldCondition(key="status", match=qmodels.MatchAny(any=requested_statuses))
+            )
+        if handoff_label:
+            must_conditions.append(
+                qmodels.FieldCondition(key="tags", match=qmodels.MatchValue(value=f"handoff_label:{handoff_label}"))
+            )
+        scan_limit = max(limit, 100) if write_scope else limit
+        entries: list[dict] = []
+        using_fallback = False
+        try:
+            results, _ = await self._client.scroll(
+                collection_name=self._collection,
+                scroll_filter=qmodels.Filter(must=must_conditions),
+                limit=scan_limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            entries = [
+                {
+                    "id": str(r.id),
+                    "payload": dict(r.payload or {}),
+                    "content": str((r.payload or {}).get("content") or ""),
+                }
+                for r in results
+            ]
+            entries = await self._hydrate_handoff_entries_from_store(entries)
+        except Exception as e:
+            logger.warning("handoff scroll failed, falling back to SQLite memory store: %s", e)
+            using_fallback = True
+            from app.services.data_integrity_service import HANDOFF_STATUS_FILTER_SLICE_ID
+            from app.services.data_integrity_service import get_data_integrity_store
+
+            entries = await self._load_handoff_entries_from_store(limit=max(scan_limit * 5, 500))
+            get_data_integrity_store().upsert_slice(
+                slice_id=HANDOFF_STATUS_FILTER_SLICE_ID,
+                subsystem="qdrant",
+                status="degraded",
+                source="qdrant._list_handoffs",
+                error=str(e),
+                details={"fallback": "sqlite_memory_store"},
+            )
+        handoffs = []
+        for entry in entries:
+            payload = entry.get("payload") or {}
+            tags = list(payload.get("tags", []) or [])
+            content = str(entry.get("content") or payload.get("content") or "")
+            meta = dict(payload.get("meta") or {})
+            status_value = str(payload.get("status", "pending") or "pending").strip() or "pending"
+            resolved_to_agent = next((t[len("to:"):] for t in tags if t.startswith("to:")), "").strip()
+            if resolved_to_agent == "":
+                resolved_to_agent = str(meta.get("to_agent") or _extract_line_value(content, "to_agent") or "").strip()
+            if resolved_to_agent == "":
+                resolved_to_agent = str(_extract_line_value(content, "to_agent") or _extract_line_value(content, "to") or "").strip()
+            resolved_handoff_label = next((t[len("handoff_label:"):] for t in tags if t.startswith("handoff_label:")), "")
+            if not resolved_handoff_label:
+                resolved_handoff_label = str(meta.get("handoff_label") or _extract_line_value(content, "handoff_label") or "").strip()
+            resolved_owner_agent = str(meta.get("owner_agent") or _extract_line_value(content, "owner_agent") or "").strip()
+            if resolved_to_agent != to_agent:
+                continue
+            if requested_statuses and status_value not in requested_statuses:
+                continue
+            if handoff_label and resolved_handoff_label != handoff_label:
+                continue
+            if owner_agent and resolved_owner_agent != owner_agent:
+                continue
+            handoffs.append({
+                "memory_id": str(entry.get("id") or ""),
+                "status": status_value,
+                "content": content,
+                "timestamp": payload.get("timestamp", ""),
+                "from_agent": (
+                    next((t[len("from:"):] for t in tags if t.startswith("from:")), "").strip()
+                    or str(meta.get("from_agent") or _extract_line_value(content, "from_agent") or "unknown").strip()
+                ),
+                "to_agent": resolved_to_agent,
+                "task_id": payload.get("session_id", ""),
+                "handoff_label": resolved_handoff_label,
+                "project_id": str(meta.get("project_id") or _extract_line_value(content, "project_id") or "").strip(),
+                "owner_agent": resolved_owner_agent,
+                "write_scope": meta.get("write_scope") or _extract_csv(content, "write_scope"),
+                "executor_used": str(meta.get("executor_used") or _extract_line_value(content, "executor_used") or "").strip(),
+                "model_used": str(meta.get("model_used") or _extract_line_value(content, "model_used") or "").strip(),
+                "result_summary": str(meta.get("result_summary") or _extract_line_value(content, "result_summary") or "").strip(),
+                "verification_summary": str(meta.get("verification_summary") or _extract_line_value(content, "verification_summary") or "").strip(),
+                "phase": str(meta.get("phase") or _extract_line_value(content, "phase") or "").strip(),
+                "priority": str(meta.get("priority") or _extract_line_value(content, "priority") or "").strip(),
+                "why_now": str(meta.get("why_now") or _extract_line_value(content, "why_now") or "").strip(),
+                "definition_of_done": str(meta.get("definition_of_done") or _extract_line_value(content, "definition_of_done") or "").strip(),
+                "expected_output_shape": str(meta.get("expected_output_shape") or _extract_line_value(content, "expected_output_shape") or "").strip(),
+                "phase_objective": str(meta.get("phase_objective") or _extract_line_value(content, "phase_objective") or "").strip(),
+                "execution_mode": str(meta.get("execution_mode") or _extract_line_value(content, "execution_mode") or "").strip(),
+                "background_job_type": str(meta.get("background_job_type") or _extract_line_value(content, "background_job_type") or "").strip(),
+                "background_job_status": str(meta.get("background_job_status") or "").strip(),
+                "dispatched_job_id": str(meta.get("dispatched_job_id") or "").strip(),
+                "suggested_execution_tier": str(meta.get("suggested_execution_tier") or _extract_line_value(content, "suggested_execution_tier") or "").strip(),
+                "model_hint": str(meta.get("model_hint") or _extract_line_value(content, "model_hint") or "").strip(),
+                "core_instinct_ids": meta.get("core_instinct_ids") or _extract_csv(content, "core_instinct_ids"),
+                "supporting_instinct_ids": meta.get("supporting_instinct_ids") or _extract_csv(content, "supporting_instinct_ids"),
+                "project_context_summary": (meta.get("project_context_summary") or ""),
+                "project_context_refs": (meta.get("project_context_refs") or {}),
+                "project_context_snapshot": (meta.get("project_context_snapshot") or ""),
+                "tags": tags,
+            })
+        if using_fallback and not handoffs:
+            logger.info("handoff fallback returned no matching packets for to_agent=%s", to_agent)
+        requested_scope = [str(item).strip() for item in (write_scope or []) if str(item).strip()]
+        if requested_scope:
+            handoffs = [
+                item
+                for item in handoffs
+                if all(scope in (item.get("write_scope") or []) for scope in requested_scope)
+            ]
+        handoffs.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+        return handoffs[:limit]
+
+    async def get_pending_handoffs(self, to_agent: str, limit: int = 10, handoff_label: str | None = None) -> list[dict]:
         """Return pending handoffs addressed to to_agent (category=handoff, status=pending)."""
+        return await self._list_handoffs(
+            to_agent=to_agent,
+            limit=limit,
+            handoff_label=handoff_label,
+            statuses=["pending"],
+        )
+
+    async def list_handoffs(
+        self,
+        *,
+        to_agent: str,
+        limit: int = 20,
+        handoff_label: str | None = None,
+        statuses: list[str] | None = None,
+        owner_agent: str | None = None,
+        write_scope: list[str] | None = None,
+    ) -> list[dict]:
+        """Return handoffs for an agent filtered by lifecycle statuses."""
+        return await self._list_handoffs(
+            to_agent=to_agent,
+            limit=limit,
+            handoff_label=handoff_label,
+            statuses=statuses,
+            owner_agent=owner_agent,
+            write_scope=write_scope,
+        )
+
+    async def list_background_handoffs(
+        self,
+        *,
+        limit: int = 100,
+        statuses: list[str] | None = None,
+    ) -> list[dict]:
+        """Return handoff packets that have background dispatch metadata."""
+        must_conditions: list = [
+            qmodels.FieldCondition(key="category", match=qmodels.MatchValue(value="handoff")),
+        ]
+        requested_statuses = [str(item).strip() for item in (statuses or []) if str(item).strip()]
+        if len(requested_statuses) == 1:
+            must_conditions.append(qmodels.FieldCondition(key="status", match=qmodels.MatchValue(value=requested_statuses[0])))
+        elif requested_statuses:
+            must_conditions.append(
+                qmodels.FieldCondition(key="status", match=qmodels.MatchAny(any=requested_statuses))
+            )
+        entries: list[dict] = []
+        try:
+            results, _ = await self._client.scroll(
+                collection_name=self._collection,
+                scroll_filter=qmodels.Filter(must=must_conditions),
+                limit=max(limit, 200),
+                with_payload=True,
+                with_vectors=False,
+            )
+            entries = [
+                {
+                    "id": str(r.id),
+                    "payload": dict(r.payload or {}),
+                }
+                for r in results
+            ]
+            entries = await self._hydrate_handoff_entries_from_store(entries)
+        except Exception as e:
+            logger.warning("background handoff scroll failed, falling back to SQLite memory store: %s", e)
+            from app.services.data_integrity_service import HANDOFF_STATUS_FILTER_SLICE_ID
+            from app.services.data_integrity_service import get_data_integrity_store
+
+            entries = await self._load_handoff_entries_from_store(limit=max(limit * 5, 500))
+            get_data_integrity_store().upsert_slice(
+                slice_id=HANDOFF_STATUS_FILTER_SLICE_ID,
+                subsystem="qdrant",
+                status="degraded",
+                source="qdrant.list_background_handoffs",
+                error=str(e),
+                details={"fallback": "sqlite_memory_store"},
+            )
+        items: list[dict] = []
+        for entry in entries:
+            payload = entry.get("payload") or {}
+            status_value = str(payload.get("status", "pending") or "pending").strip() or "pending"
+            if requested_statuses and status_value not in requested_statuses:
+                continue
+            meta = dict(payload.get("meta") or {})
+            dispatched_job_id = str(meta.get("dispatched_job_id") or "").strip()
+            background_job_type = str(meta.get("background_job_type") or "").strip()
+            if not dispatched_job_id or not background_job_type:
+                continue
+            tags = list(payload.get("tags", []) or [])
+            items.append(
+                {
+                    "memory_id": str(entry.get("id") or ""),
+                    "status": status_value,
+                    "timestamp": payload.get("timestamp", ""),
+                    "task_id": payload.get("session_id", ""),
+                    "handoff_label": (
+                        next((t[len("handoff_label:"):] for t in tags if t.startswith("handoff_label:")), "").strip()
+                        or str(meta.get("handoff_label") or "").strip()
+                    ),
+                    "to_agent": (
+                        next((t[len("to:"):] for t in tags if t.startswith("to:")), "").strip()
+                        or str(meta.get("to_agent") or "").strip()
+                    ),
+                    "owner_agent": str(meta.get("owner_agent") or "").strip(),
+                    "background_job_type": background_job_type,
+                    "background_job_status": str(meta.get("background_job_status") or "").strip(),
+                    "dispatched_job_id": dispatched_job_id,
+                    "executor_used": str(meta.get("executor_used") or "").strip(),
+                    "model_used": str(meta.get("model_used") or "").strip(),
+                }
+            )
+        items.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+        return items[:limit]
+
+    async def list_pending_handoff_labels(self, to_agent: str, limit: int = 20, scan_limit: int = 100) -> list[dict]:
+        """Return unique pending handoff labels for an agent, with light summary data."""
         must_conditions: list = [
             qmodels.FieldCondition(key="category", match=qmodels.MatchValue(value="handoff")),
             qmodels.FieldCondition(key="status", match=qmodels.MatchValue(value="pending")),
             qmodels.FieldCondition(key="tags", match=qmodels.MatchValue(value=f"to:{to_agent}")),
         ]
-        results, _ = await self._client.scroll(
-            collection_name=self._collection,
-            scroll_filter=qmodels.Filter(must=must_conditions),
-            limit=limit,
-            with_payload=True,
-            with_vectors=False,
-        )
-        handoffs = []
-        for r in results:
-            tags = r.payload.get("tags", [])
-            handoffs.append({
-                "memory_id": str(r.id),
-                "content": r.payload.get("content", ""),
-                "timestamp": r.payload.get("timestamp", ""),
-                "from_agent": next((t[len("from:"):] for t in tags if t.startswith("from:")), "unknown"),
-                "to_agent": to_agent,
-                "task_id": r.payload.get("session_id", ""),
-                "tags": tags,
-            })
-        return handoffs
+        entries: list[dict] = []
+        try:
+            results, _ = await self._client.scroll(
+                collection_name=self._collection,
+                scroll_filter=qmodels.Filter(must=must_conditions),
+                limit=max(limit, scan_limit),
+                with_payload=True,
+                with_vectors=False,
+            )
+            entries = [
+                {
+                    "id": str(r.id),
+                    "payload": dict(r.payload or {}),
+                }
+                for r in results
+            ]
+            entries = await self._hydrate_handoff_entries_from_store(entries)
+        except Exception as e:
+            logger.warning("pending handoff labels scroll failed, falling back to SQLite memory store: %s", e)
+            from app.services.data_integrity_service import HANDOFF_STATUS_FILTER_SLICE_ID
+            from app.services.data_integrity_service import get_data_integrity_store
+
+            entries = await self._load_handoff_entries_from_store(limit=max(limit, scan_limit) * 5)
+            get_data_integrity_store().upsert_slice(
+                slice_id=HANDOFF_STATUS_FILTER_SLICE_ID,
+                subsystem="qdrant",
+                status="degraded",
+                source="qdrant.list_pending_handoff_labels",
+                error=str(e),
+                details={"fallback": "sqlite_memory_store"},
+            )
+        grouped: dict[str, dict] = {}
+        for entry in entries:
+            payload = entry.get("payload") or {}
+            tags = list(payload.get("tags", []) or [])
+            status_value = str(payload.get("status", "pending") or "pending").strip() or "pending"
+            if status_value != "pending":
+                continue
+            meta = dict(payload.get("meta") or {})
+            resolved_to_agent = (
+                next((t[len("to:"):] for t in tags if t.startswith("to:")), "").strip()
+                or str(meta.get("to_agent") or "").strip()
+            )
+            if resolved_to_agent != to_agent:
+                continue
+            label = (
+                next((t[len("handoff_label:"):] for t in tags if t.startswith("handoff_label:")), "").strip()
+                or str(meta.get("handoff_label") or "").strip()
+            )
+            if not label:
+                continue
+            item = grouped.setdefault(
+                label,
+                {
+                    "handoff_label": label,
+                    "count": 0,
+                    "latest_timestamp": "",
+                    "latest_task_id": "",
+                    "from_agents": set(),
+                },
+            )
+            item["count"] += 1
+            item["from_agents"].add(
+                next((t[len("from:"):] for t in tags if t.startswith("from:")), "").strip()
+                or str(meta.get("from_agent") or "unknown").strip()
+            )
+            ts = str(payload.get("timestamp", "") or "")
+            if ts >= item["latest_timestamp"]:
+                item["latest_timestamp"] = ts
+                item["latest_task_id"] = str(payload.get("session_id", "") or "")
+        items = [
+            {
+                "handoff_label": label,
+                "count": data["count"],
+                "latest_timestamp": data["latest_timestamp"],
+                "latest_task_id": data["latest_task_id"],
+                "from_agents": sorted(data["from_agents"]),
+            }
+            for label, data in grouped.items()
+        ]
+        items.sort(key=lambda item: (item.get("latest_timestamp", ""), item["handoff_label"]), reverse=True)
+        return items[:limit]
 
     async def mark_handoff_picked_up(self, memory_id: str) -> None:
         """Update handoff status to picked_up to prevent double-pickup."""
@@ -612,6 +1084,7 @@ class QdrantService:
                 payload={"related_ids": ids},
                 points=[str(memory_id)],
             )
+            await _sync_memory_store(memory_id, metadata_patch={"related_ids": ids})
 
     async def remove_link(self, memory_id: UUID, target_id: UUID) -> None:
         """Remove target_id from memory's related_ids."""
@@ -622,6 +1095,7 @@ class QdrantService:
             payload={"related_ids": ids},
             points=[str(memory_id)],
         )
+        await _sync_memory_store(memory_id, metadata_patch={"related_ids": ids})
 
     async def get_neighbors(self, memory_id: UUID) -> list[MemoryRecord]:
         """Return all memories referenced in related_ids."""
@@ -634,7 +1108,8 @@ class QdrantService:
             with_payload=True,
             with_vectors=False,
         )
-        return [_point_to_record(r) for r in results]
+        records = [_point_to_record(r) for r in results]
+        return await _hydrate_records(records)
 
     async def collection_stats(self) -> dict:
         info = await self._client.get_collection(collection_name=self._collection)
@@ -687,6 +1162,7 @@ def _point_to_record(point) -> MemoryRecord:
         access_count=p.get("access_count", 0),
         session_id=p.get("session_id"),
         status=p.get("status"),
+        meta=p.get("meta", {}),
         decay_rate=p.get("decay_rate", 1.0),
         pinned=bool(p.get("pinned", False)),
         last_access_ts=datetime.fromisoformat(last_access_raw) if last_access_raw else None,
@@ -699,3 +1175,82 @@ def _point_to_record(point) -> MemoryRecord:
         supports=p.get("supports", []),
         canonical_id=p.get("canonical_id"),
     )
+
+
+def _metadata_without_content(payload: dict) -> dict:
+    metadata = dict(payload)
+    metadata.pop("content", None)
+    return metadata
+
+
+def _apply_store_row_to_record(record: MemoryRecord, row: dict | None) -> MemoryRecord:
+    if not row:
+        return record
+    content = row.get("content")
+    if isinstance(content, str) and content:
+        record.content = content
+    metadata = row.get("metadata", {}) or {}
+    meta_override = metadata.get("meta")
+    if isinstance(meta_override, dict):
+        record.meta = meta_override
+    return record
+
+
+async def _hydrate_records(records: list[MemoryRecord]) -> list[MemoryRecord]:
+    if not records:
+        return records
+    from app.services.memory_store import get_memory_store
+
+    store = get_memory_store()
+    ids = [str(record.id) for record in records]
+    store_data = await store.get_many(ids)
+    for record in records:
+        row = store_data.get(str(record.id))
+        _apply_store_row_to_record(record, row)
+    return records
+
+
+async def _hydrate_record(record: MemoryRecord) -> MemoryRecord:
+    hydrated = await _hydrate_records([record])
+    return hydrated[0]
+
+
+async def _persist_memory_to_store(
+    memory_id: UUID,
+    payload: dict,
+    *,
+    store_content: str | None = None,
+    store_metadata: dict | None = None,
+) -> None:
+    from app.services.memory_store import get_memory_store
+
+    store = get_memory_store()
+    await store.upsert(
+        str(memory_id),
+        "memory",
+        payload.get("content", "") if store_content is None else store_content,
+        _metadata_without_content(payload) if store_metadata is None else store_metadata,
+    )
+
+
+async def _sync_memory_store(memory_id: UUID, *, content: str | None = None, metadata_patch: dict | None = None) -> None:
+    if content is None and not metadata_patch:
+        return
+    from app.services.memory_store import get_memory_store
+
+    store = get_memory_store()
+    mem_id = str(memory_id)
+    if content is not None:
+        existing = await store.get(mem_id)
+        metadata = existing.get("metadata", {}) if existing else {}
+        if metadata_patch:
+            metadata = {**metadata, **metadata_patch}
+        await store.upsert(mem_id, "memory", content, metadata)
+        return
+    await store.patch_metadata(mem_id, metadata_patch or {})
+
+
+async def _remove_memory_from_store(memory_id: UUID) -> None:
+    from app.services.memory_store import get_memory_store
+
+    await get_memory_store().delete(str(memory_id))
