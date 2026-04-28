@@ -159,7 +159,7 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
     "project_knowledge": {
         "title": "Project knowledge & artifact lifecycle",
         "description": "Unified discovery for tasks, improvements, readiness, canonical knowledge, lifecycle checkpoints, reopen/resume flows, and lifecycle changes.",
-        "entrypoints": ["project_workflow", "continue_task", "list_open_tasks", "reopen_task", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement"],
+        "entrypoints": ["project_workflow", "continue_task", "list_open_tasks", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement"],
         "keywords": [
             "task",
             "tasks",
@@ -200,6 +200,19 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
             "list_artifacts",
             "enrich_task_with_context",
             "review_improvement",
+            "get_work_session_state",
+            "start_work_session",
+            "park_work_session",
+            "resume_work_session",
+            "end_work_session",
+            "record_stenographer_span",
+            "list_stenographer_spans",
+            "draft_checkpoint_from_spans",
+            "get_checkpoint_draft",
+            "revise_checkpoint_draft",
+            "approve_checkpoint_draft",
+            "reject_checkpoint_draft",
+            "draft_task_checkpoint",
             "record_task_checkpoint",
             "report_task_checkpoint",
             "get_artifact",
@@ -2228,6 +2241,19 @@ TOOLS = [
     tool_definition("tool_explain"),
     tool_definition("tool_recommend"),
     tool_definition("tool_feedback"),
+    tool_definition("get_work_session_state"),
+    tool_definition("start_work_session"),
+    tool_definition("park_work_session"),
+    tool_definition("resume_work_session"),
+    tool_definition("end_work_session"),
+    tool_definition("record_stenographer_span"),
+    tool_definition("list_stenographer_spans"),
+    tool_definition("draft_checkpoint_from_spans"),
+    tool_definition("get_checkpoint_draft"),
+    tool_definition("revise_checkpoint_draft"),
+    tool_definition("approve_checkpoint_draft"),
+    tool_definition("reject_checkpoint_draft"),
+    tool_definition("draft_task_checkpoint"),
     tool_definition("record_task_checkpoint"),
     tool_definition("report_task_checkpoint"),
     tool_definition("resolve_artifact"),
@@ -2822,6 +2848,11 @@ sync_tool_definitions(
     "tool_feedback",
     "record_task_checkpoint",
     "report_task_checkpoint",
+    "draft_checkpoint_from_spans",
+    "get_checkpoint_draft",
+    "revise_checkpoint_draft",
+    "approve_checkpoint_draft",
+    "reject_checkpoint_draft",
     "resolve_artifact",
     "reopen_artifact",
     "set_canonical_status",
@@ -4184,6 +4215,185 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         data = await _build_continue_task_payload(api_base, args)
         data = _annotate_structured_tool_payload(name, data)
         return format_continue_task_response(data)
+
+    elif name == "draft_task_checkpoint":
+        from app.dependencies import get_llm_gateway
+        from app.services.memory_scribe_service import draft_task_checkpoint
+
+        data = await draft_task_checkpoint(args, get_llm_gateway())
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    elif name in {
+        "get_work_session_state",
+        "start_work_session",
+        "park_work_session",
+        "resume_work_session",
+        "end_work_session",
+        "record_stenographer_span",
+        "list_stenographer_spans",
+    }:
+        from app.services.stenographer_service import ProtocolViolation, get_stenographer_store
+
+        store = get_stenographer_store()
+        agent_id = str(args.get("agent_id") or "codex").strip() or "codex"
+        protocol_session_id = str(args.get("session_id") or session_id or agent_id).strip() or agent_id
+        try:
+            if name == "get_work_session_state":
+                data = store.get_state(agent_id=agent_id, session_id=protocol_session_id).model_dump(mode="json")
+            elif name == "start_work_session":
+                data = store.start_work_session(
+                    project=str(args.get("project") or "supermemory"),
+                    task_id=str(args["task_id"]),
+                    agent_id=agent_id,
+                    session_id=protocol_session_id,
+                    role=str(args.get("role") or "worker"),
+                    work_id=str(args.get("work_id") or ""),
+                    parent_work_id=str(args.get("parent_work_id") or ""),
+                    parent_task_id=str(args.get("parent_task_id") or ""),
+                    spawn_reason=str(args.get("spawn_reason") or ""),
+                    return_condition=str(args.get("return_condition") or ""),
+                    scope=args.get("scope") or [],
+                    summary=str(args.get("summary") or ""),
+                ).model_dump(mode="json")
+            elif name == "park_work_session":
+                data = store.park_work_session(
+                    work_id=str(args["work_id"]),
+                    agent_id=agent_id,
+                    session_id=protocol_session_id,
+                    reason=str(args["reason"]),
+                    child_task_id=str(args.get("child_task_id") or ""),
+                    child_work_id=str(args.get("child_work_id") or ""),
+                ).model_dump(mode="json")
+            elif name == "resume_work_session":
+                data = store.resume_work_session(
+                    work_id=str(args["work_id"]),
+                    agent_id=agent_id,
+                    session_id=protocol_session_id,
+                    child_work_id=str(args.get("child_work_id") or ""),
+                    result=str(args.get("result") or ""),
+                ).model_dump(mode="json")
+            elif name == "end_work_session":
+                data = store.end_work_session(
+                    work_id=str(args["work_id"]),
+                    task_id=str(args["task_id"]),
+                    agent_id=agent_id,
+                    session_id=protocol_session_id,
+                    status=str(args["status"]),
+                    result=str(args.get("result") or ""),
+                ).model_dump(mode="json")
+            elif name == "record_stenographer_span":
+                data = store.record_span(
+                    project=str(args.get("project") or "supermemory"),
+                    task_id=str(args.get("task_id") or ""),
+                    work_id=str(args.get("work_id") or ""),
+                    agent_id=agent_id,
+                    session_id=protocol_session_id,
+                    kind=str(args["kind"]),
+                    source=str(args.get("source") or ""),
+                    content=str(args["content"]),
+                ).model_dump(mode="json")
+            else:
+                data = {
+                    "total": 0,
+                    "items": [
+                        item.model_dump(mode="json")
+                        for item in store.list_spans(
+                            project=str(args.get("project") or "") or None,
+                            task_id=str(args.get("task_id") or "") or None,
+                            work_id=str(args.get("work_id") or "") or None,
+                            agent_id=str(args.get("agent_id") or "") or None,
+                            session_id=str(args.get("session_id") or "") or None,
+                            limit=int(args.get("limit") or 50),
+                        )
+                    ],
+                }
+                data["total"] = len(data["items"])
+            data = _annotate_structured_tool_payload(name, data)
+            return json.dumps(data, indent=2, ensure_ascii=False)
+        except ProtocolViolation as exc:
+            data = exc.to_dict()
+            data = _annotate_structured_tool_payload(name, data)
+            return json.dumps(data, indent=2, ensure_ascii=False)
+
+    elif name in {
+        "draft_checkpoint_from_spans",
+        "get_checkpoint_draft",
+        "revise_checkpoint_draft",
+        "approve_checkpoint_draft",
+        "reject_checkpoint_draft",
+    }:
+        from app.dependencies import get_llm_gateway, get_ollama, get_qdrant
+        from app.services.checkpoint_draft_service import (
+            DraftValidationError,
+            approve_checkpoint_draft,
+            draft_checkpoint_from_spans,
+            get_checkpoint_draft,
+            reject_checkpoint_draft,
+            revise_checkpoint_draft,
+        )
+
+        try:
+            if name == "draft_checkpoint_from_spans":
+                data = (
+                    await draft_checkpoint_from_spans(args, get_llm_gateway())
+                ).model_dump(mode="json")
+                data["mutates_memory"] = False
+                data["recommended_next_tool"] = "approve_checkpoint_draft" if data.get("validation_report", {}).get("can_approve") else "revise_checkpoint_draft"
+            elif name == "get_checkpoint_draft":
+                record = get_checkpoint_draft(
+                    str(args["draft_id"]),
+                    int(args["version"]) if args.get("version") is not None else None,
+                )
+                data = record.model_dump(mode="json")
+                if str(args.get("view") or "preview") == "preview":
+                    data = {
+                        "draft_id": data["draft_id"],
+                        "version": data["version"],
+                        "status": data["status"],
+                        "project": data["project"],
+                        "task_id": data["task_id"],
+                        "work_id": data["work_id"],
+                        "preview": data["preview"],
+                        "validation_report": data["validation_report"],
+                        "metrics": data["metrics"],
+                        "content_hash": data["content_hash"],
+                        "source_span_ids": data["source_span_ids"],
+                        "recommended_next_tool": "approve_checkpoint_draft" if data.get("validation_report", {}).get("can_approve") else "revise_checkpoint_draft",
+                    }
+            elif name == "revise_checkpoint_draft":
+                data = revise_checkpoint_draft(
+                    str(args["draft_id"]),
+                    args.get("patch") or {},
+                    revised_by=str(args.get("revised_by") or "codex"),
+                ).model_dump(mode="json")
+                data["mutates_memory"] = False
+                data["recommended_next_tool"] = "approve_checkpoint_draft" if data.get("validation_report", {}).get("can_approve") else "revise_checkpoint_draft"
+            elif name == "approve_checkpoint_draft":
+                data = (
+                    await approve_checkpoint_draft(
+                        str(args["draft_id"]),
+                        int(args["version"]),
+                        approved_by=str(args.get("approved_by") or "codex"),
+                        qdrant=get_qdrant(),
+                        ollama=get_ollama(),
+                    )
+                ).model_dump(mode="json")
+                data["mutates_memory"] = True
+                data["saved_by_reference"] = True
+            else:
+                data = reject_checkpoint_draft(
+                    str(args["draft_id"]),
+                    int(args["version"]),
+                    rejected_by=str(args.get("rejected_by") or "codex"),
+                    reason=str(args.get("reason") or ""),
+                ).model_dump(mode="json")
+                data["mutates_memory"] = False
+            data = _annotate_structured_tool_payload(name, data)
+            return json.dumps(data, indent=2, ensure_ascii=False)
+        except DraftValidationError as exc:
+            data = _annotate_structured_tool_payload(name, exc.to_dict())
+            return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name in {"report_task_checkpoint", "record_task_checkpoint"}:
         from app.services.mcp_session_store import get_session_store

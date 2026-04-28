@@ -54,6 +54,25 @@ async def submit_memory_scribe_compact(body: MemoryScribeCompactRequest, queue: 
     }
 
 
+@router.post("/memory-scribe/draft-task-checkpoint", status_code=202)
+async def submit_draft_task_checkpoint(body: MemoryScribeCompactRequest, queue: JobQueueDep) -> dict:
+    """
+    Queue a low-cost memory-scribe job that returns record_task_checkpoint args.
+    The job is review-only and does not mutate project memory.
+    """
+    payload = body.model_dump()
+    payload["reason"] = payload.get("reason") or "draft_task_checkpoint"
+    job_id = await queue.submit("draft_task_checkpoint", payload)
+    return {
+        "job_id": job_id,
+        "job_type": "draft_task_checkpoint",
+        "status": "queued",
+        "poll": f"/tasks/{job_id}",
+        "mutates_memory": False,
+        "recommended_next_tool": "record_task_checkpoint",
+    }
+
+
 @router.get("")
 async def list_jobs(
     queue: JobQueueDep,

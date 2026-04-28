@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from datetime import datetime, timezone
 import json
+from urllib.parse import quote
 
 import pytest
 from qdrant_client.http import models as qmodels
@@ -219,6 +220,48 @@ async def test_task_create_enqueues_auto_capture_refresh_job(client) -> None:
     assert latest["payload"]["trigger"] == "task_created"
     assert latest["payload"]["_queue_lane"] == "fast"
     assert latest["payload"]["use_local_generation"] is True
+
+
+@pytest.mark.asyncio
+async def test_task_change_normalizes_artifact_key_before_capture_refresh_job(client) -> None:
+    create = await client.post(
+        "/api/v1/project/tasks",
+        json={
+            "task_id": "task-artifact-key-capture-1",
+            "project": "alpha",
+            "title": "Normalize artifact-key task ids",
+            "description": "Ensure MCP artifact keys do not poison task_change task ids.",
+            "agent_id": "architect",
+            "status": "active",
+        },
+    )
+    assert create.status_code == 201, create.text
+
+    artifact_key = quote("task:alpha:task-artifact-key-capture-1", safe="")
+    response = await client.post(
+        f"/api/v1/project/tasks/{artifact_key}/changes",
+        json={
+            "project": "alpha",
+            "change_type": "note",
+            "content": "Checkpoint arrived through an artifact-key task id.",
+            "why": "MCP clients may pass task:project:local-id identifiers.",
+            "agent_id": "codex",
+            "source": "mcp",
+        },
+    )
+    assert response.status_code == 201, response.text
+    change = response.json()
+    assert change["task_id"] == "task-artifact-key-capture-1"
+
+    jobs = get_job_queue().list_jobs(job_type="task_capture_refresh", limit=20)
+    matching = [
+        job for job in jobs
+        if (job.get("payload") or {}).get("task_id") == "task-artifact-key-capture-1"
+        and (job.get("payload") or {}).get("project") == "alpha"
+        and (job.get("payload") or {}).get("trigger") == "task_change:note"
+    ]
+    assert matching
+    assert all((job.get("payload") or {}).get("task_id") != "task:alpha:task-artifact-key-capture-1" for job in jobs)
 
 
 @pytest.mark.asyncio

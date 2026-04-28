@@ -894,6 +894,7 @@ class QdrantService:
         *,
         limit: int = 100,
         statuses: list[str] | None = None,
+        mark_integrity_on_fallback: bool = True,
     ) -> list[dict]:
         """Return handoff packets that have background dispatch metadata."""
         must_conditions: list = [
@@ -925,18 +926,20 @@ class QdrantService:
             entries = await self._hydrate_handoff_entries_from_store(entries)
         except Exception as e:
             logger.warning("background handoff scroll failed, falling back to SQLite memory store: %s", e)
-            from app.services.data_integrity_service import HANDOFF_STATUS_FILTER_SLICE_ID
-            from app.services.data_integrity_service import get_data_integrity_store
 
             entries = await self._load_handoff_entries_from_store(limit=max(limit * 5, 500))
-            get_data_integrity_store().upsert_slice(
-                slice_id=HANDOFF_STATUS_FILTER_SLICE_ID,
-                subsystem="qdrant",
-                status="degraded",
-                source="qdrant.list_background_handoffs",
-                error=str(e),
-                details={"fallback": "sqlite_memory_store"},
-            )
+            if mark_integrity_on_fallback:
+                from app.services.data_integrity_service import HANDOFF_STATUS_FILTER_SLICE_ID
+                from app.services.data_integrity_service import get_data_integrity_store
+
+                get_data_integrity_store().upsert_slice(
+                    slice_id=HANDOFF_STATUS_FILTER_SLICE_ID,
+                    subsystem="qdrant",
+                    status="degraded",
+                    source="qdrant.list_background_handoffs",
+                    error=str(e),
+                    details={"fallback": "sqlite_memory_store"},
+                )
         items: list[dict] = []
         for entry in entries:
             payload = entry.get("payload") or {}

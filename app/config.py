@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     # Ollama
     ollama_base_url: str = Field("http://localhost:11434", alias="OLLAMA_BASE_URL")
     ollama_embedding_model: str = Field("nomic-embed-text", alias="OLLAMA_EMBEDDING_MODEL")
+    local_llm_provider: str = Field("auto", alias="LOCAL_LLM_PROVIDER")
+    local_llm_fallback_order: str = Field("ollama,lmstudio", alias="LOCAL_LLM_FALLBACK_ORDER")
+    lmstudio_base_url: str = Field("http://localhost:1234/v1", alias="LMSTUDIO_BASE_URL")
+    lmstudio_model: str = Field("auto", alias="LMSTUDIO_MODEL")
     # nomic-embed-text (default Ollama model) outputs 768-dim vectors.
     # Override via EMBEDDING_DIMENSIONS env var if using a different model.
     # Tests override this to 1024 in conftest.py to stay self-consistent.
@@ -78,6 +82,8 @@ class Settings(BaseSettings):
 
     # DeepSeek OpenAI-compatible config/profile key
     deepseek_api_key: str = Field("", alias="DEEPSEEK_API_KEY")
+    deepseek_model: str = Field("deepseek-chat", alias="DEEPSEEK_MODEL")
+    deepseek_base_url: str = Field("https://api.deepseek.com", alias="DEEPSEEK_BASE_URL")
 
     # Learning Ledger / GLM Mirror
     glm_generate_model: str = Field("qwen3:1.7b", alias="GLM_GENERATE_MODEL")

@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.memory_scribe_service import compact_memory_scribe
+from app.services.memory_scribe_service import compact_memory_scribe, draft_task_checkpoint
 
 
 @pytest.mark.asyncio
@@ -56,3 +56,42 @@ async def test_memory_scribe_quality_gate_requires_review_for_sparse_notes():
     assert "verification" in result["quality_gate"]["missing"]
     assert "next_step" in result["quality_gate"]["missing"]
     assert result["quality_gate"]["requires_reasoning_model_review"] is True
+
+
+@pytest.mark.asyncio
+async def test_draft_task_checkpoint_blocks_ungrounded_files_and_tests():
+    class FakeGateway:
+        async def generate(self, *args, **kwargs):
+            return """
+            {
+              "summary": "Captured the scribe MCP draft path.",
+              "changed_files": ["app/routers/mcp_sse.py", "app/secret_fake.py"],
+              "verification": ["pytest tests/test_mcp_sse.py passed", "npm test passed"],
+              "next_step": "Review the generated checkpoint args."
+            }
+            """
+
+    result = await draft_task_checkpoint(
+        {
+            "project": "alpha",
+            "task_id": "task-2",
+            "stage": "in_progress",
+            "raw_notes": "\n".join(
+                [
+                    "Summary: Captured the scribe MCP draft path.",
+                    "Changed files: app/routers/mcp_sse.py",
+                    "Verification: pytest tests/test_mcp_sse.py passed",
+                    "Next step: Review the generated checkpoint args.",
+                ]
+            ),
+        },
+        llm_gateway=FakeGateway(),
+    )
+
+    assert result["mutates_memory"] is False
+    assert result["recommended_next_tool"] == "record_task_checkpoint"
+    assert result["record_task_checkpoint_args"]["changed_files"] == ["app/routers/mcp_sse.py"]
+    assert result["record_task_checkpoint_args"]["verification"] == ["pytest tests/test_mcp_sse.py passed"]
+    assert result["validation_report"]["status"] == "needs_review"
+    assert result["validation_report"]["blocked_ungrounded"]["changed_files"] == ["app/secret_fake.py"]
+    assert result["validation_report"]["blocked_ungrounded"]["verification"] == ["npm test passed"]

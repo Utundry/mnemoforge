@@ -214,3 +214,98 @@ async def test_execute_handoff_packet_falls_back_to_secondary_cloud_model():
     assert [call["model_override"] for call in gateway.calls[:2]] == ["gemini-3.1-flash", "glm-4.7"]
     assert result["structured"] is True
     assert result["model_used"] == "glm-4.7"
+
+
+@pytest.mark.asyncio
+async def test_execute_handoff_packet_uses_gateway_candidates_after_routing_candidates_fail():
+    class _FakeGateway:
+        local_model = "qwen3:1.7b"
+
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def _candidate_models(self, mode, *, task_type=None):
+            return ["gemini-3.1-flash", "deepseek-chat"]
+
+        async def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("model_override") == "gemini-3.1-flash":
+                raise RuntimeError("404 Not Found")
+            return """
+{
+  "summary": "Prepared a bounded patch proposal.",
+  "deliverable": "Used DeepSeek after Gemini was unavailable.",
+  "verification": "Main agent should review the fallback-produced plan.",
+  "implementation_plan": ["Update router metadata"],
+  "proposed_patch": [
+    {"path": "app/routers/models.py", "change_type": "update", "summary": "Refine dispatch payload"}
+  ]
+}
+"""
+
+    gateway = _FakeGateway()
+    result = await execute_handoff_packet(
+        {
+            "task_description": "Prepare a bounded patch proposal",
+            "task_type": "code_generation",
+            "execution_mode": "economy",
+            "recommended_executor": "cheap_subagent",
+            "recommended_model": "gemini-3.1-flash",
+            "definition_of_done": "Produce a patch proposal",
+            "expected_output_shape": "Short proposed patch summary",
+            "write_scope": ["app/routers/models.py"],
+        },
+        gateway,
+    )
+
+    assert [call["model_override"] for call in gateway.calls[:2]] == ["gemini-3.1-flash", "deepseek-chat"]
+    assert result["structured"] is True
+    assert result["model_used"] == "deepseek-chat"
+
+
+@pytest.mark.asyncio
+async def test_execute_handoff_packet_uses_local_fallback_after_cloud_candidates_fail():
+    class _FakeGateway:
+        local_model = "qwen3:1.7b"
+
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def _candidate_models(self, mode, *, task_type=None):
+            return ["gemini-3.1-flash"]
+
+        async def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs.get("allow_local_fallback"):
+                return """
+{
+  "summary": "Prepared a local fallback patch proposal.",
+  "deliverable": "Used local Ollama after cloud candidates were unavailable.",
+  "verification": "Main agent should review the fallback-produced plan.",
+  "implementation_plan": ["Update router metadata"],
+  "proposed_patch": [
+    {"path": "app/routers/models.py", "change_type": "update", "summary": "Refine dispatch payload"}
+  ]
+}
+"""
+            raise RuntimeError("404 Not Found")
+
+    gateway = _FakeGateway()
+    result = await execute_handoff_packet(
+        {
+            "task_description": "Prepare a bounded patch proposal",
+            "task_type": "code_generation",
+            "execution_mode": "economy",
+            "recommended_executor": "cheap_subagent",
+            "recommended_model": "gemini-3.1-flash",
+            "definition_of_done": "Produce a patch proposal",
+            "expected_output_shape": "Short proposed patch summary",
+            "write_scope": ["app/routers/models.py"],
+        },
+        gateway,
+    )
+
+    assert gateway.calls[-1]["allow_local_fallback"] is True
+    assert gateway.calls[-1]["prefer_local"] is True
+    assert result["structured"] is True
+    assert result["model_used"] == "qwen3:1.7b"

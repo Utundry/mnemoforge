@@ -44,6 +44,19 @@ async def test_job_queue_routes_memory_scribe_to_slow_lane(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_job_queue_routes_draft_task_checkpoint_to_slow_lane(monkeypatch):
+    monkeypatch.setenv("JOB_QUEUE_WORKERS", "2")
+    queue = JobQueue(Path(":memory:"))
+    try:
+        job_id = await queue.submit("draft_task_checkpoint", {"raw_notes": "Summary: draft"})
+        job = queue.get_job(job_id)
+        assert job is not None
+        assert job["lane"] == "slow"
+    finally:
+        await queue.stop()
+
+
+@pytest.mark.asyncio
 async def test_job_queue_routes_fast_jobs_to_fast_lane(monkeypatch):
     monkeypatch.setenv("JOB_QUEUE_WORKERS", "2")
     queue = JobQueue(Path(":memory:"))

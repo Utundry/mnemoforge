@@ -3,6 +3,7 @@ from qdrant_client.http import models as qmodels
 
 from app.config import settings
 from app.dependencies import get_qdrant
+from app.main import repair_handoff_status_payload
 from app.services.data_integrity_service import build_auto_discovery_guard
 from app.services.data_integrity_service import build_auto_remediation_guard
 from app.services.data_integrity_service import GENERIC_MEMORY_FILTER_SLICE_ID
@@ -1176,6 +1177,47 @@ async def test_admin_can_queue_targeted_handoff_status_repair_batch(client):
     assert job is not None
     assert job["job_type"] == "handoff_repair_status"
     assert "00000000-0000-0000-0000-00000000ad22" in job["payload"]["record_ids"]
+
+
+@pytest.mark.asyncio
+async def test_handoff_status_repair_updates_sqlite_when_qdrant_point_is_missing(client):
+    handoff_id = "00000000-0000-0000-0000-00000000ad33"
+    await get_memory_store().upsert(
+        handoff_id,
+        "memory",
+        "Handoff packet stored durably in SQLite.",
+        {
+            "category": "handoff",
+            "tags": ["to:codex", "from:codex"],
+        },
+    )
+    store = get_data_integrity_store()
+    store.upsert_slice(
+        slice_id=HANDOFF_STATUS_FILTER_SLICE_ID,
+        subsystem="qdrant",
+        status="degraded",
+        source="test",
+        error="handoff status filter failed",
+    )
+    store.upsert_finding(
+        finding_id="handoff-finding-sqlite-only",
+        slice_id=HANDOFF_STATUS_FILTER_SLICE_ID,
+        category="handoff",
+        record_id=handoff_id,
+        suspicion_type="missing_handoff_status",
+        confidence=0.8,
+        source="test",
+        details={"suggested_repair": "handoff_repair_status", "reason": "status missing"},
+    )
+
+    result = await repair_handoff_status_payload({"record_ids": [handoff_id], "limit": 10})
+    assert result["updated"] == 1
+    assert result["sqlite_fixed_ids"] == [handoff_id]
+    assert result["qdrant_fixed_ids"] == []
+
+    row = await get_memory_store().get(handoff_id)
+    assert row is not None
+    assert row["metadata"]["status"] == "pending"
 
 
 @pytest.mark.asyncio

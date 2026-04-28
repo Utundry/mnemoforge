@@ -57,6 +57,7 @@ _SLOW_JOB_TYPES = {
     "evolve_skills",
     "verify_tree_classification",
     "memory_scribe_compact",
+    "draft_task_checkpoint",
 }
 
 

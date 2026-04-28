@@ -61,7 +61,36 @@ class TestMcpToolExecution:
 
     def test_tool_discovery_family_tools_are_exposed(self):
         names = {tool["name"] for tool in mcp_sse.TOOLS}
-        assert {"list_tool_families", "tool_family_tools", "tool_explain", "tool_recommend", "tool_feedback", "continue_task", "record_task_checkpoint", "report_task_checkpoint"} <= names
+        assert {"list_tool_families", "tool_family_tools", "tool_explain", "tool_recommend", "tool_feedback", "continue_task", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint"} <= names
+
+    def test_draft_task_checkpoint_tool_is_review_only(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "draft_task_checkpoint")
+        props = tool["inputSchema"]["properties"]
+        assert "raw_notes" in tool["inputSchema"]["required"]
+        assert props["use_llm"]["default"] is True
+        assert "raw_notes" in props
+
+    def test_stenographer_work_session_tools_are_exposed(self):
+        names = {tool["name"] for tool in mcp_sse.TOOLS}
+        assert {
+            "get_work_session_state",
+            "start_work_session",
+            "park_work_session",
+            "resume_work_session",
+            "end_work_session",
+            "record_stenographer_span",
+            "list_stenographer_spans",
+        } <= names
+
+    def test_checkpoint_draft_approval_tools_are_exposed(self):
+        names = {tool["name"] for tool in mcp_sse.TOOLS}
+        assert {
+            "draft_checkpoint_from_spans",
+            "get_checkpoint_draft",
+            "revise_checkpoint_draft",
+            "approve_checkpoint_draft",
+            "reject_checkpoint_draft",
+        } <= names
 
     def test_tool_feedback_schema_exposes_evaluation_envelope_fields(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "tool_feedback")
@@ -398,6 +427,167 @@ class TestMcpToolExecution:
         assert posted[1][1]["write_scope"] == ["app/routers/mcp_sse.py"]
         assert "handoff_packet_created" in result
         assert "handoff-1" in result
+
+    async def test_draft_task_checkpoint_returns_record_tool_args_without_writing(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "unexpected"}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool(
+            "draft_task_checkpoint",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "stage": "handoff",
+                "status": "paused",
+                "use_llm": False,
+                "raw_notes": "\n".join(
+                    [
+                        "Summary: Drafted checkpoint args for review.",
+                        "Changed files: app/services/memory_scribe_service.py",
+                        "Verification: pytest tests/test_memory_scribe_service.py passed",
+                        "Next step: Submit record_task_checkpoint after review.",
+                    ]
+                ),
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert posted == []
+        assert data["mutates_memory"] is False
+        assert data["recommended_next_tool"] == "record_task_checkpoint"
+        assert data["record_task_checkpoint_args"]["task_id"] == "task-1"
+        assert data["record_task_checkpoint_args"]["source"] == "memory_scribe"
+
+    async def test_stenographer_mcp_tools_enforce_active_work(self, monkeypatch):
+        from pathlib import Path
+        from app.services import stenographer_service as stenographer_mod
+
+        store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(stenographer_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        try:
+            denied = await mcp_sse._execute_tool(
+                "record_stenographer_span",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-1",
+                    "kind": "verification",
+                    "content": "13 passed",
+                },
+                "http://test",
+            )
+            denied_data = json.loads(denied)
+            assert denied_data["error"] == "work_session_required"
+            assert denied_data["required_next_tool"] == "start_work_session"
+
+            started = await mcp_sse._execute_tool(
+                "start_work_session",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-1",
+                    "work_id": "work-1",
+                },
+                "http://test",
+            )
+            assert json.loads(started)["status"] == "active"
+
+            recorded = await mcp_sse._execute_tool(
+                "record_stenographer_span",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-1",
+                    "work_id": "work-1",
+                    "kind": "verification",
+                    "source": "pytest",
+                    "content": "13 passed",
+                },
+                "http://test",
+            )
+            recorded_data = json.loads(recorded)
+            assert recorded_data["work_id"] == "work-1"
+            assert recorded_data["excluded_from_learning"] is True
+        finally:
+            store.close()
+
+    async def test_checkpoint_draft_mcp_tools_create_preview_from_spans(self, monkeypatch):
+        from pathlib import Path
+        from uuid import uuid4
+        from app.services import checkpoint_draft_service as draft_mod
+        from app.services import stenographer_service as stenographer_mod
+
+        root = Path("qdrant_data") / "test_mcp_checkpoint_drafts"
+        root.mkdir(parents=True, exist_ok=True)
+        stenographer_store = stenographer_mod.StenographerStore(root / f"stenographer-{uuid4().hex}.db")
+        draft_store = draft_mod.CheckpointDraftStore(root / f"drafts-{uuid4().hex}.db")
+        monkeypatch.setattr(draft_mod, "get_stenographer_store", lambda: stenographer_store)
+        monkeypatch.setattr(draft_mod, "_STORE", draft_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        try:
+            stenographer_store.start_work_session(
+                project="alpha",
+                task_id="task-1",
+                agent_id="codex",
+                session_id="sess-1",
+                work_id="work-1",
+            )
+            for kind, content in (
+                ("fact", "Implemented checkpoint draft approval by reference."),
+                ("decision", "Approve by draft_id and version, not by replaying payload."),
+                ("verification", "pytest tests/test_checkpoint_draft_service.py passed"),
+                ("next_step", "Expose approve-by-reference through MCP."),
+            ):
+                stenographer_store.record_span(
+                    project="alpha",
+                    task_id="task-1",
+                    agent_id="codex",
+                    session_id="sess-1",
+                    work_id="work-1",
+                    kind=kind,
+                    source="test",
+                    content=content,
+                )
+
+            drafted = await mcp_sse._execute_tool(
+                "draft_checkpoint_from_spans",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "work_id": "work-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-1",
+                    "use_llm": False,
+                },
+                "http://test",
+            )
+            drafted_data = json.loads(drafted)
+            assert drafted_data["version"] == 1
+            assert drafted_data["mutates_memory"] is False
+            assert drafted_data["recommended_next_tool"] == "approve_checkpoint_draft"
+
+            preview = await mcp_sse._execute_tool(
+                "get_checkpoint_draft",
+                {"draft_id": drafted_data["draft_id"], "view": "preview"},
+                "http://test",
+            )
+            preview_data = json.loads(preview)
+            assert "record_task_checkpoint_args" not in preview_data
+            assert preview_data["metrics"]["estimated_saved_chars"] > 0
+        finally:
+            stenographer_store.close()
+            draft_store.close()
 
     async def test_continue_task_returns_latest_checkpoint_and_next_safe_action(self, monkeypatch):
         async def fake_get(api_base: str, path: str):

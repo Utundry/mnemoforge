@@ -312,6 +312,21 @@ async def test_background_handoffs_fall_back_to_sqlite_when_qdrant_scroll_fails(
     assert HANDOFF_STATUS_FILTER_SLICE_ID in overview["degraded_slices"]
 
 
+async def test_background_reconcile_fallback_does_not_mark_integrity_degraded(client, monkeypatch):
+    qdrant = get_qdrant()
+
+    async def fail_scroll(*args, **kwargs):
+        raise RuntimeError("simulated transient scroll failure for background sync")
+
+    monkeypatch.setattr(qdrant._client, "scroll", fail_scroll)
+
+    result = await models_router.reconcile_background_task_packets(qdrant=qdrant, limit=10)
+    assert result["scanned"] == 0
+
+    overview = get_data_integrity_store().overview()
+    assert HANDOFF_STATUS_FILTER_SLICE_ID not in overview["degraded_slices"]
+
+
 async def test_handoff_label_is_normalized_to_lowercase(client, monkeypatch):
     fake_registry = _FakeRegistry()
     monkeypatch.setattr(models_router, "get_model_registry", lambda: fake_registry)

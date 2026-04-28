@@ -61,6 +61,22 @@ def _task_tag(task_id: str) -> str:
     return f"task_id:{task_id}"
 
 
+def _normalize_task_id(task_id: str, *, project: str | None = None) -> str:
+    clean = str(task_id or "").strip()
+    if not clean:
+        return ""
+    parts = clean.split(":", 2)
+    if len(parts) != 3:
+        return clean
+    kind, key_project, local_id = (part.strip() for part in parts)
+    if kind != "task" or not local_id:
+        return clean
+    expected_project = str(project or "").strip()
+    if expected_project and key_project and key_project != expected_project:
+        return clean
+    return local_id
+
+
 def _qdrant_client(qdrant):
     return getattr(qdrant, "_client", qdrant)
 
@@ -324,6 +340,7 @@ async def _find_task_memory_id_qdrant(qdrant, *, project: str, task_id: str) -> 
 
 
 async def _find_task_memory_id(qdrant, *, project: str, task_id: str) -> Optional[str]:
+    task_id = _normalize_task_id(task_id, project=project)
     stored = _task_store().get_task_by_task_id(project=project, task_id=task_id)
     if stored:
         return str(stored["id"])
@@ -335,7 +352,7 @@ async def _find_task_memory_id(qdrant, *, project: str, task_id: str) -> Optiona
 
 
 async def _resolve_task_project(qdrant, *, task_id: str, project: str | None = None) -> str:
-    clean_task_id = str(task_id or "").strip()
+    clean_task_id = _normalize_task_id(task_id, project=project)
     if not clean_task_id:
         raise ValueError("Task not found")
 
@@ -461,6 +478,7 @@ async def create_or_update_project_task(qdrant, ollama, body: ProjectTaskCreate)
 
 
 async def get_project_task(qdrant, *, project: str, task_id: str, include_changes: bool = False) -> ProjectTaskRecord:
+    task_id = _normalize_task_id(task_id, project=project)
     stored = _task_store().get_task_by_task_id(project=project, task_id=task_id)
     if stored:
         changes = await list_task_changes(qdrant, project=project, task_id=task_id)
@@ -605,6 +623,7 @@ async def _list_project_tasks_qdrant(
 
 async def add_task_change(qdrant, ollama, *, task_id: str, body: ProjectTaskChangeCreate) -> ProjectTaskChangeRecord:
     project = body.project
+    task_id = _normalize_task_id(task_id, project=project)
     if not project:
         task = None
         rows, _ = await _qdrant_client(qdrant).scroll(
@@ -622,6 +641,9 @@ async def add_task_change(qdrant, ollama, *, task_id: str, body: ProjectTaskChan
         if not task:
             raise ValueError("Task not found")
         project = task.project or ""
+        task_id = _normalize_task_id(task_id, project=project)
+    elif not await _find_task_memory_id(qdrant, project=project, task_id=task_id):
+        raise ValueError("Task not found")
 
     memory = MemoryCreate(
         content=build_task_change_content(body.change_type, body.content, body.why),

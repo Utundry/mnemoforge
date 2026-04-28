@@ -6,6 +6,7 @@ from app.config import settings
 from app.dependencies import OllamaDep, QdrantDep
 from app.services.data_hygiene_service import get_data_hygiene_store
 from app.services.data_integrity_service import get_data_integrity_store
+from app.services.lmstudio_service import LMStudioService
 from app.services.storage_trust_service import build_storage_trust_report
 
 router = APIRouter(tags=["health"])
@@ -17,14 +18,44 @@ def _parse_model_list(raw: str) -> list[str]:
     return [item.strip() for item in (raw or "").split(",") if item.strip()]
 
 
-def _llm_status() -> dict:
+async def _lmstudio_status() -> dict:
+    service = LMStudioService()
+    try:
+        models = await service.list_models()
+        reachable = bool(models) or await service.health()
+        configured = os.getenv("LMSTUDIO_MODEL", settings.lmstudio_model).strip() or settings.lmstudio_model
+        selected = await service.resolve_model(configured) if reachable else configured
+        return {
+            "reachable": reachable,
+            "url": settings.lmstudio_base_url,
+            "model": configured,
+            "selected_model": selected,
+            "models": models,
+        }
+    finally:
+        await service.close()
+
+
+def _llm_status(lmstudio_status: dict | None = None) -> dict:
     from app.services.cloud_llm import available_cloud_models, cloud_available, cloud_provider
 
     cloud_models = available_cloud_models()
     default_provider = cloud_provider() if cloud_available() else "cloud-llm"
+    local_provider = os.getenv("LOCAL_LLM_PROVIDER", settings.local_llm_provider).strip().lower() or "auto"
+    local_order = _parse_model_list(os.getenv("LOCAL_LLM_FALLBACK_ORDER", settings.local_llm_fallback_order))
     return {
         "local_model": os.getenv("LOCAL_GENERATE_MODEL", settings.learning_mirror_model or "qwen3:1.7b").strip()
         or "qwen3:1.7b",
+        "local_provider": local_provider,
+        "local_fallback_order": local_order,
+        "lmstudio": lmstudio_status
+        or {
+            "reachable": False,
+            "url": settings.lmstudio_base_url,
+            "model": os.getenv("LMSTUDIO_MODEL", settings.lmstudio_model).strip() or settings.lmstudio_model,
+            "selected_model": "",
+            "models": [],
+        },
         "cloud_available": cloud_available(),
         "default_cloud_provider": default_provider,
         "configured_cloud_models": cloud_models,
@@ -140,16 +171,18 @@ _COMPONENTS = [
 async def health(qdrant: QdrantDep, ollama: OllamaDep):
     qdrant_ok = await qdrant.health()
     ollama_ok = await ollama.health()
+    lmstudio = await _lmstudio_status()
     integrity = get_data_integrity_store().overview()
     data_hygiene = get_data_hygiene_store().overview()
     storage_trust = build_storage_trust_report()
-    llm = _llm_status()
+    llm = _llm_status(lmstudio)
     status = "ok" if (qdrant_ok and ollama_ok and integrity["status"] == "ok") else "degraded"
     return {
         "status": status,
         "started_at": _STARTED_AT,
         "qdrant": {"reachable": qdrant_ok},
         "ollama": {"reachable": ollama_ok},
+        "lmstudio": lmstudio,
         "llm": llm,
         "integrity": integrity,
         "data_hygiene": data_hygiene,
@@ -170,10 +203,11 @@ async def system_info(qdrant: QdrantDep, ollama: OllamaDep):
     """
     qdrant_ok = await qdrant.health()
     ollama_ok = await ollama.health()
+    lmstudio = await _lmstudio_status()
     integrity = get_data_integrity_store().overview()
     data_hygiene = get_data_hygiene_store().overview()
     storage_trust = build_storage_trust_report()
-    llm = _llm_status()
+    llm = _llm_status(lmstudio)
 
     # Live counters — best-effort, don't fail if unavailable
     memory_count = 0
@@ -232,6 +266,7 @@ async def system_info(qdrant: QdrantDep, ollama: OllamaDep):
         "infrastructure": {
             "qdrant": {"reachable": qdrant_ok, "url": f"{settings.qdrant_host}:{settings.qdrant_port}"},
             "ollama": {"reachable": ollama_ok, "url": settings.ollama_base_url, "models": ollama_models},
+            "lmstudio": lmstudio,
             "embedding_model": settings.ollama_embedding_model,
             "embedding_dimensions": settings.embedding_dimensions,
             "llm": llm,

@@ -8,6 +8,7 @@ import httpx
 
 from app.config import settings
 from app.services.capability_registry import get_registry
+from app.services.lmstudio_service import LMStudioService
 from app.services.ollama_service import OllamaService
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,8 @@ class CloudLLMGateway:
             _parse_model_list(settings.reasoning_cloud_llms) + [self.primary_model, configured_model] + self.fallback_models
         )
         self.local_model = os.getenv("LOCAL_GENERATE_MODEL", settings.learning_mirror_model or "qwen3:1.7b").strip() or "qwen3:1.7b"
+        self.local_provider = os.getenv("LOCAL_LLM_PROVIDER", settings.local_llm_provider).strip().lower() or "auto"
+        self.lmstudio_model = os.getenv("LMSTUDIO_MODEL", settings.lmstudio_model).strip() or settings.lmstudio_model
         self.enable_local_fallback = os.getenv("LLM_GATEWAY_ENABLE_LOCAL_FALLBACK", "1").strip().lower() not in {
             "0",
             "false",
@@ -74,6 +77,7 @@ class CloudLLMGateway:
             "off",
         }
         self._local_service: OllamaService | None = None
+        self._lmstudio_service: LMStudioService | None = None
 
     def _provider_aliases(self) -> dict[str, str]:
         aliases: dict[str, str] = {}
@@ -81,6 +85,8 @@ class CloudLLMGateway:
             aliases["gemini"] = settings.gemini_model.strip()
         if settings.glm_model:
             aliases["glm"] = settings.glm_model.strip()
+        if settings.deepseek_model:
+            aliases["deepseek"] = settings.deepseek_model.strip()
         if settings.cloud_llm_model:
             aliases["cloud"] = settings.cloud_llm_model.strip()
         aliases["primary"] = self.primary_model
@@ -175,9 +181,42 @@ class CloudLLMGateway:
         prompt: str,
         timeout: float,
     ) -> str:
-        if self._local_service is None:
-            self._local_service = OllamaService()
-        return (await self._local_service.generate(prompt, model=self.local_model, timeout=min(timeout, 45.0))).strip()
+        errors: list[str] = []
+        for provider in self._local_provider_order():
+            if provider == "ollama":
+                if self._local_service is None:
+                    self._local_service = OllamaService()
+                result = (await self._local_service.generate(prompt, model=self.local_model, timeout=min(timeout, 45.0))).strip()
+                if result:
+                    return result
+                errors.append("ollama")
+            elif provider == "lmstudio":
+                if self._lmstudio_service is None:
+                    self._lmstudio_service = LMStudioService()
+                result = (
+                    await self._lmstudio_service.generate(
+                        prompt,
+                        model=self.lmstudio_model,
+                        timeout=min(timeout, 45.0),
+                    )
+                ).strip()
+                if result:
+                    return result
+                errors.append("lmstudio")
+        logger.debug("All local LLM providers returned empty output: %s", ", ".join(errors))
+        return ""
+
+    def _local_provider_order(self) -> list[str]:
+        configured = self.local_provider
+        if configured in {"ollama", "lmstudio"}:
+            return [configured]
+        raw = os.getenv("LOCAL_LLM_FALLBACK_ORDER", settings.local_llm_fallback_order)
+        providers = [item.strip().lower() for item in (raw or "").split(",") if item.strip()]
+        ordered: list[str] = []
+        for provider in providers or ["ollama", "lmstudio"]:
+            if provider in {"ollama", "lmstudio"} and provider not in ordered:
+                ordered.append(provider)
+        return ordered or ["ollama", "lmstudio"]
 
     def _record_cloud_usage(self, *, model_id: str, prompt: str, system: str, response: str) -> None:
         try:

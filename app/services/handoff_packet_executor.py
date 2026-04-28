@@ -118,6 +118,21 @@ def _external_model_candidates(payload: dict[str, Any], recommended_model: str |
     return candidates
 
 
+def _gateway_model_candidates(
+    llm_gateway,
+    *,
+    execution_mode: str,
+    task_type: str | None,
+) -> list[str]:
+    candidate_fn = getattr(llm_gateway, "_candidate_models", None)
+    if not callable(candidate_fn):
+        return []
+    try:
+        return [str(item).strip() for item in candidate_fn(execution_mode, task_type=task_type) if str(item).strip()]
+    except Exception:
+        return []
+
+
 async def _generate_packet_response(
     *,
     llm_gateway,
@@ -145,7 +160,16 @@ async def _generate_packet_response(
         return response, getattr(llm_gateway, "local_model", None)
 
     last_error: Exception | None = None
-    for model_id in _external_model_candidates(payload, recommended_model):
+    candidate_models: list[str] = []
+    for model_id in _external_model_candidates(payload, recommended_model) + _gateway_model_candidates(
+        llm_gateway,
+        execution_mode=execution_mode,
+        task_type=task_type,
+    ):
+        if model_id and model_id not in candidate_models:
+            candidate_models.append(model_id)
+
+    for model_id in candidate_models:
         try:
             response = await llm_gateway.generate(
                 prompt=prompt,
@@ -165,7 +189,23 @@ async def _generate_packet_response(
             logger.warning("Packet executor model %s failed: %s", model_id, exc)
 
     if last_error is not None:
-        raise last_error
+        try:
+            response = await llm_gateway.generate(
+                prompt=prompt,
+                system=system,
+                task_type=task_type,
+                mode=execution_mode,
+                max_tokens=1400,
+                temperature=0.2,
+                timeout=90.0,
+                model_override=None,
+                allow_local_fallback=True,
+                prefer_local=True,
+            )
+            return response, getattr(llm_gateway, "local_model", None)
+        except Exception as exc:
+            logger.warning("Packet executor local fallback failed after cloud errors: %s", exc)
+            raise last_error
 
     response = await llm_gateway.generate(
         prompt=prompt,

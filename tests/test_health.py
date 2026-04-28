@@ -13,12 +13,14 @@ async def test_health(client):
     assert "status" in data
     assert "qdrant" in data
     assert "ollama" in data
+    assert "lmstudio" in data
     assert "llm" in data
     assert "integrity" in data
     assert "data_hygiene" in data
     assert "storage_trust" in data
     assert data["qdrant"]["reachable"] is True
     assert data["ollama"]["reachable"] is True
+    assert "reachable" in data["lmstudio"]
     assert "cloud_available" in data["llm"]
     assert "configured_cloud_models" in data["llm"]
 

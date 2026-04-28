@@ -183,6 +183,81 @@ def _install_asyncio_exception_filter() -> tuple[asyncio.AbstractEventLoop, obje
     return loop, previous_handler
 
 
+async def repair_handoff_status_payload(payload: dict) -> dict:
+    from qdrant_client.http import models as _qm
+    from app.dependencies import get_qdrant
+    from app.services.memory_store import get_memory_store
+
+    qdrant = get_qdrant()
+    memory_store = get_memory_store()
+    allowed_statuses = {"pending", "picked_up", "active", "paused", "closed", "archived"}
+    limit = max(1, int(payload.get("limit", 100)))
+    record_ids = [str(item) for item in (payload.get("record_ids") or []) if item]
+    qdrant_fixed_ids: list[str] = []
+    sqlite_fixed_ids: list[str] = []
+    skipped_record_ids: list[str] = []
+
+    if record_ids:
+        points = await qdrant._client.retrieve(
+            collection_name=settings.qdrant_collection_name,
+            ids=record_ids,
+            with_payload=True,
+            with_vectors=False,
+        )
+        store_rows = list((await memory_store.get_many(record_ids)).values())
+    else:
+        points, _ = await qdrant._client.scroll(
+            collection_name=settings.qdrant_collection_name,
+            scroll_filter=_qm.Filter(
+                must=[
+                    _qm.FieldCondition(key="category", match=_qm.MatchValue(value="handoff")),
+                ]
+            ),
+            limit=max(limit, 100),
+            with_payload=True,
+            with_vectors=False,
+        )
+        store_rows = await memory_store.list_rows(category="memory", limit=max(limit, 100), offset=0)
+
+    for point in points[:limit]:
+        record_id = str(point.id)
+        payload_obj = point.payload or {}
+        if payload_obj.get("category") != "handoff":
+            skipped_record_ids.append(record_id)
+            continue
+        current_status = str(payload_obj.get("status") or "").strip()
+        if current_status in allowed_statuses:
+            continue
+        await qdrant._client.set_payload(
+            collection_name=settings.qdrant_collection_name,
+            payload={"status": "pending"},
+            points=[record_id],
+        )
+        qdrant_fixed_ids.append(record_id)
+
+    for row in store_rows[:limit]:
+        record_id = str(row.get("memory_id") or "")
+        metadata = dict(row.get("metadata") or {})
+        if metadata.get("category") != "handoff":
+            skipped_record_ids.append(record_id)
+            continue
+        current_status = str(metadata.get("status") or "").strip()
+        if current_status in allowed_statuses:
+            continue
+        await memory_store.patch_metadata(record_id, {"status": "pending"})
+        sqlite_fixed_ids.append(record_id)
+
+    fixed_ids = sorted(set(qdrant_fixed_ids) | set(sqlite_fixed_ids))
+    return {
+        "requested_record_ids": record_ids,
+        "fixed_ids": fixed_ids,
+        "qdrant_fixed_ids": qdrant_fixed_ids,
+        "sqlite_fixed_ids": sqlite_fixed_ids,
+        "updated": len(fixed_ids),
+        "skipped_record_ids": sorted(set(skipped_record_ids)),
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
@@ -331,6 +406,14 @@ async def lifespan(app: FastAPI):
 
     job_queue.register("memory_scribe_compact", _memory_scribe_compact_handler)
 
+    async def _draft_task_checkpoint_handler(payload: dict) -> dict:
+        from app.dependencies import get_llm_gateway
+        from app.services.memory_scribe_service import draft_task_checkpoint
+
+        return await draft_task_checkpoint(payload, get_llm_gateway())
+
+    job_queue.register("draft_task_checkpoint", _draft_task_checkpoint_handler)
+
     async def _integrity_audit_handler(payload: dict) -> dict:
         from app.dependencies import get_qdrant
 
@@ -339,57 +422,7 @@ async def lifespan(app: FastAPI):
     job_queue.register("data_integrity_audit", _integrity_audit_handler)
 
     async def _handoff_repair_status_handler(payload: dict) -> dict:
-        from qdrant_client.http import models as _qm
-        from app.dependencies import get_qdrant
-
-        qdrant = get_qdrant()
-        allowed_statuses = {"pending", "picked_up", "active", "paused", "closed", "archived"}
-        limit = max(1, int(payload.get("limit", 100)))
-        record_ids = [str(item) for item in (payload.get("record_ids") or []) if item]
-        fixed_ids: list[str] = []
-        skipped_record_ids: list[str] = []
-
-        if record_ids:
-            points = await qdrant._client.retrieve(
-                collection_name=settings.qdrant_collection_name,
-                ids=record_ids,
-                with_payload=True,
-                with_vectors=False,
-            )
-        else:
-            points, _ = await qdrant._client.scroll(
-                collection_name=settings.qdrant_collection_name,
-                scroll_filter=_qm.Filter(
-                    must=[
-                        _qm.FieldCondition(key="category", match=_qm.MatchValue(value="handoff")),
-                    ]
-                ),
-                limit=max(limit, 100),
-                with_payload=True,
-                with_vectors=False,
-            )
-        for point in points[:limit]:
-            record_id = str(point.id)
-            payload_obj = point.payload or {}
-            if payload_obj.get("category") != "handoff":
-                skipped_record_ids.append(record_id)
-                continue
-            current_status = str(payload_obj.get("status") or "").strip()
-            if current_status in allowed_statuses:
-                continue
-            await qdrant._client.set_payload(
-                collection_name=settings.qdrant_collection_name,
-                payload={"status": "pending"},
-                points=[record_id],
-            )
-            fixed_ids.append(record_id)
-
-        return {
-            "requested_record_ids": record_ids,
-            "fixed_ids": fixed_ids,
-            "updated": len(fixed_ids),
-            "skipped_record_ids": skipped_record_ids,
-        }
+        return await repair_handoff_status_payload(payload)
 
     job_queue.register("handoff_repair_status", _handoff_repair_status_handler)
 

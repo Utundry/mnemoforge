@@ -22,6 +22,8 @@ def reset_cloud_settings():
         "gemini_model": settings.gemini_model,
         "gemini_base_url": settings.gemini_base_url,
         "deepseek_api_key": settings.deepseek_api_key,
+        "deepseek_model": settings.deepseek_model,
+        "deepseek_base_url": settings.deepseek_base_url,
         "cloud_llm_model_profiles": settings.cloud_llm_model_profiles,
         "disabled_cloud_llms": settings.disabled_cloud_llms,
     }
@@ -245,6 +247,7 @@ def test_available_cloud_models_includes_profiled_env_entries(monkeypatch, reset
     settings.glm_api_key = ""
     settings.gemini_api_key = ""
     settings.gemini_model = ""
+    settings.deepseek_api_key = ""
 
     monkeypatch.setenv(
         "CLOUD_LLM_MODEL_PROFILES",
@@ -274,6 +277,7 @@ def test_available_cloud_models_includes_first_class_gemini_settings(reset_cloud
     settings.gemini_api_key = "gem-key"
     settings.gemini_model = "gemini-3-flash-preview"
     settings.gemini_base_url = "https://generativelanguage.googleapis.com/v1beta"
+    settings.deepseek_api_key = ""
 
     assert available_cloud_models() == ["glm-4.7", "gemini-3-flash-preview"]
     assert cloud_provider(model_override="gemini-3-flash-preview") == "gemini:gemini-3-flash-preview"
@@ -341,3 +345,19 @@ def test_profile_api_key_env_can_read_settings_loaded_from_dotenv(reset_cloud_se
     )
 
     assert available_cloud_models() == ["deepseek-chat"]
+
+
+def test_available_cloud_models_includes_first_class_deepseek_settings(reset_cloud_settings):
+    settings.cloud_llm_provider = ""
+    settings.cloud_llm_api_key = ""
+    settings.cloud_llm_model = ""
+    settings.glm_api_key = ""
+    settings.gemini_api_key = ""
+    settings.gemini_model = ""
+    settings.deepseek_api_key = "deepseek-key"
+    settings.deepseek_model = "deepseek-chat"
+    settings.deepseek_base_url = "https://api.deepseek.com"
+
+    assert cloud_available() is True
+    assert available_cloud_models() == ["deepseek-chat"]
+    assert cloud_provider(model_override="deepseek-chat") == "deepseek:deepseek-chat"

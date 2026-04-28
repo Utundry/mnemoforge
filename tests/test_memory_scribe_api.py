@@ -33,3 +33,35 @@ async def test_memory_scribe_compact_endpoint_queues_review_only_job(client, mon
     assert submitted[0][0] == "memory_scribe_compact"
     assert submitted[0][1]["project"] == "alpha"
     assert submitted[0][1]["use_llm"] is False
+
+
+@pytest.mark.asyncio
+async def test_draft_task_checkpoint_endpoint_queues_review_only_job(client, monkeypatch):
+    submitted: list[tuple[str, dict]] = []
+
+    async def fake_submit(self, job_type: str, payload: dict) -> str:
+        submitted.append((job_type, payload))
+        return "job-draft-1"
+
+    monkeypatch.setattr(JobQueue, "submit", fake_submit)
+
+    resp = await client.post(
+        "/api/v1/tasks/memory-scribe/draft-task-checkpoint",
+        json={
+            "project": "alpha",
+            "task_id": "task-1",
+            "stage": "handoff",
+            "status": "active",
+            "raw_notes": "Summary: draft checkpoint args\nVerification: unit test",
+            "use_llm": False,
+        },
+    )
+
+    assert resp.status_code == 202, resp.text
+    data = resp.json()
+    assert data["job_id"] == "job-draft-1"
+    assert data["job_type"] == "draft_task_checkpoint"
+    assert data["mutates_memory"] is False
+    assert data["recommended_next_tool"] == "record_task_checkpoint"
+    assert submitted[0][0] == "draft_task_checkpoint"
+    assert submitted[0][1]["project"] == "alpha"

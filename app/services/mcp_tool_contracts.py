@@ -985,6 +985,249 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "draft_task_checkpoint": {
+        "name": "draft_task_checkpoint",
+        "description": (
+            "Use a low-cost memory scribe to turn raw work notes into reviewable record_task_checkpoint arguments. "
+            "This tool does not mutate project memory; it returns a draft, validation report, and the exact next tool payload."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["raw_notes"],
+            "properties": {
+                "project": {"type": "string", "default": "supermemory"},
+                "task_id": {"type": "string", "description": "Task identifier when known"},
+                "task_title": {"type": "string", "description": "Optional task title for fallback summaries"},
+                "stage": {
+                    "type": "string",
+                    "enum": ["planning", "in_progress", "blocked", "interrupted", "handoff", "completed"],
+                    "default": "in_progress",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["planning", "active", "paused", "done"],
+                    "default": "active",
+                },
+                "raw_notes": {
+                    "type": "string",
+                    "description": "Raw execution notes, changed files, tests, risks, blockers, and next step.",
+                },
+                "reason": {"type": "string", "default": "draft_task_checkpoint"},
+                "acted_by": {"type": "string", "default": "codex"},
+                "use_llm": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Use cheap local/cloud LLM extraction when available; deterministic fallback remains available.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["economy", "strict_economy", "balanced"],
+                    "default": "economy",
+                },
+                "model_context_window": {"type": "integer", "minimum": 1000, "default": 32000},
+                "resume_budget_ratio": {"type": "number", "minimum": 0.001, "maximum": 0.5},
+                "resume_budget_profile": {
+                    "type": "string",
+                    "enum": ["normal", "complex", "handoff", "emergency"],
+                    "default": "normal",
+                },
+            },
+        },
+    },
+    "get_work_session_state": {
+        "name": "get_work_session_state",
+        "description": "Return the stenographer/work-session protocol state for the current agent session and the next valid tools.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "default": "codex"},
+                "session_id": {"type": "string", "description": "Agent session id; defaults to agent_id when omitted"},
+            },
+        },
+    },
+    "start_work_session": {
+        "name": "start_work_session",
+        "description": "Start a guarded stenographer work session. Fails if this agent session already has active work.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["project", "task_id"],
+            "properties": {
+                "project": {"type": "string", "default": "supermemory"},
+                "task_id": {"type": "string"},
+                "agent_id": {"type": "string", "default": "codex"},
+                "session_id": {"type": "string"},
+                "role": {"type": "string", "default": "worker"},
+                "work_id": {"type": "string", "description": "Optional caller-provided work id; server generates one when omitted"},
+                "parent_work_id": {"type": "string"},
+                "parent_task_id": {"type": "string"},
+                "spawn_reason": {"type": "string"},
+                "return_condition": {"type": "string"},
+                "scope": {"type": "array", "items": {"type": "string"}, "default": []},
+                "summary": {"type": "string"},
+            },
+        },
+    },
+    "park_work_session": {
+        "name": "park_work_session",
+        "description": "Park the active work session before starting focused child work.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["work_id", "reason"],
+            "properties": {
+                "work_id": {"type": "string"},
+                "agent_id": {"type": "string", "default": "codex"},
+                "session_id": {"type": "string"},
+                "reason": {"type": "string"},
+                "child_task_id": {"type": "string"},
+                "child_work_id": {"type": "string"},
+            },
+        },
+    },
+    "resume_work_session": {
+        "name": "resume_work_session",
+        "description": "Resume a parked parent work session after child work ends or is handed off.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["work_id"],
+            "properties": {
+                "work_id": {"type": "string"},
+                "agent_id": {"type": "string", "default": "codex"},
+                "session_id": {"type": "string"},
+                "child_work_id": {"type": "string"},
+                "result": {"type": "string"},
+            },
+        },
+    },
+    "end_work_session": {
+        "name": "end_work_session",
+        "description": "End the active work session. work_id and task_id must match the active state.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["work_id", "task_id", "status"],
+            "properties": {
+                "work_id": {"type": "string"},
+                "task_id": {"type": "string"},
+                "agent_id": {"type": "string", "default": "codex"},
+                "session_id": {"type": "string"},
+                "status": {"type": "string", "enum": ["completed", "blocked", "failed", "interrupted", "cancelled"]},
+                "result": {"type": "string"},
+            },
+        },
+    },
+    "record_stenographer_span": {
+        "name": "record_stenographer_span",
+        "description": "Record a bounded review-only stenographer evidence span into the active work session. This never writes canonical memory.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["kind", "content"],
+            "properties": {
+                "project": {"type": "string", "default": "supermemory"},
+                "task_id": {"type": "string"},
+                "work_id": {"type": "string", "description": "Optional integrity check; must match active work when provided"},
+                "agent_id": {"type": "string", "default": "codex"},
+                "session_id": {"type": "string"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["fact", "decision", "verification", "risk", "blocker", "next_step", "checkpoint_hint", "handoff_hint", "diagnostic", "changed_files"],
+                },
+                "source": {"type": "string"},
+                "content": {"type": "string"},
+            },
+        },
+    },
+    "list_stenographer_spans": {
+        "name": "list_stenographer_spans",
+        "description": "List review-only stenographer evidence spans for a task, work session, or agent session.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "task_id": {"type": "string"},
+                "work_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "session_id": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+            },
+        },
+    },
+    "draft_checkpoint_from_spans": {
+        "name": "draft_checkpoint_from_spans",
+        "description": (
+            "Build an immutable, review-only checkpoint draft from stenographer spans. "
+            "Returns draft_id/version for approve-by-reference; does not write canonical memory."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "default": "supermemory"},
+                "task_id": {"type": "string"},
+                "work_id": {"type": "string"},
+                "agent_id": {"type": "string", "default": "codex"},
+                "session_id": {"type": "string"},
+                "stage": {"type": "string", "default": "in_progress"},
+                "status": {"type": "string", "default": "active"},
+                "reason": {"type": "string", "default": "draft_checkpoint_from_spans"},
+                "use_llm": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
+            },
+        },
+    },
+    "get_checkpoint_draft": {
+        "name": "get_checkpoint_draft",
+        "description": "Fetch a checkpoint draft by reference. Use view=preview for low-token review before approval.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["draft_id"],
+            "properties": {
+                "draft_id": {"type": "string"},
+                "version": {"type": "integer"},
+                "view": {"type": "string", "enum": ["preview", "full"], "default": "preview"},
+            },
+        },
+    },
+    "revise_checkpoint_draft": {
+        "name": "revise_checkpoint_draft",
+        "description": "Apply a bounded patch to a checkpoint draft, creating a new immutable version.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["draft_id", "patch"],
+            "properties": {
+                "draft_id": {"type": "string"},
+                "patch": {
+                    "type": "object",
+                    "description": "Allowed fields: summary, blockers, decisions, changed_files, verification, remaining_risk, next_step, stage, status, reason",
+                },
+                "revised_by": {"type": "string", "default": "codex"},
+            },
+        },
+    },
+    "approve_checkpoint_draft": {
+        "name": "approve_checkpoint_draft",
+        "description": "Approve an immutable checkpoint draft version by reference and save it canonically server-side.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["draft_id", "version"],
+            "properties": {
+                "draft_id": {"type": "string"},
+                "version": {"type": "integer"},
+                "approved_by": {"type": "string", "default": "codex"},
+            },
+        },
+    },
+    "reject_checkpoint_draft": {
+        "name": "reject_checkpoint_draft",
+        "description": "Reject the latest checkpoint draft version so it cannot be approved later.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["draft_id", "version"],
+            "properties": {
+                "draft_id": {"type": "string"},
+                "version": {"type": "integer"},
+                "rejected_by": {"type": "string", "default": "codex"},
+                "reason": {"type": "string"},
+            },
+        },
+    },
     "continue_task": {
         "name": "continue_task",
         "description": (

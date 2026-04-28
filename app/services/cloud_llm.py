@@ -238,6 +238,20 @@ def _current_cloud_config() -> CloudLLMConfig | None:
             base_url=settings.glm_base_url,
         )
 
+    if (
+        settings.deepseek_api_key
+        and settings.deepseek_model
+        and _is_cloud_llm_enabled(model_id=settings.deepseek_model, provider="deepseek")
+    ):
+        return CloudLLMConfig(
+            provider="deepseek",
+            api_style="openai-chat",
+            auth_style="bearer",
+            api_key=settings.deepseek_api_key,
+            model=settings.deepseek_model,
+            base_url=settings.deepseek_base_url,
+        )
+
     return None
 
 
@@ -286,6 +300,20 @@ def _load_profiled_configs() -> dict[str, CloudLLMConfig]:
             api_key=settings.glm_api_key,
             model=settings.glm_model,
             base_url=settings.glm_base_url,
+        )
+
+    if (
+        settings.deepseek_api_key
+        and settings.deepseek_model
+        and _is_cloud_llm_enabled(model_id=settings.deepseek_model, provider="deepseek")
+    ):
+        configs[settings.deepseek_model] = CloudLLMConfig(
+            provider="deepseek",
+            api_style="openai-chat",
+            auth_style="bearer",
+            api_key=settings.deepseek_api_key,
+            model=settings.deepseek_model,
+            base_url=settings.deepseek_base_url,
         )
 
     if (

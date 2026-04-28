@@ -278,6 +278,27 @@ def _extract_content_csv(content: str, key: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def _extract_content_multiline(content: str, key: str) -> str:
+    prefix = f"{key}:"
+    lines = (content or "").splitlines()
+    captured: list[str] = []
+    collecting = False
+    for line in lines:
+        if not collecting:
+            if line.startswith(prefix):
+                inline = line[len(prefix):].strip()
+                if inline:
+                    captured.append(inline)
+                collecting = True
+            continue
+        if line and line[0].isalpha() and ":" in line:
+            candidate_key = line.split(":", 1)[0]
+            if candidate_key.replace("_", "").isalnum():
+                break
+        captured.append(line)
+    return "\n".join(captured).strip()
+
+
 def _normalize_ref_types(values: list[str]) -> list[str]:
     requested: list[str] = []
     for value in values:
@@ -1181,7 +1202,11 @@ async def reconcile_background_task_packets(
     acted_by: str = "background_sync",
     reason: str = "background_sync",
 ) -> dict[str, Any]:
-    items = await qdrant.list_background_handoffs(limit=limit, statuses=["active"])
+    items = await qdrant.list_background_handoffs(
+        limit=limit,
+        statuses=["active"],
+        mark_integrity_on_fallback=False,
+    )
     updated = 0
     closed = 0
     paused = 0

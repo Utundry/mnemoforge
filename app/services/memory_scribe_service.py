@@ -57,6 +57,31 @@ def _clean_list(value: Any, *, limit: int = 8, item_limit: int = 260) -> list[st
     return items
 
 
+def _grounded_in_notes(item: str, raw_notes: str) -> bool:
+    text = str(item or "").strip()
+    notes = str(raw_notes or "")
+    if not text:
+        return False
+    if text.lower() in notes.lower():
+        return True
+    file_like = re.findall(r"[\w./\\-]+\.[A-Za-z0-9_]+", text)
+    if file_like:
+        lowered_notes = notes.lower().replace("\\", "/")
+        return all(path.lower().replace("\\", "/") in lowered_notes for path in file_like)
+    return False
+
+
+def _filter_grounded_items(items: list[str], raw_notes: str) -> tuple[list[str], list[str]]:
+    grounded: list[str] = []
+    blocked: list[str] = []
+    for item in items:
+        if _grounded_in_notes(item, raw_notes):
+            grounded.append(item)
+        else:
+            blocked.append(item)
+    return grounded, blocked
+
+
 def _parse_json_object(text: str) -> dict[str, Any]:
     cleaned = str(text or "").strip()
     if not cleaned:
@@ -82,7 +107,10 @@ def _parse_json_object(text: str) -> dict[str, Any]:
 def _extract_labeled_notes(raw_notes: str) -> dict[str, Any]:
     extracted: dict[str, Any] = {}
     current_key = ""
-    for line in str(raw_notes or "").splitlines():
+    latest_evidence_index = -1
+    next_step_candidates: list[tuple[int, str]] = []
+    evidence_keys = {"summary", "decisions", "changed_files", "verification", "remaining_risk", "blockers"}
+    for index, line in enumerate(str(raw_notes or "").splitlines()):
         text = line.strip()
         if not text:
             continue
@@ -93,13 +121,25 @@ def _extract_labeled_notes(raw_notes: str) -> dict[str, Any]:
             if key:
                 current_key = key
                 value = match.group(2).strip()
-                if key == "summary" or key == "next_step":
+                if key == "changed_files":
+                    value = re.sub(r"^\[[^\]]+\]\s*", "", value).strip()
+                if key == "next_step":
+                    next_step_candidates.append((index, value))
+                elif key == "summary":
                     extracted[key] = value
                 else:
                     extracted.setdefault(key, []).append(value)
+                if key in evidence_keys:
+                    latest_evidence_index = index
                 continue
         if current_key and current_key not in {"summary", "next_step"}:
             extracted.setdefault(current_key, []).append(text)
+            if current_key in evidence_keys:
+                latest_evidence_index = index
+    for index, value in reversed(next_step_candidates):
+        if index >= latest_evidence_index:
+            extracted["next_step"] = value
+            break
     return extracted
 
 
@@ -129,6 +169,8 @@ def _normalize_draft(
     decisions = _clean_list(draft.get("decisions") or labeled.get("decisions"), limit=8)
     changed_files = _clean_list(draft.get("changed_files") or labeled.get("changed_files"), limit=16, item_limit=180)
     verification = _clean_list(draft.get("verification") or labeled.get("verification"), limit=8)
+    changed_files, blocked_changed_files = _filter_grounded_items(changed_files, raw_notes)
+    verification, blocked_verification = _filter_grounded_items(verification, raw_notes)
     remaining_risk = _clean_list(draft.get("remaining_risk") or labeled.get("remaining_risk"), limit=8)
     blockers = _clean_list(draft.get("blockers") or labeled.get("blockers"), limit=8)
     return {
@@ -144,6 +186,10 @@ def _normalize_draft(
         "verification": verification,
         "remaining_risk": remaining_risk,
         "next_step": next_step,
+        "_blocked_ungrounded": {
+            "changed_files": blocked_changed_files,
+            "verification": blocked_verification,
+        },
     }
 
 
@@ -158,6 +204,13 @@ def evaluate_scribe_quality(draft: dict[str, Any]) -> dict[str, Any]:
     useful_optional = sum(1 for key in ("decisions", "changed_files", "remaining_risk", "blockers") if draft.get(key))
     if useful_optional == 0:
         missing.append("specific_evidence")
+    blocked_ungrounded = {
+        key: list(value or [])
+        for key, value in (draft.get("_blocked_ungrounded") or {}).items()
+        if value
+    }
+    if blocked_ungrounded:
+        missing.append("grounding_review")
     status = "ready" if not missing else "needs_review"
     confidence = 0.9 if status == "ready" else max(0.35, 0.75 - 0.12 * len(missing))
     return {
@@ -166,6 +219,27 @@ def evaluate_scribe_quality(draft: dict[str, Any]) -> dict[str, Any]:
         "missing": missing,
         "can_autofill_checkpoint": status == "ready",
         "requires_reasoning_model_review": status != "ready",
+        "blocked_ungrounded": blocked_ungrounded,
+    }
+
+
+def _checkpoint_args_from_draft(draft: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    acted_by = str(payload.get("acted_by") or payload.get("agent_id") or "codex").strip() or "codex"
+    return {
+        "project": draft["project"],
+        "task_id": draft["task_id"],
+        "stage": draft["stage"],
+        "summary": draft["summary"],
+        "blockers": draft["blockers"],
+        "decisions": draft["decisions"],
+        "changed_files": draft["changed_files"],
+        "verification": draft["verification"],
+        "remaining_risk": draft["remaining_risk"],
+        "next_step": draft["next_step"],
+        "status": draft["status"],
+        "reason": str(payload.get("reason") or "draft_task_checkpoint").strip(),
+        "acted_by": acted_by,
+        "source": "memory_scribe",
     }
 
 
@@ -226,7 +300,12 @@ async def compact_memory_scribe(payload: dict[str, Any], llm_gateway: Any | None
         status=status,
         raw_notes=raw_notes,
     )
+    blocked_ungrounded = draft.pop("_blocked_ungrounded", {})
+    if any(blocked_ungrounded.values()):
+        draft["_blocked_ungrounded"] = blocked_ungrounded
     quality = evaluate_scribe_quality(draft)
+    draft.pop("_blocked_ungrounded", None)
+    checkpoint_args = _checkpoint_args_from_draft(draft, {**payload, "reason": str(payload.get("reason") or "memory_scribe_compact")})
     checkpoint_content = build_task_checkpoint_content(
         stage=stage,
         status=status,
@@ -243,8 +322,10 @@ async def compact_memory_scribe(payload: dict[str, Any], llm_gateway: Any | None
         "project": project,
         "task_id": task_id,
         "draft": draft,
+        "record_task_checkpoint_args": checkpoint_args,
         "checkpoint_content": checkpoint_content,
         "quality_gate": quality,
+        "validation_report": quality,
         "scribe": {
             "source": scribe_model,
             "mode": str(payload.get("mode") or "economy"),
@@ -259,4 +340,18 @@ async def compact_memory_scribe(payload: dict[str, Any], llm_gateway: Any | None
         resume_budget_ratio=payload.get("resume_budget_ratio"),
         overflow_reason="Memory scribe draft preserves checkpoint fields and can be reviewed before persistence.",
     )
+    return result
+
+
+async def draft_task_checkpoint(payload: dict[str, Any], llm_gateway: Any | None = None) -> dict[str, Any]:
+    result = await compact_memory_scribe(
+        {
+            **payload,
+            "reason": str(payload.get("reason") or "draft_task_checkpoint"),
+        },
+        llm_gateway=llm_gateway,
+    )
+    result["draft_type"] = "task_checkpoint"
+    result["recommended_next_tool"] = "record_task_checkpoint"
+    result["mutates_memory"] = False
     return result
