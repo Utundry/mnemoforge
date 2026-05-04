@@ -21,6 +21,7 @@ class CheckpointDraftRecord(BaseModel):
     preview: str
     record_task_checkpoint_args: dict[str, Any]
     validation_report: dict[str, Any] = Field(default_factory=dict)
+    source_evidence: dict[str, Any] = Field(default_factory=dict)
     source_span_ids: list[str] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
     content_hash: str

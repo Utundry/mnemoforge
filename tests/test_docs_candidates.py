@@ -484,6 +484,17 @@ def test_gen_laws_formats_active_project_laws():
     assert "Avoids drift from confirmed project rules." in rendered
 
 
+def test_gen_laws_tolerates_empty_law_content():
+    rendered = docs_service._gen_laws([
+        {
+            "content": "",
+            "meta": {},
+        }
+    ])
+    assert "Untitled law" in rendered
+    assert "_No statement recorded._" in rendered
+
+
 @pytest.mark.asyncio
 async def test_rebuild_docs_includes_runtime_hints_and_tasks_sections(monkeypatch):
     old_cache_dir = docs_service._CACHE_DIR

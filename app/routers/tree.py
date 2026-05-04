@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
@@ -91,6 +91,30 @@ class NodeUpdate(BaseModel):
     sort_order: Optional[int] = None
     parent_id: Optional[str] = None
     doc: Optional[str] = None
+
+
+class KnowledgeTreeNodeUpsert(BaseModel):
+    topic_path: str = Field(..., min_length=1, max_length=512)
+    title: str = Field(..., min_length=1, max_length=256)
+    type: str = Field("area")
+    status: str = Field("active")
+    parent_topic_path: str = Field("", max_length=512)
+    description: str = Field("", max_length=4000)
+    goal: str = Field("", max_length=4000)
+    tags: list[str] = Field(default_factory=list, max_length=64)
+    doc: str = Field("", max_length=20000)
+    responsibility: str = Field("", max_length=4000)
+    source_of_truth: str = Field("", max_length=1000)
+    runtime_entrypoints: list[str] = Field(default_factory=list, max_length=64)
+    tests: list[str] = Field(default_factory=list, max_length=64)
+    current_debt: list[str] = Field(default_factory=list, max_length=64)
+    target_state: str = Field("", max_length=4000)
+    projection_targets: list[str] = Field(default_factory=list, max_length=64)
+    structured_fields: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=64)
+    acted_by: str = Field("codex", min_length=1, max_length=256)
+    source: str = Field("knowledge_tree_upsert", max_length=128)
+    reason: str = Field("", max_length=1000)
 
 
 class PromoteRequest(BaseModel):
@@ -207,6 +231,35 @@ def _wants_markdown(request: Request) -> bool:
 def _store():
     from app.services.project_tree_store import get_tree_store
     return get_tree_store()
+
+
+def _merge_unique(*lists: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for values in lists:
+        for value in values or []:
+            text = str(value or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            result.append(text)
+    return result
+
+
+def _structured_tree_payload(body: KnowledgeTreeNodeUpsert) -> dict[str, Any]:
+    payload = {
+        "responsibility": body.responsibility,
+        "source_of_truth": body.source_of_truth,
+        "runtime_entrypoints": body.runtime_entrypoints,
+        "tests": body.tests,
+        "current_debt": body.current_debt,
+        "target_state": body.target_state,
+        "projection_targets": body.projection_targets,
+        "evidence_refs": body.evidence_refs,
+        "reason": body.reason,
+    }
+    payload.update(body.structured_fields or {})
+    return {key: value for key, value in payload.items() if value not in ("", [], {}, None)}
 
 
 async def _node_canonical_links(node: dict, qdrant: QdrantDep | None, *, include_suppressed: bool = False, limit: int = 20) -> list[dict]:
@@ -621,6 +674,79 @@ async def add_journal_by_path(body: JournalByPathRequest, background_tasks: Back
 
     background_tasks.add_task(_gen)
     return {"node_id": node["id"], "topic_path": body.topic_path, "status": "generating"}
+
+
+@router.post("/upsert-by-path")
+async def upsert_node_by_path(body: KnowledgeTreeNodeUpsert):
+    """Create or update a structured project-tree node by stable topic_path."""
+    if body.type not in VALID_TYPES:
+        raise HTTPException(400, f"Invalid type. Choose from: {', '.join(VALID_TYPES)}")
+    if body.status not in VALID_STATUSES:
+        raise HTTPException(400, f"Invalid status. Choose from: {', '.join(VALID_STATUSES)}")
+
+    s = _store()
+    existing = s.get_by_topic_path(body.topic_path)
+    parent_id = None
+    if body.parent_topic_path:
+        parent = s.get_by_topic_path(body.parent_topic_path)
+        if not parent:
+            raise HTTPException(404, f"Parent topic_path not found: {body.parent_topic_path}")
+        parent_id = parent["id"]
+
+    structured = _structured_tree_payload(body)
+    now = time.time()
+    if existing:
+        meta = existing.get("meta_json") or {}
+        prior_structured = meta.get("structured_knowledge") or {}
+        meta["structured_knowledge"] = {**prior_structured, **structured}
+        meta["structured_knowledge_updated_at"] = now
+        meta["structured_knowledge_updated_by"] = body.acted_by
+        meta["structured_knowledge_source"] = body.source
+        updates: dict[str, Any] = {
+            "title": body.title,
+            "type": body.type,
+            "status": body.status,
+            "topic_path": body.topic_path,
+            "tags": _merge_unique(existing.get("tags") or [], body.tags, ["structured_knowledge"]),
+            "meta_json": meta,
+        }
+        if body.description:
+            updates["description"] = body.description
+        if body.goal:
+            updates["goal"] = body.goal
+        if body.doc:
+            updates["doc"] = body.doc
+            meta["doc_locked"] = True
+            updates["meta_json"] = meta
+        if body.parent_topic_path:
+            updates["parent_id"] = parent_id
+        s.update_node(existing["id"], **updates)
+        node = s.get_node(existing["id"])
+        return {"created": False, "node": node, "node_id": existing["id"], "topic_path": body.topic_path}
+
+    node_id = s.create_node(
+        title=body.title,
+        type=body.type,
+        parent_id=parent_id,
+        description=body.description,
+        goal=body.goal,
+        status=body.status,
+        topic_path=body.topic_path,
+        tags=_merge_unique(body.tags, ["structured_knowledge"]),
+    )
+    meta = {
+        "structured_knowledge": structured,
+        "structured_knowledge_updated_at": now,
+        "structured_knowledge_updated_by": body.acted_by,
+        "structured_knowledge_source": body.source,
+    }
+    updates: dict[str, Any] = {"meta_json": meta}
+    if body.doc:
+        meta["doc_locked"] = True
+        updates["doc"] = body.doc
+    s.update_node(node_id, **updates)
+    node = s.get_node(node_id)
+    return {"created": True, "node": node, "node_id": node_id, "topic_path": body.topic_path}
 
 
 @router.post("")

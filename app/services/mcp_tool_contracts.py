@@ -284,6 +284,147 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "get_task_execution_context": {
+        "name": "get_task_execution_context",
+        "description": (
+            "Return a compact state-aware execution packet for a task: recommended tool families/tools, "
+            "required and recommended laws, risk controls, expected outputs, and allowed next transitions. "
+            "Use this before acting in a specific task state instead of loading the full tool catalog or all rules."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["task", "state"],
+            "properties": {
+                "project": {"type": "string", "default": "supermemory"},
+                "task_id": {"type": "string", "description": "Optional project task identifier for traceability."},
+                "task": {"type": "string"},
+                "state": {
+                    "type": "string",
+                    "enum": [
+                        "planning",
+                        "implementation",
+                        "verification",
+                        "live_validation",
+                        "documentation",
+                        "checkpointing",
+                        "handoff",
+                        "operator_review",
+                    ],
+                },
+                "intent": {"type": "string"},
+                "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
+                "prior_stage_recorded": {
+                    "type": "boolean",
+                    "description": "Set true only when the previous task stage is already recorded in project memory.",
+                },
+                "stage_evidence": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": [],
+                    "description": "Memory/checkpoint/law refs proving the previous stage is recorded.",
+                },
+                "include_tools": {"type": "boolean", "default": True},
+                "include_rules": {"type": "boolean", "default": True},
+                "max_required_rules": {"type": "integer", "minimum": 0, "maximum": 20, "default": 8},
+                "max_recommended_rules": {"type": "integer", "minimum": 0, "maximum": 20, "default": 8},
+            },
+        },
+    },
+    "operational_tray": {
+        "name": "operational_tray",
+        "description": (
+            "State-aware MCP facade for project work. Use action=inspect to get the current Operation Tray, "
+            "or action=execute to run a small whitelisted tray action without loading the full MCP catalog."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["task", "state", "action"],
+            "properties": {
+                "project": {"type": "string", "default": "supermemory"},
+                "task_id": {"type": "string"},
+                "task": {"type": "string"},
+                "state": {
+                    "type": "string",
+                    "enum": [
+                        "planning",
+                        "implementation",
+                        "verification",
+                        "live_validation",
+                        "documentation",
+                        "checkpointing",
+                        "handoff",
+                        "operator_review",
+                    ],
+                },
+                "action": {"type": "string", "enum": ["inspect", "execute"], "default": "inspect"},
+                "tray_action": {
+                    "type": "string",
+                    "enum": [
+                        "record_stage_evidence",
+                        "record_checkpoint",
+                        "draft_checkpoint",
+                        "review_rule_candidates",
+                        "list_rule_candidates",
+                    ],
+                    "description": "Whitelisted high-level action. Required when action=execute.",
+                },
+                "tool": {
+                    "type": "string",
+                    "description": "Alias for tray_action, accepted for compact Operational Tray calls.",
+                },
+                "args": {"type": "object", "default": {}, "description": "Arguments for the whitelisted tray action."},
+                "arguments": {
+                    "type": "object",
+                    "default": {},
+                    "description": "Alias for args, accepted for compact Operational Tray calls.",
+                },
+                "intent": {"type": "string"},
+                "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
+                "stage_evidence": {"type": "array", "items": {"type": "string"}, "default": []},
+                "prior_stage_recorded": {"type": "boolean"},
+                "dry_run": {"type": "boolean", "default": False},
+                "include_rules": {"type": "boolean", "default": True},
+            },
+        },
+    },
+    "upsert_knowledge_tree_node": {
+        "name": "upsert_knowledge_tree_node",
+        "description": (
+            "Create or update a structured project knowledge-tree node by topic_path. "
+            "Use this for architecture/documentation knowledge before editing Markdown projections."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["topic_path", "title"],
+            "properties": {
+                "topic_path": {"type": "string"},
+                "title": {"type": "string"},
+                "type": {"type": "string", "enum": ["idea", "project", "area", "task", "leaf"], "default": "area"},
+                "status": {
+                    "type": "string",
+                    "enum": ["inbox", "planning", "active", "in-progress", "done", "paused", "archived"],
+                    "default": "active",
+                },
+                "parent_topic_path": {"type": "string"},
+                "description": {"type": "string"},
+                "goal": {"type": "string"},
+                "tags": {"type": "array", "items": {"type": "string"}, "default": []},
+                "doc": {"type": "string", "description": "Optional human-facing projection text; structured fields remain primary."},
+                "responsibility": {"type": "string"},
+                "source_of_truth": {"type": "string"},
+                "runtime_entrypoints": {"type": "array", "items": {"type": "string"}, "default": []},
+                "tests": {"type": "array", "items": {"type": "string"}, "default": []},
+                "current_debt": {"type": "array", "items": {"type": "string"}, "default": []},
+                "target_state": {"type": "string"},
+                "projection_targets": {"type": "array", "items": {"type": "string"}, "default": []},
+                "structured_fields": {"type": "object", "default": {}},
+                "evidence_refs": {"type": "array", "items": {"type": "string"}, "default": []},
+                "acted_by": {"type": "string", "default": "codex"},
+                "source": {"type": "string", "default": "mcp_upsert_knowledge_tree_node"},
+                "reason": {"type": "string"},
+            },
+        },
+    },
     "get_project_readiness": {
         "name": "get_project_readiness",
         "description": (
@@ -660,6 +801,99 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "reconcile_completed_checkpoints": {
+        "name": "reconcile_completed_checkpoints",
+        "description": (
+            "Find open task/improvement artifacts whose task has a strict completed/done checkpoint. "
+            "Defaults to report-only mode. Set close=true only after reviewing candidates."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "default": "supermemory"},
+                "close": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "When false, report candidates only. When true, close eligible artifacts.",
+                },
+                "close_policy": {
+                    "type": "string",
+                    "enum": ["strict", "checkpoint_done"],
+                    "default": "strict",
+                    "description": "strict skips completed checkpoints that still have blockers or next_step.",
+                },
+                "acted_by": {"type": "string", "default": "codex"},
+                "action_source": {"type": "string", "default": "mcp_reconcile_completed_checkpoints"},
+                "reason": {
+                    "type": "string",
+                    "default": "Completed checkpoint reconciliation requested through MCP.",
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
+            },
+        },
+    },
+    "review_completed_checkpoint_scope": {
+        "name": "review_completed_checkpoint_scope",
+        "description": (
+            "Persist an operator review for a completed checkpoint's next_step scope. "
+            "Use after reconcile_completed_checkpoints returns needs_next_step_scope."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["task_id", "next_step_scope"],
+            "properties": {
+                "project": {"type": "string", "default": "supermemory"},
+                "task_id": {"type": "string", "description": "Task identifier from the reconciliation candidate"},
+                "checkpoint_change_id": {
+                    "type": "string",
+                    "description": "Optional checkpoint_change_id from the reconciliation candidate",
+                },
+                "next_step_scope": {
+                    "type": "string",
+                    "enum": ["none", "follow_up_task", "same_artifact_remaining_work", "operator_review"],
+                    "description": "Reviewed meaning of the checkpoint next_step.",
+                },
+                "reason": {"type": "string", "default": "Review completed checkpoint next_step scope."},
+                "acted_by": {"type": "string", "default": "codex"},
+                "source": {"type": "string", "default": "mcp_checkpoint_scope_review"},
+            },
+        },
+    },
+    "review_completed_checkpoint_scopes": {
+        "name": "review_completed_checkpoint_scopes",
+        "description": (
+            "Persist multiple completed-checkpoint next_step scope reviews in one call. "
+            "This records review annotations only; it never closes artifacts."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["decisions"],
+            "properties": {
+                "project": {"type": "string", "default": "supermemory"},
+                "decisions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "items": {
+                        "type": "object",
+                        "required": ["task_id", "next_step_scope"],
+                        "properties": {
+                            "task_id": {"type": "string"},
+                            "checkpoint_change_id": {"type": "string"},
+                            "next_step_scope": {
+                                "type": "string",
+                                "enum": ["none", "follow_up_task", "same_artifact_remaining_work", "operator_review"],
+                            },
+                            "reason": {"type": "string"},
+                        },
+                    },
+                },
+                "default_reason": {"type": "string", "default": "Batch review completed checkpoint next_step scopes."},
+                "acted_by": {"type": "string", "default": "codex"},
+                "source": {"type": "string", "default": "mcp_checkpoint_scope_review_batch"},
+            },
+        },
+    },
     "list_open_tasks": {
         "name": "list_open_tasks",
         "description": (
@@ -868,6 +1102,12 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "description": "Checkpoint stage in the task lifecycle",
                 },
                 "summary": {"type": "string", "description": "Short summary of what changed or what is currently happening"},
+                "checkpoint_mode": {
+                    "type": "string",
+                    "enum": ["lightweight", "standard", "full"],
+                    "default": "standard",
+                    "description": "Use lightweight for stage-gate evidence, standard for normal progress, and full for handoff/closeout.",
+                },
                 "blockers": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -899,6 +1139,18 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "description": "Residual risks, unknowns, or follow-up concerns",
                 },
                 "next_step": {"type": "string", "description": "Compact next step or resume point"},
+                "stage_evidence_refs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": [],
+                    "description": "Short refs from prior stage evidence, such as checkpoint:<change_id>.",
+                },
+                "next_step_scope": {
+                    "type": "string",
+                    "enum": ["none", "follow_up_task", "same_artifact_remaining_work", "operator_review", "unknown"],
+                    "default": "unknown",
+                    "description": "Whether next_step is separate follow-up work or remaining work on the same artifact.",
+                },
                 "status": {
                     "type": "string",
                     "enum": ["planning", "active", "paused", "done"],
@@ -929,6 +1181,12 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "description": "Checkpoint stage in the task lifecycle",
                 },
                 "summary": {"type": "string", "description": "Short summary of what changed or what is currently happening"},
+                "checkpoint_mode": {
+                    "type": "string",
+                    "enum": ["lightweight", "standard", "full"],
+                    "default": "standard",
+                    "description": "Use lightweight for stage-gate evidence, standard for normal progress, and full for handoff/closeout.",
+                },
                 "blockers": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -960,6 +1218,18 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "description": "Residual risks, unknowns, or follow-up concerns",
                 },
                 "next_step": {"type": "string", "description": "Compact next step or resume point"},
+                "stage_evidence_refs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": [],
+                    "description": "Short refs from prior stage evidence, such as checkpoint:<change_id>.",
+                },
+                "next_step_scope": {
+                    "type": "string",
+                    "enum": ["none", "follow_up_task", "same_artifact_remaining_work", "operator_review", "unknown"],
+                    "default": "unknown",
+                    "description": "Whether next_step is separate follow-up work or remaining work on the same artifact.",
+                },
                 "status": {
                     "type": "string",
                     "enum": ["planning", "active", "paused", "done"],
@@ -1100,7 +1370,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "end_work_session": {
         "name": "end_work_session",
-        "description": "End the active work session. work_id and task_id must match the active state.",
+        "description": "End the active work session. work_id and task_id must match the active state. status=completed requires explicit closeout spans: verification, changed_files, and next_step.",
         "inputSchema": {
             "type": "object",
             "required": ["work_id", "task_id", "status"],
@@ -1128,7 +1398,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "session_id": {"type": "string"},
                 "kind": {
                     "type": "string",
-                    "enum": ["fact", "decision", "verification", "risk", "blocker", "next_step", "checkpoint_hint", "handoff_hint", "diagnostic", "changed_files"],
+                    "enum": ["fact", "decision", "verification", "risk", "blocker", "next_step", "checkpoint_hint", "handoff_hint", "diagnostic", "changed_files", "rule_project_candidate", "rule_canonical_candidate", "rule_revision_hint", "rule_merge_hint"],
                 },
                 "source": {"type": "string"},
                 "content": {"type": "string"},
@@ -1168,6 +1438,16 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "status": {"type": "string", "default": "active"},
                 "reason": {"type": "string", "default": "draft_checkpoint_from_spans"},
                 "use_llm": {"type": "boolean", "default": False},
+                "preserve_evidence": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Persist a bounded original span snapshot alongside the compact draft for full-view review.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["compact", "preserve_evidence", "no_compression", "project_overview"],
+                    "default": "compact",
+                },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
             },
         },
@@ -1335,6 +1615,73 @@ def build_enrich_task_payload(args: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def build_task_execution_context_payload(args: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "project": args.get("project", "supermemory"),
+        "task_id": args.get("task_id", ""),
+        "task": args["task"],
+        "state": args["state"],
+        "intent": args.get("intent", ""),
+        "changed_files": args.get("changed_files", []),
+        "stage_evidence": args.get("stage_evidence", []),
+        "include_tools": bool(args.get("include_tools", True)),
+        "include_rules": bool(args.get("include_rules", True)),
+    }
+    if args.get("prior_stage_recorded") is not None:
+        payload["prior_stage_recorded"] = bool(args.get("prior_stage_recorded"))
+    for key in ("max_required_rules", "max_recommended_rules"):
+        if args.get(key) not in (None, ""):
+            payload[key] = args.get(key)
+    return payload
+
+
+def build_operational_tray_context_payload(args: dict[str, Any]) -> dict[str, Any]:
+    payload = build_task_execution_context_payload(
+        {
+            "project": args.get("project", "supermemory"),
+            "task_id": args.get("task_id", ""),
+            "task": args["task"],
+            "state": args["state"],
+            "intent": args.get("intent", ""),
+            "changed_files": args.get("changed_files", []),
+            "stage_evidence": args.get("stage_evidence", []),
+            "include_tools": True,
+            "include_rules": bool(args.get("include_rules", True)),
+        }
+    )
+    if args.get("prior_stage_recorded") is not None:
+        payload["prior_stage_recorded"] = bool(args.get("prior_stage_recorded"))
+    return payload
+
+
+def build_upsert_knowledge_tree_node_payload(args: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "topic_path": str(args["topic_path"]).strip(),
+        "title": str(args["title"]).strip(),
+        "type": str(args.get("type") or "area").strip(),
+        "status": str(args.get("status") or "active").strip(),
+        "parent_topic_path": str(args.get("parent_topic_path") or "").strip(),
+        "description": str(args.get("description") or "").strip(),
+        "goal": str(args.get("goal") or "").strip(),
+        "tags": args.get("tags") or [],
+        "doc": str(args.get("doc") or "").strip(),
+        "responsibility": str(args.get("responsibility") or "").strip(),
+        "source_of_truth": str(args.get("source_of_truth") or "").strip(),
+        "runtime_entrypoints": args.get("runtime_entrypoints") or [],
+        "tests": args.get("tests") or [],
+        "current_debt": args.get("current_debt") or [],
+        "target_state": str(args.get("target_state") or "").strip(),
+        "projection_targets": args.get("projection_targets") or [],
+        "structured_fields": args.get("structured_fields") or {},
+        "evidence_refs": args.get("evidence_refs") or [],
+        "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+        "source": str(args.get("source") or "mcp_upsert_knowledge_tree_node").strip()
+        or "mcp_upsert_knowledge_tree_node",
+        "reason": str(args.get("reason") or "").strip(),
+    }
+    return payload
+
+
 def build_project_readiness_payload(args: dict[str, Any]) -> dict[str, Any]:
     return {"project_id": args["project_id"]}
 
@@ -1434,6 +1781,56 @@ def build_list_artifacts_query(args: dict[str, Any]) -> str:
     return "&".join(params)
 
 
+def build_reconcile_completed_checkpoints_payload(args: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "project": str(args.get("project") or "supermemory").strip() or "supermemory",
+        "close": bool(args.get("close", False)),
+        "close_policy": str(args.get("close_policy") or "strict").strip() or "strict",
+        "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+        "action_source": str(args.get("action_source") or "mcp_reconcile_completed_checkpoints").strip()
+        or "mcp_reconcile_completed_checkpoints",
+        "reason": str(args.get("reason") or "Completed checkpoint reconciliation requested through MCP.").strip(),
+        "limit": int(args.get("limit") or 100),
+    }
+
+
+def build_review_completed_checkpoint_scope_payload(args: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "project": str(args.get("project") or "supermemory").strip() or "supermemory",
+        "task_id": str(args["task_id"]).strip(),
+        "checkpoint_change_id": str(args.get("checkpoint_change_id") or "").strip(),
+        "next_step_scope": str(args["next_step_scope"]).strip(),
+        "reason": str(args.get("reason") or "Review completed checkpoint next_step scope.").strip(),
+        "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+        "source": str(args.get("source") or "mcp_checkpoint_scope_review").strip() or "mcp_checkpoint_scope_review",
+    }
+
+
+def build_review_completed_checkpoint_scopes_payload(args: dict[str, Any]) -> dict[str, Any]:
+    decisions = args.get("decisions") or []
+    if not isinstance(decisions, list):
+        decisions = []
+    normalized: list[dict[str, str]] = []
+    for item in decisions:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            {
+                "task_id": str(item.get("task_id") or "").strip(),
+                "checkpoint_change_id": str(item.get("checkpoint_change_id") or "").strip(),
+                "next_step_scope": str(item.get("next_step_scope") or "").strip(),
+                "reason": str(item.get("reason") or "").strip(),
+            }
+        )
+    return {
+        "project": str(args.get("project") or "supermemory").strip() or "supermemory",
+        "decisions": normalized,
+        "default_reason": str(args.get("default_reason") or "Batch review completed checkpoint next_step scopes.").strip(),
+        "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+        "source": str(args.get("source") or "mcp_checkpoint_scope_review_batch").strip() or "mcp_checkpoint_scope_review_batch",
+    }
+
+
 def build_list_open_tasks_query(args: dict[str, Any]) -> str:
     params: list[str] = [
         f"project={quote(str(args.get('project', 'supermemory')), safe='')}",
@@ -1531,6 +1928,16 @@ def build_report_task_checkpoint_payload(args: dict[str, Any]) -> dict[str, Any]
     clean_changed_files = _string_list("changed_files")
     clean_verification = _string_list("verification")
     clean_remaining_risk = _string_list("remaining_risk")
+    clean_stage_evidence_refs = _string_list("stage_evidence_refs")
+    checkpoint_mode = str(args.get("checkpoint_mode") or "standard").strip().lower()
+    if checkpoint_mode not in {"lightweight", "standard", "full"}:
+        checkpoint_mode = "standard"
+    if checkpoint_mode == "lightweight":
+        clean_blockers = clean_blockers[:3]
+        clean_decisions = clean_decisions[:3]
+        clean_changed_files = clean_changed_files[:8]
+        clean_verification = clean_verification[:3]
+        clean_remaining_risk = clean_remaining_risk[:3]
     return {
         "project": args["project"],
         "change_type": "note",
@@ -1544,12 +1951,14 @@ def build_report_task_checkpoint_payload(args: dict[str, Any]) -> dict[str, Any]
             verification=clean_verification,
             remaining_risk=clean_remaining_risk,
             next_step=str(args.get("next_step") or "").strip(),
+            next_step_scope=str(args.get("next_step_scope") or "").strip(),
+            stage_evidence_refs=clean_stage_evidence_refs,
             reason=str(args.get("reason") or "").strip(),
         ),
         "why": str(args.get("reason") or "").strip() or f"Task checkpoint recorded at stage={stage}.",
         "agent_id": str(args.get("acted_by") or "user").strip() or "user",
         "source": str(args.get("source") or "mcp").strip() or "mcp",
-        "tags": ["task_checkpoint", f"task_stage:{stage}", f"task_status:{status}"],
+        "tags": ["task_checkpoint", f"task_stage:{stage}", f"task_status:{status}", f"checkpoint_mode:{checkpoint_mode}"],
     }
 
 
@@ -1759,6 +2168,8 @@ def format_task_checkpoint_response(data: dict[str, Any]) -> str:
         base += f"\nhandoff_label={data['handoff_label']}"
     if data.get("handoff_error"):
         base += f"\nhandoff_error={data['handoff_error']}"
+    if data.get("stage_evidence"):
+        base += f"\nstage_evidence={data['stage_evidence']}"
     return base
 
 
@@ -2097,6 +2508,7 @@ def build_supermemory_initialize_hint(agent_id: str) -> dict[str, Any]:
         "tip": (
             "Call get_onboarding at the start of a session or when you are lost. "
             "If you collaborate on a project, call pickup_coordination_messages for your agent_id and project. "
+            "Prefer tools/list mode=compact and operational_tray for state-aware work before loading the full tool catalog. "
             "If you need to choose a MCP path, call normalize_mcp_intent before you guess at tools. "
             "If you need to resume a task, call reopen_task before you do anything else. "
             "If you are working on a task, record a checkpoint at planning and after every meaningful stage transition with report_task_checkpoint. "
@@ -2108,6 +2520,13 @@ def build_supermemory_initialize_hint(agent_id: str) -> dict[str, Any]:
             "Prefer semantic routes such as /api/v1/coordination/... over internal module topology.",
             "Treat degraded storage trust as an operational constraint: affected retrieval or learning paths may require caution or operator review.",
         ],
+        "tool_catalog": {
+            "preferred_mode": "compact",
+            "compact_request": {"method": "tools/list", "params": {"mode": "compact"}},
+            "full_request": {"method": "tools/list", "params": {"mode": "full"}},
+            "recommended_first_tool": "operational_tray",
+            "reason": "Use compact discovery and the state-aware facade to avoid loading the full flat MCP catalog unless a task requires deeper/debug access.",
+        },
         "l0_policy": build_l0_policy(),
         "instruction_layers": {
             "L0": "always_present",

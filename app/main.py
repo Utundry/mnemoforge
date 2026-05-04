@@ -10,7 +10,7 @@ from qdrant_client import AsyncQdrantClient
 from app.config import settings
 from app.core.logging import setup_logging
 from app.dependencies import set_ollama_service, set_qdrant_client
-from app.routers import admin, auto_memory, batch, code_search, crystallizer, dashboard, docs, entities, governance, health, improvements, ingest, knowledge_tree_api, laws, layout_fixer, learning, log_filter, memories, mcp_sse, models, normalization, openai_compat, outcomes, project, project_tasks, registry, router_api, setup, skills, tasks, tracker, tree, unified_artifacts, watcher
+from app.routers import admin, auto_memory, batch, code_search, crystallizer, dashboard, docs, entities, governance, health, improvements, ingest, knowledge_tree_api, laws, layout_fixer, learning, log_filter, memories, mcp_sse, models, normalization, openai_compat, outcomes, project, project_tasks, registry, router_api, setup, skills, task_execution_context, tasks, tracker, tree, unified_artifacts, watcher
 from app.services.data_hygiene_service import (
     apply_approved_delete,
     apply_reviewed_delete,
@@ -1823,6 +1823,7 @@ def create_app() -> FastAPI:
     _try_include(app, project_tasks.router, "project_tasks", prefix, disabled)
     _try_include(app, unified_artifacts.router, "unified_artifacts", prefix, disabled)
     _try_include(app, laws.router, "laws", prefix, disabled)
+    _try_include(app, task_execution_context.router, "task_execution_context", prefix, disabled)
     _try_include(app, tasks.router, "tasks", prefix, disabled)
     _try_include(app, layout_fixer.router, "layout_fixer", prefix, disabled)
     _try_include(app, log_filter.router, "log_filter", prefix, disabled)

@@ -30,10 +30,16 @@ from app.services.mcp_tool_contracts import (
     build_coordination_status_payload,
     build_defer_learning_candidate_payload,
     build_enrich_task_payload,
+    build_operational_tray_context_payload,
+    build_upsert_knowledge_tree_node_payload,
+    build_task_execution_context_payload,
     build_list_artifacts_query,
     build_list_learning_candidates_query,
     build_list_open_tasks_query,
     build_list_coordination_query,
+    build_reconcile_completed_checkpoints_payload,
+    build_review_completed_checkpoint_scope_payload,
+    build_review_completed_checkpoint_scopes_payload,
     build_normalize_mcp_intent_payload,
     build_pickup_coordination_payload,
     build_project_workflow_payload,
@@ -159,7 +165,7 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
     "project_knowledge": {
         "title": "Project knowledge & artifact lifecycle",
         "description": "Unified discovery for tasks, improvements, readiness, canonical knowledge, lifecycle checkpoints, reopen/resume flows, and lifecycle changes.",
-        "entrypoints": ["project_workflow", "continue_task", "list_open_tasks", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement"],
+        "entrypoints": ["operational_tray", "project_workflow", "continue_task", "get_task_execution_context", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement"],
         "keywords": [
             "task",
             "tasks",
@@ -198,7 +204,12 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
             "reopen_task",
             "list_open_tasks",
             "list_artifacts",
+            "reconcile_completed_checkpoints",
+            "review_completed_checkpoint_scope",
+            "review_completed_checkpoint_scopes",
             "enrich_task_with_context",
+            "get_task_execution_context",
+            "operational_tray",
             "review_improvement",
             "get_work_session_state",
             "start_work_session",
@@ -218,7 +229,12 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
             "get_artifact",
             "resolve_artifact",
             "reopen_artifact",
+            "reconcile_completed_checkpoints",
+            "review_completed_checkpoint_scope",
+            "review_completed_checkpoint_scopes",
             "search_project_knowledge",
+            "get_task_execution_context",
+            "operational_tray",
             "get_project_readiness",
             "get_project_bootstrap_checklist",
             "plan_remote_snapshot",
@@ -435,8 +451,14 @@ def _infer_tool_family(tool_name: str) -> str:
             return "intent_routing"
         return "tool_discovery"
     if name in {
+        "operational_tray",
+        "upsert_knowledge_tree_node",
         "list_artifacts",
         "list_open_tasks",
+        "get_task_execution_context",
+        "reconcile_completed_checkpoints",
+        "review_completed_checkpoint_scope",
+        "review_completed_checkpoint_scopes",
         "continue_task",
         "reopen_task",
         "get_artifact",
@@ -484,6 +506,237 @@ def _infer_tool_family(tool_name: str) -> str:
 
 def _tool_catalog() -> list[dict[str, Any]]:
     return [tool for tool in TOOLS if isinstance(tool, dict) and tool.get("name")]
+
+
+_COMPACT_TOOL_NAMES = (
+    "operational_tray",
+    "list_tool_families",
+    "tool_recommend",
+    "tool_family_tools",
+    "memory_health",
+    "get_task_status",
+)
+
+
+def _summarize_input_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(schema, dict):
+        return {"required": [], "properties": []}
+    required = [str(item) for item in (schema.get("required") or []) if str(item).strip()]
+    properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+    summarized_properties: list[dict[str, Any]] = []
+    for name, spec in properties.items():
+        if not isinstance(spec, dict):
+            summarized_properties.append({"name": str(name), "type": "any"})
+            continue
+        summary = {
+            "name": str(name),
+            "type": str(spec.get("type") or "any"),
+        }
+        enum = spec.get("enum")
+        if isinstance(enum, list) and enum:
+            summary["enum"] = [str(item) for item in enum[:12]]
+        if "default" in spec:
+            summary["default"] = spec.get("default")
+        summarized_properties.append(summary)
+    return {
+        "required": required,
+        "properties": summarized_properties,
+    }
+
+
+def _compact_tool_catalog(*, limit: int = 12, schema_mode: str = "summary") -> list[dict[str, Any]]:
+    by_name = {str(tool.get("name")): tool for tool in _tool_catalog()}
+    names: list[str] = []
+    for name in _COMPACT_TOOL_NAMES:
+        if name in by_name and name not in names:
+            names.append(name)
+    for name in ("get_task_execution_context", "record_task_checkpoint", "draft_task_checkpoint"):
+        if name in by_name and name not in names and len(names) < limit:
+            names.append(name)
+    tools = [deepcopy(by_name[name]) for name in names[: max(1, limit)]]
+    if str(schema_mode or "summary").strip().lower() in {"full", "raw", "debug"}:
+        return tools
+    for tool in tools:
+        schema = tool.pop("inputSchema", {})
+        tool["inputSummary"] = _summarize_input_schema(schema if isinstance(schema, dict) else {})
+    return tools
+
+
+def _tools_list_payload(params: dict[str, Any] | None = None) -> dict[str, Any]:
+    params = params or {}
+    mode = str(params.get("mode") or params.get("catalog_mode") or "full").strip().lower()
+    if mode in {"compact", "staged", "tray"}:
+        limit = int(params.get("limit") or 12)
+        schema_mode = str(params.get("schema_mode") or params.get("tool_schema_mode") or "summary").strip().lower()
+        if schema_mode not in {"summary", "full", "raw", "debug"}:
+            schema_mode = "summary"
+        tools = _compact_tool_catalog(limit=limit, schema_mode=schema_mode)
+        return {
+            "tools": tools,
+            "_supermemory": {
+                "catalog_mode": "compact",
+                "schema_mode": "full" if schema_mode in {"full", "raw", "debug"} else "summary",
+                "full_catalog_available": True,
+                "full_catalog_request": {"method": "tools/list", "params": {"mode": "full"}},
+                "full_schema_request": {"method": "tools/list", "params": {"mode": "compact", "schema_mode": "full"}},
+                "recommended_first_tool": "operational_tray",
+                "reason": "Compact mode exposes the state-aware facade and staged discovery tools before the full flat catalog.",
+                "total_tools_available": len(_tool_catalog()),
+                "returned_tools": len(tools),
+            },
+        }
+    return {"tools": TOOLS}
+
+
+def _normalize_tool_catalog_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower()
+    if mode in {"compact", "staged", "tray"}:
+        return "compact"
+    if mode in {"full", "debug", "compat", "compatibility"}:
+        return "full"
+    return ""
+
+
+def _normalize_context_hygiene_mode(value: Any) -> str:
+    mode = str(value or "").strip().lower()
+    if mode in {"small", "small_context", "small-context", "tight", "compact", "low_context", "low-context"}:
+        return "small_context"
+    if mode in {"full", "debug", "verbose", "raw"}:
+        return "full"
+    return ""
+
+
+def _extract_requested_tool_catalog_mode(params: dict[str, Any]) -> str:
+    supermemory = params.get("_supermemory") if isinstance(params.get("_supermemory"), dict) else {}
+    tool_catalog = supermemory.get("tool_catalog") if isinstance(supermemory.get("tool_catalog"), dict) else {}
+    candidates = [
+        tool_catalog.get("preferred_mode"),
+        tool_catalog.get("mode"),
+        supermemory.get("tool_catalog_mode"),
+        params.get("tool_catalog_mode"),
+    ]
+    capabilities = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
+    experimental = capabilities.get("experimental") if isinstance(capabilities.get("experimental"), dict) else {}
+    capability_supermemory = capabilities.get("supermemory") if isinstance(capabilities.get("supermemory"), dict) else {}
+    experimental_supermemory = (
+        experimental.get("supermemory") if isinstance(experimental.get("supermemory"), dict) else {}
+    )
+    candidates.extend(
+        [
+            capability_supermemory.get("tool_catalog_mode"),
+            experimental_supermemory.get("tool_catalog_mode"),
+        ]
+    )
+    for candidate in candidates:
+        mode = _normalize_tool_catalog_mode(candidate)
+        if mode:
+            return mode
+    return ""
+
+
+def _extract_requested_context_hygiene_mode(params: dict[str, Any]) -> str:
+    supermemory = params.get("_supermemory") if isinstance(params.get("_supermemory"), dict) else {}
+    context = supermemory.get("context") if isinstance(supermemory.get("context"), dict) else {}
+    candidates = [
+        context.get("hygiene_mode"),
+        context.get("mode"),
+        supermemory.get("context_hygiene_mode"),
+        supermemory.get("context_profile"),
+        params.get("context_hygiene_mode"),
+        params.get("context_profile"),
+        params.get("response_mode"),
+    ]
+    capabilities = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
+    experimental = capabilities.get("experimental") if isinstance(capabilities.get("experimental"), dict) else {}
+    capability_supermemory = capabilities.get("supermemory") if isinstance(capabilities.get("supermemory"), dict) else {}
+    experimental_supermemory = (
+        experimental.get("supermemory") if isinstance(experimental.get("supermemory"), dict) else {}
+    )
+    candidates.extend(
+        [
+            capability_supermemory.get("context_hygiene_mode"),
+            capability_supermemory.get("context_profile"),
+            experimental_supermemory.get("context_hygiene_mode"),
+            experimental_supermemory.get("context_profile"),
+        ]
+    )
+    for candidate in candidates:
+        mode = _normalize_context_hygiene_mode(candidate)
+        if mode:
+            return mode
+    return ""
+
+
+def _int_from_nested(*values: Any) -> int:
+    for value in values:
+        if value in (None, ""):
+            continue
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return parsed
+    return 0
+
+
+def _casefold_nested(*values: Any) -> str:
+    return " ".join(str(value or "").casefold() for value in values if value not in (None, ""))
+
+
+def _infer_small_context_modes(params: dict[str, Any]) -> dict[str, Any]:
+    supermemory = params.get("_supermemory") if isinstance(params.get("_supermemory"), dict) else {}
+    context = supermemory.get("context") if isinstance(supermemory.get("context"), dict) else {}
+    model = params.get("model") if isinstance(params.get("model"), dict) else {}
+    model_info = params.get("modelInfo") if isinstance(params.get("modelInfo"), dict) else {}
+    capabilities = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
+    experimental = capabilities.get("experimental") if isinstance(capabilities.get("experimental"), dict) else {}
+    capability_supermemory = capabilities.get("supermemory") if isinstance(capabilities.get("supermemory"), dict) else {}
+    experimental_supermemory = (
+        experimental.get("supermemory") if isinstance(experimental.get("supermemory"), dict) else {}
+    )
+    context_window = _int_from_nested(
+        params.get("model_context_window"),
+        params.get("context_window"),
+        params.get("contextWindow"),
+        context.get("model_context_window"),
+        context.get("context_window"),
+        model.get("context_window"),
+        model.get("contextWindow"),
+        model_info.get("context_window"),
+        model_info.get("contextWindow"),
+        capability_supermemory.get("model_context_window"),
+        experimental_supermemory.get("model_context_window"),
+    )
+    profile_text = _casefold_nested(
+        params.get("agent_profile"),
+        params.get("model_tier"),
+        params.get("model_name"),
+        context.get("profile"),
+        context.get("model_tier"),
+        model.get("tier"),
+        model.get("name"),
+        model_info.get("tier"),
+        model_info.get("name"),
+        capability_supermemory.get("agent_profile"),
+        experimental_supermemory.get("agent_profile"),
+    )
+    inferred = False
+    reason = ""
+    if context_window and context_window < 64000:
+        inferred = True
+        reason = f"model_context_window<{64000}"
+    elif any(token in profile_text for token in ("small", "mini", "local", "slm", "tight", "low-context", "low_context")):
+        inferred = True
+        reason = "small_model_profile"
+    if not inferred:
+        return {"tool_catalog_mode": "", "context_hygiene_mode": "", "reason": "", "model_context_window": context_window}
+    return {
+        "tool_catalog_mode": "compact",
+        "context_hygiene_mode": "small_context",
+        "reason": reason,
+        "model_context_window": context_window,
+    }
 
 
 def _family_tools(family: str) -> list[dict[str, Any]]:
@@ -545,6 +798,75 @@ def _annotate_structured_tool_payload(tool_name: str, data: dict[str, Any]) -> d
                 normalized_items.append(item)
         enriched[key] = normalized_items
     return enriched
+
+
+_SMALL_CONTEXT_SERVICE_KEYS = {
+    "stage",
+    "rationale",
+    "feedback_expected",
+    "follow_up",
+    "token_budget",
+    "token_overhead",
+    "coverage",
+}
+
+
+def _small_context_compact_value(value: Any, *, key: str = "") -> Any:
+    if key in _SMALL_CONTEXT_SERVICE_KEYS:
+        return None
+    if isinstance(value, dict):
+        compact: dict[str, Any] = {}
+        for child_key, child_value in value.items():
+            cleaned = _small_context_compact_value(child_value, key=str(child_key))
+            if cleaned is not None:
+                compact[str(child_key)] = cleaned
+        return compact
+    if isinstance(value, list):
+        compact_items: list[Any] = []
+        for item in value:
+            cleaned = _small_context_compact_value(item)
+            if cleaned is not None:
+                compact_items.append(cleaned)
+        return compact_items
+    return value
+
+
+def _small_context_rule_refs(items: Any) -> Any:
+    if not isinstance(items, list):
+        return items
+    refs = []
+    for item in items:
+        if not isinstance(item, dict):
+            refs.append(item)
+            continue
+        refs.append(
+            {
+                key: item.get(key)
+                for key in ("id", "title", "scope", "status", "topic_path", "reason")
+                if item.get(key) not in (None, "", [])
+            }
+        )
+    return refs
+
+
+def _sanitize_tool_result_for_context(text: str, *, context_hygiene_mode: str = "") -> str:
+    if _normalize_context_hygiene_mode(context_hygiene_mode) != "small_context":
+        return text
+    try:
+        data = json.loads(text)
+    except Exception:
+        return text
+    compact = _small_context_compact_value(data)
+    if isinstance(compact, dict):
+        for key in ("required_rules", "recommended_rules"):
+            if key in compact:
+                compact[key] = _small_context_rule_refs(compact[key])
+        service_refs = compact.setdefault("_supermemory_refs", {})
+        if isinstance(service_refs, dict):
+            service_refs.setdefault("omitted_service_fields", len(_SMALL_CONTEXT_SERVICE_KEYS))
+            service_refs.setdefault("full_response", "Repeat the same call with context_hygiene_mode=full or response_mode=full.")
+            service_refs.setdefault("mode", "small_context")
+    return json.dumps(compact, indent=2, ensure_ascii=False)
 
 
 def _build_tool_feedback_envelope(
@@ -798,10 +1120,48 @@ def _tool_example_payload(tool_name: str, *, intent: str, project_id: str = "") 
         }
     if name == "enrich_task_with_context":
         return {"project_id": project_id or "supermemory", "task": intent[:240], "max_components": 3}
+    if name == "get_task_execution_context":
+        return {
+            "project": project_id or "supermemory",
+            "task": intent[:240] or "Verify a server-side change",
+            "state": "verification",
+            "intent": intent[:120],
+            "changed_files": [],
+        }
+    if name == "operational_tray":
+        return {
+            "project": project_id or "supermemory",
+            "task": intent[:240] or "Inspect the current operation tray.",
+            "state": "planning",
+            "action": "inspect",
+            "intent": intent[:120],
+        }
     if name == "resolve_artifact":
         return {"artifact_key": "task:supermemory:<local_id>", "acted_by": "user", "action_source": "normalize_mcp_intent", "reason": intent[:120]}
     if name == "reopen_artifact":
         return {"artifact_key": "task:supermemory:<local_id>", "project": project_id or "supermemory", "status": "active", "reason": "normalize_mcp_intent", "acted_by": "user", "source": "mcp"}
+    if name == "reconcile_completed_checkpoints":
+        return {"project": project_id or "supermemory", "close": False, "close_policy": "strict", "limit": 100}
+    if name == "review_completed_checkpoint_scope":
+        return {
+            "project": project_id or "supermemory",
+            "task_id": "<task_id>",
+            "checkpoint_change_id": "<checkpoint_change_id>",
+            "next_step_scope": "follow_up_task",
+            "reason": intent[:120] or "Review completed checkpoint next_step scope.",
+        }
+    if name == "review_completed_checkpoint_scopes":
+        return {
+            "project": project_id or "supermemory",
+            "decisions": [
+                {
+                    "task_id": "<task_id>",
+                    "checkpoint_change_id": "<checkpoint_change_id>",
+                    "next_step_scope": "follow_up_task",
+                    "reason": intent[:120] or "Batch review completed checkpoint next_step scope.",
+                }
+            ],
+        }
     if name == "list_tool_families":
         return {}
     if name == "tool_recommend":
@@ -837,6 +1197,11 @@ def _normalize_mcp_intent(intent: str, *, project_id: str = "", top_n: int = 3) 
         resolved_family = "project_knowledge"
         confidence = 0.79
         rationale = "Context-building intent maps to enrich_task_with_context."
+    elif any(term in lowered for term in ("reconcile", "stale tail", "completed checkpoint", "checkpoint tails", "хвост")):
+        resolved_tool = "reconcile_completed_checkpoints"
+        resolved_family = "project_knowledge"
+        confidence = 0.83
+        rationale = "Completed-checkpoint lifecycle reconciliation intent maps to reconcile_completed_checkpoints."
     elif any(term in lowered for term in ("artifact", "resolve", "reopen artifact", "unified artifact")):
         if "reopen" in lowered:
             resolved_tool = "reopen_artifact"
@@ -2139,6 +2504,122 @@ TOOLS = [
         },
     },
     {
+        "name": "project_rule_candidates_from_stenography",
+        "description": (
+            "Project explicit stenographer rule marker spans into reviewable rule candidates. "
+            "Use after task closeout; this does not activate laws."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "default": "supermemory"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 2000, "default": 500},
+            },
+        },
+    },
+    {
+        "name": "list_rule_candidates",
+        "description": "List reviewable rule candidates created from explicit rule markers.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "status": {
+                    "type": "string",
+                    "enum": ["candidate", "needs_clarification", "trial", "revision_pending", "rejected", "suppressed"],
+                },
+                "source_task_id": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
+            },
+        },
+    },
+    {
+        "name": "get_rule_candidate_review_packet",
+        "description": (
+            "Build a read-only grouped review packet for rule candidates, including deterministic overlap "
+            "with active laws and other candidates. Use before promotion, rejection, or merge decisions."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "status": {
+                    "type": "string",
+                    "enum": ["candidate", "needs_clarification", "trial", "revision_pending", "rejected", "suppressed"],
+                    "default": "candidate",
+                },
+                "source_task_id": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
+                "max_matches": {"type": "integer", "minimum": 0, "maximum": 20, "default": 5},
+            },
+        },
+    },
+    {
+        "name": "review_rule_candidate",
+        "description": (
+            "Apply a safe operator review action to a rule candidate without mutating the law layer. "
+            "Supports reject, suppress, needs_clarification, and reopen."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["candidate_id", "action", "reason"],
+            "properties": {
+                "candidate_id": {"type": "string"},
+                "action": {
+                    "type": "string",
+                    "enum": ["reject", "suppress", "needs_clarification", "reopen"],
+                },
+                "reason": {"type": "string"},
+                "acted_by": {"type": "string", "default": "codex"},
+                "source": {"type": "string", "default": "mcp_rule_candidate_review"},
+            },
+        },
+    },
+    {
+        "name": "promote_rule_candidate",
+        "description": (
+            "Promote a reviewed rule candidate into the law layer, preserving candidate evidence and "
+            "recording promoted_law_id on the candidate. Defaults to proposed status; active/user_confirmed require confirmation metadata."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["candidate_id", "reason"],
+            "properties": {
+                "candidate_id": {"type": "string"},
+                "title": {"type": "string"},
+                "target_scope": {"type": "string", "enum": ["project", "family", "domain", "principle", "meta"]},
+                "status": {"type": "string", "enum": ["proposed", "user_confirmed", "active"], "default": "proposed"},
+                "reason": {"type": "string"},
+                "acted_by": {"type": "string", "default": "codex"},
+                "source": {"type": "string", "default": "mcp_rule_candidate_promotion"},
+                "confirmed_by": {"type": "string"},
+                "confirmation_source": {"type": "string", "default": "mcp_rule_candidate_promotion"},
+            },
+        },
+    },
+    {
+        "name": "revise_law_from_rule_candidate",
+        "description": (
+            "Create a pending candidate_revision on an existing law from a reviewed rule candidate. "
+            "The active law remains effective until the revision is explicitly confirmed."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["candidate_id", "law_id", "reason"],
+            "properties": {
+                "candidate_id": {"type": "string"},
+                "law_id": {"type": "string"},
+                "reason": {"type": "string"},
+                "acted_by": {"type": "string", "default": "codex"},
+                "source": {"type": "string", "default": "mcp_rule_candidate_law_revision"},
+                "title": {"type": "string"},
+                "statement": {"type": "string"},
+                "rationale": {"type": "string"},
+                "evidence": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    },
+    {
         "name": "improvements_report",
         "description": (
             "Generate a project status report: stats (total/open/resolved, top tags) "
@@ -2256,6 +2737,12 @@ TOOLS = [
     tool_definition("draft_task_checkpoint"),
     tool_definition("record_task_checkpoint"),
     tool_definition("report_task_checkpoint"),
+    tool_definition("operational_tray"),
+    tool_definition("upsert_knowledge_tree_node"),
+    tool_definition("get_task_execution_context"),
+    tool_definition("reconcile_completed_checkpoints"),
+    tool_definition("review_completed_checkpoint_scope"),
+    tool_definition("review_completed_checkpoint_scopes"),
     tool_definition("resolve_artifact"),
     tool_definition("reopen_artifact"),
     {
@@ -2836,6 +3323,12 @@ sync_tool_definitions(
     "get_artifact",
     "list_artifacts",
     "list_open_tasks",
+    "operational_tray",
+    "upsert_knowledge_tree_node",
+    "get_task_execution_context",
+    "reconcile_completed_checkpoints",
+    "review_completed_checkpoint_scope",
+    "review_completed_checkpoint_scopes",
     "normalize_mcp_intent",
     "project_workflow",
     "project_workflow_submit",
@@ -2969,6 +3462,7 @@ def _parse_task_checkpoint_change(change: dict[str, Any] | None) -> dict[str, An
         "Checkpoint status": "status",
         "Summary": "summary",
         "Next step": "next_step",
+        "Next step scope": "next_step_scope",
         "Reason": "reason",
     }
     for line in content.splitlines():
@@ -3026,6 +3520,27 @@ async def _fetch_linked_improvement_bundle(api_base: str, project: str, linked_i
         "linked_artifact_key": artifact.get("linked_artifact_key"),
         "linked_status": artifact.get("linked_status"),
     }
+
+
+def _checkpoint_stage_for_state(state: str) -> str:
+    normalized = str(state or "").strip().lower()
+    if normalized in {"planning", "checkpointing"}:
+        return "planning"
+    if normalized in {"implementation", "verification", "live_validation", "documentation", "operator_review"}:
+        return "in_progress"
+    if normalized == "handoff":
+        return "handoff"
+    return "in_progress"
+
+
+def _operational_tray_target_tool(tray_action: str) -> str:
+    return {
+        "record_stage_evidence": "record_task_checkpoint",
+        "record_checkpoint": "record_task_checkpoint",
+        "draft_checkpoint": "draft_task_checkpoint",
+        "review_rule_candidates": "get_rule_candidate_review_packet",
+        "list_rule_candidates": "list_rule_candidates",
+    }.get(str(tray_action or "").strip(), "")
 
 
 def _build_replay_bundle(
@@ -3522,6 +4037,96 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             lines.append(f"confirmed_by={data.get('confirmed_by')}")
         lines.append(f"id={data.get('id')}")
         return "\n".join(lines)
+
+    elif name == "project_rule_candidates_from_stenography":
+        payload = {
+            "project": args.get("project") or "supermemory",
+            "limit": int(args.get("limit") or 500),
+        }
+        data = await _post(api_base, "/laws/candidates/project-from-stenography", payload)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    elif name == "list_rule_candidates":
+        params = [f"limit={int(args.get('limit', 100))}"]
+        if args.get("project"):
+            params.append(f"project={args['project']}")
+        if args.get("status"):
+            params.append(f"status={args['status']}")
+        if args.get("source_task_id"):
+            params.append(f"source_task_id={args['source_task_id']}")
+        data = await _get(api_base, f"/laws/candidates?{'&'.join(params)}")
+        items = data.get("items", [])
+        if not items:
+            return "No matching rule candidates."
+        lines = []
+        for i, item in enumerate(items, 1):
+            lines.append(
+                f"{i}. [{item.get('status','?')}] {item.get('statement','')}\n"
+                f"   scope={item.get('scope','?')} project={item.get('project','?')} topic={item.get('topic_path') or '-'}\n"
+                f"   candidate_id={item.get('candidate_id')} source_span_id={item.get('source_span_id')}"
+            )
+        return f"Rule candidates ({data.get('total', len(items))}):\n\n" + "\n\n".join(lines)
+
+    elif name == "get_rule_candidate_review_packet":
+        payload = {
+            "project": args.get("project"),
+            "status": args.get("status", "candidate"),
+            "source_task_id": args.get("source_task_id"),
+            "limit": int(args.get("limit") or 100),
+            "max_matches": int(args.get("max_matches") or 5),
+        }
+        payload = {key: value for key, value in payload.items() if value not in (None, "")}
+        data = await _post(api_base, "/laws/candidates/review-packet", payload)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    elif name == "review_rule_candidate":
+        candidate_id = str(args["candidate_id"]).strip()
+        payload = {
+            "action": str(args["action"]).strip(),
+            "reason": str(args["reason"]).strip(),
+            "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+            "source": str(args.get("source") or "mcp_rule_candidate_review").strip() or "mcp_rule_candidate_review",
+        }
+        data = await _post(api_base, f"/laws/candidates/{candidate_id}/review", payload)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    elif name == "promote_rule_candidate":
+        candidate_id = str(args["candidate_id"]).strip()
+        payload = {
+            "title": args.get("title"),
+            "target_scope": args.get("target_scope"),
+            "status": args.get("status", "proposed"),
+            "reason": str(args["reason"]).strip(),
+            "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+            "source": str(args.get("source") or "mcp_rule_candidate_promotion").strip() or "mcp_rule_candidate_promotion",
+            "confirmed_by": args.get("confirmed_by"),
+            "confirmation_source": args.get("confirmation_source", "mcp_rule_candidate_promotion"),
+        }
+        payload = {key: value for key, value in payload.items() if value not in (None, "")}
+        data = await _post(api_base, f"/laws/candidates/{candidate_id}/promote", payload)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    elif name == "revise_law_from_rule_candidate":
+        candidate_id = str(args["candidate_id"]).strip()
+        payload = {
+            "law_id": str(args["law_id"]).strip(),
+            "reason": str(args["reason"]).strip(),
+            "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+            "source": str(args.get("source") or "mcp_rule_candidate_law_revision").strip()
+            or "mcp_rule_candidate_law_revision",
+            "title": args.get("title"),
+            "statement": args.get("statement"),
+            "rationale": args.get("rationale"),
+            "evidence": args.get("evidence"),
+        }
+        payload = {key: value for key, value in payload.items() if value not in (None, "")}
+        data = await _post(api_base, f"/laws/candidates/{candidate_id}/revise-law", payload)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name == "list_learning_candidates":
         query = build_list_learning_candidates_query(args)
@@ -4188,6 +4793,21 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         query = build_list_artifacts_query(args)
         data = await _get(api_base, f"/artifacts?{query}")
         return json.dumps(data, indent=2, ensure_ascii=False)
+    elif name == "reconcile_completed_checkpoints":
+        payload = build_reconcile_completed_checkpoints_payload(args)
+        data = await _post(api_base, "/artifacts/reconcile-completed-checkpoints", payload)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    elif name == "review_completed_checkpoint_scope":
+        payload = build_review_completed_checkpoint_scope_payload(args)
+        data = await _post(api_base, "/artifacts/completed-checkpoint-scope-review", payload)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    elif name == "review_completed_checkpoint_scopes":
+        payload = build_review_completed_checkpoint_scopes_payload(args)
+        data = await _post(api_base, "/artifacts/completed-checkpoint-scope-review/batch", payload)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
     elif name == "list_open_tasks":
         query = build_list_open_tasks_query(args)
         data = await _get(api_base, f"/artifacts?{query}")
@@ -4428,6 +5048,8 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             except Exception:
                 pass
         data = await _post(api_base, f"/project/tasks/{quote(task_id, safe='')}/changes", payload)
+        if data.get("id"):
+            data["stage_evidence"] = f"checkpoint:{data['id']}"
         handoff_data = None
         handoff_error = None
         if name == "record_task_checkpoint" and stage in _CHECKPOINT_HANDOFF_STAGES:
@@ -4450,9 +5072,11 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                             "next_step": str(args.get("next_step") or "").strip(),
                             "reason": str(args.get("reason") or "").strip(),
                             "recorded_at": time.time(),
+                            "stage_evidence": data.get("stage_evidence", ""),
                         },
                         "task_checkpoint_recorded": True,
                         "task_checkpoint_recorded_at": time.time(),
+                        "stage_evidence": data.get("stage_evidence", ""),
                     },
                 )
             except Exception:
@@ -4943,6 +5567,129 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
     elif name == "enrich_task_with_context":
         data = await _post(api_base, "/project/enrich-task", build_enrich_task_payload(args))
         return format_enrich_task_response(data)
+    elif name == "get_task_execution_context":
+        data = await _post(api_base, "/task-execution-context", build_task_execution_context_payload(args))
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    elif name == "operational_tray":
+        context_payload = build_operational_tray_context_payload(args)
+        context = await _post(api_base, "/task-execution-context", context_payload)
+        action = str(args.get("action") or "inspect").strip().lower()
+        if action == "inspect":
+            data = {
+                "project": context.get("project"),
+                "state": context.get("state"),
+                "task": context.get("task"),
+                "readiness": context.get("readiness") or {},
+                "operation_tray": context.get("operation_tray") or {},
+                "required_rules": context.get("required_rules") or [],
+                "recommended_rules": context.get("recommended_rules") or [],
+                "facade": {
+                    "allowed_actions": [
+                        "record_stage_evidence",
+                        "record_checkpoint",
+                        "draft_checkpoint",
+                        "review_rule_candidates",
+                        "list_rule_candidates",
+                    ],
+                    "catalog_hidden": True,
+                },
+            }
+            data = _annotate_structured_tool_payload(name, data)
+            return json.dumps(data, indent=2, ensure_ascii=False)
+
+        if action != "execute":
+            raise ValueError("operational_tray action must be inspect or execute")
+
+        tray_action = str(args.get("tray_action") or args.get("tool") or "").strip()
+        action_args = args.get("args")
+        if not isinstance(action_args, dict) or not action_args:
+            action_args = args.get("arguments") or {}
+        if not isinstance(action_args, dict):
+            action_args = {}
+        readiness = context.get("readiness") or {}
+        ready_to_enter = bool(readiness.get("ready_to_enter", True))
+        evidence_actions = {"record_stage_evidence", "record_checkpoint", "draft_checkpoint"}
+        if not ready_to_enter and tray_action not in evidence_actions:
+            data = {
+                "blocked": True,
+                "reason": "Readiness gate blocked the requested tray action.",
+                "readiness": readiness,
+                "operation_tray": context.get("operation_tray") or {},
+                "next_allowed_actions": sorted(evidence_actions),
+            }
+            data = _annotate_structured_tool_payload(name, data)
+            return json.dumps(data, indent=2, ensure_ascii=False)
+        if bool(args.get("dry_run", False)):
+            data = {
+                "dry_run": True,
+                "tray_action": tray_action,
+                "readiness": readiness,
+                "operation_tray": context.get("operation_tray") or {},
+                "would_execute": _operational_tray_target_tool(tray_action),
+            }
+            data = _annotate_structured_tool_payload(name, data)
+            return json.dumps(data, indent=2, ensure_ascii=False)
+
+        base_args = {
+            "project": args.get("project", "supermemory"),
+            "task_id": args.get("task_id", ""),
+        }
+        if tray_action == "record_stage_evidence":
+            stage = str(action_args.get("stage") or _checkpoint_stage_for_state(str(args["state"]))).strip()
+            checkpoint_args = {
+                **base_args,
+                **action_args,
+                "stage": stage,
+                "summary": action_args.get("summary") or f"Stage evidence recorded for {args['state']}.",
+                "checkpoint_mode": action_args.get("checkpoint_mode") or "lightweight",
+                "source": action_args.get("source") or "operational_tray",
+                "acted_by": action_args.get("acted_by") or "codex",
+            }
+            return await _execute_tool("record_task_checkpoint", checkpoint_args, api_base, session_id=session_id)
+        if tray_action == "record_checkpoint":
+            checkpoint_args = {
+                **base_args,
+                **action_args,
+                "stage": action_args.get("stage") or _checkpoint_stage_for_state(str(args["state"])),
+                "summary": action_args.get("summary") or f"Checkpoint recorded for {args['state']}.",
+                "source": action_args.get("source") or "operational_tray",
+                "acted_by": action_args.get("acted_by") or "codex",
+            }
+            return await _execute_tool("record_task_checkpoint", checkpoint_args, api_base, session_id=session_id)
+        if tray_action == "draft_checkpoint":
+            draft_args = {
+                **action_args,
+                "project": args.get("project", "supermemory"),
+                "task_id": args.get("task_id", action_args.get("task_id", "")),
+                "task_title": action_args.get("task_title") or str(args.get("task") or "")[:160],
+                "raw_notes": action_args.get("raw_notes") or str(args.get("task") or ""),
+                "stage": action_args.get("stage") or _checkpoint_stage_for_state(str(args["state"])),
+                "status": action_args.get("status") or "active",
+            }
+            return await _execute_tool("draft_task_checkpoint", draft_args, api_base, session_id=session_id)
+        if tray_action == "review_rule_candidates":
+            review_args = {
+                "project": args.get("project", "supermemory"),
+                "status": action_args.get("status", "candidate"),
+                "source_task_id": action_args.get("source_task_id") or args.get("task_id", ""),
+                "limit": action_args.get("limit", 100),
+                "max_matches": action_args.get("max_matches", 5),
+            }
+            return await _execute_tool("get_rule_candidate_review_packet", review_args, api_base, session_id=session_id)
+        if tray_action == "list_rule_candidates":
+            list_args = {
+                "project": args.get("project", "supermemory"),
+                "status": action_args.get("status"),
+                "source_task_id": action_args.get("source_task_id") or args.get("task_id", ""),
+                "limit": action_args.get("limit", 100),
+            }
+            return await _execute_tool("list_rule_candidates", list_args, api_base, session_id=session_id)
+        raise ValueError(f"Unsupported operational_tray tray_action: {tray_action}")
+    elif name == "upsert_knowledge_tree_node":
+        data = await _post(api_base, "/tree/upsert-by-path", build_upsert_knowledge_tree_node_payload(args))
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
     elif name == "get_project_readiness":
         data = await _post(api_base, "/project/readiness", build_project_readiness_payload(args))
         return format_project_readiness_response(data)
@@ -5019,7 +5766,9 @@ async def _auto_record_session(ctx: dict) -> None:
         used_tools = {"memory_store", "memory_search", "memory_context", "record_memory_outcome",
                       "ingest_file", "ingest_dir", "skill_search", "skill_install",
                       "crystallize_solution", "knowledge_hierarchy", "canonicals_by_scope",
+                      "operational_tray",
                       "list_project_laws", "get_project_law",
+                      "project_rule_candidates_from_stenography", "list_rule_candidates", "get_rule_candidate_review_packet", "review_rule_candidate", "promote_rule_candidate", "revise_law_from_rule_candidate",
                       "set_canonical_status", "merge_canonicals"}
         was_active = bool(tools_called & used_tools)
 
@@ -5101,10 +5850,19 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
 
     if method == "initialize":
         # Extract agent identity from clientInfo
-        client_info = msg.get("params", {}).get("clientInfo", {})
+        init_params = msg.get("params", {}) if isinstance(msg.get("params"), dict) else {}
+        client_info = init_params.get("clientInfo", {})
         agent_name = client_info.get("name", "") or ""
         # Normalise: "Claude Code" → "claude-code", "Codex CLI" → "codex"
         agent_id = agent_name.lower().replace(" ", "-") if agent_name else None
+        inferred_modes = _infer_small_context_modes(init_params)
+        requested_tool_catalog_mode = _extract_requested_tool_catalog_mode(init_params)
+        requested_context_hygiene_mode = _extract_requested_context_hygiene_mode(init_params)
+        negotiated_tool_catalog_mode = requested_tool_catalog_mode or str(inferred_modes.get("tool_catalog_mode") or "")
+        negotiated_context_hygiene_mode = requested_context_hygiene_mode or str(inferred_modes.get("context_hygiene_mode") or "")
+        inferred_context_mode = bool(inferred_modes.get("reason")) and (
+            not requested_tool_catalog_mode or not requested_context_hygiene_mode
+        )
 
         if session_id and agent_id:
             from app.services.mcp_session_store import get_session_store
@@ -5119,6 +5877,8 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
                 "pack_id": None,
                 "session_id": session_id,
                 "dialogue_snippets": [],
+                "tool_catalog_mode": negotiated_tool_catalog_mode,
+                "context_hygiene_mode": negotiated_context_hygiene_mode,
             })
 
         result: dict = {
@@ -5128,20 +5888,58 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
         }
         if agent_id:
             result["_supermemory"] = build_supermemory_initialize_hint(agent_id)
+            if negotiated_tool_catalog_mode:
+                result["_supermemory"]["tool_catalog"]["negotiated_mode"] = negotiated_tool_catalog_mode
+                if inferred_context_mode and not requested_tool_catalog_mode:
+                    result["_supermemory"]["tool_catalog"]["inferred"] = True
+                    result["_supermemory"]["tool_catalog"]["inference_reason"] = inferred_modes.get("reason")
+            if negotiated_context_hygiene_mode:
+                result["_supermemory"]["context_hygiene"] = {
+                    "negotiated_mode": negotiated_context_hygiene_mode,
+                    "small_context_behavior": "Tool call JSON responses omit service/debug budget keys from the main payload and expose refs for full/debug replay.",
+                    "full_request": {"arguments": {"context_hygiene_mode": "full"}},
+                }
+                if inferred_context_mode and not requested_context_hygiene_mode:
+                    result["_supermemory"]["context_hygiene"]["inferred"] = True
+                    result["_supermemory"]["context_hygiene"]["inference_reason"] = inferred_modes.get("reason")
+                if inferred_modes.get("model_context_window"):
+                    result["_supermemory"]["context_hygiene"]["model_context_window"] = inferred_modes.get("model_context_window")
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
     elif method in ("initialized", "notifications/initialized"):
         return None  # notification — no response
 
     elif method == "tools/list":
-        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": TOOLS}}
+        params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+        if session_id and not _normalize_tool_catalog_mode(params.get("mode") or params.get("catalog_mode")):
+            try:
+                from app.services.mcp_session_store import get_session_store
+
+                ctx = await get_session_store().get_context(session_id)
+                negotiated_mode = _normalize_tool_catalog_mode((ctx or {}).get("tool_catalog_mode"))
+                if negotiated_mode:
+                    params = {**params, "mode": negotiated_mode}
+            except Exception:
+                pass
+        return {"jsonrpc": "2.0", "id": req_id, "result": _tools_list_payload(params)}
 
     elif method == "tools/call":
         params = msg.get("params", {})
         try:
+            call_args = params.get("arguments", {}) if isinstance(params.get("arguments", {}), dict) else {}
             result_text = await _execute_tool(
-                params.get("name", ""), params.get("arguments", {}), api_base, session_id
+                params.get("name", ""), call_args, api_base, session_id
             )
+            context_hygiene_mode = _extract_requested_context_hygiene_mode(call_args)
+            if not context_hygiene_mode and session_id:
+                try:
+                    from app.services.mcp_session_store import get_session_store
+
+                    ctx = await get_session_store().get_context(session_id)
+                    context_hygiene_mode = _normalize_context_hygiene_mode((ctx or {}).get("context_hygiene_mode"))
+                except Exception:
+                    context_hygiene_mode = ""
+            result_text = _sanitize_tool_result_for_context(result_text, context_hygiene_mode=context_hygiene_mode)
             return _ok(req_id, result_text)
         except httpx.HTTPStatusError as e:
             return _err(req_id, f"HTTP {e.response.status_code}: {e.response.text[:500]}")

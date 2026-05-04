@@ -1,10 +1,14 @@
 import pytest
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 from app.models.law import ProjectLawImportResponse
 from app.services import law_import_service
+from app.services import rule_lifecycle_service, stenographer_service
 from app.services.law_import_service import parse_project_laws_markdown
+from app.services.rule_lifecycle_service import RuleLifecycleStore
+from app.services.stenographer_service import StenographerStore
 
 PREFIX = "/api/v1"
 
@@ -242,6 +246,156 @@ async def test_law_status_change_tracks_explicit_action_metadata(client):
 
 
 @pytest.mark.asyncio
+async def test_review_rule_candidate_endpoint_updates_status(client):
+    from app.services.rule_lifecycle_service import get_rule_lifecycle_store
+
+    store = get_rule_lifecycle_store()
+    candidate = store.create_candidate(
+        {
+            "project": "alpha",
+            "scope": "project",
+            "topic_path": "rules/review",
+            "marker_kind": "rule_project_candidate",
+            "statement": "Agents should reject duplicate rule candidates.",
+            "rationale": "This keeps the governed law pool compact.",
+            "evidence_refs": ["test"],
+            "source_task_id": "task-1",
+            "source_session_id": "sess-1",
+            "source_span_id": "span-review-endpoint",
+            "source_work_id": "work-1",
+            "confidence": 0.8,
+            "promotion_hint": "",
+            "related_rule_hint": None,
+            "status": "candidate",
+        }
+    )
+
+    response = await client.post(
+        f"{PREFIX}/laws/candidates/{candidate.candidate_id}/review",
+        json={
+            "action": "needs_clarification",
+            "reason": "Statement is too broad.",
+            "acted_by": "codex",
+            "source": "test",
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["previous_status"] == "candidate"
+    assert data["new_status"] == "needs_clarification"
+    assert data["candidate"]["last_review_action"] == "needs_clarification"
+    assert data["candidate"]["last_review_reason"] == "Statement is too broad."
+
+
+@pytest.mark.asyncio
+async def test_promote_rule_candidate_endpoint_creates_law_and_records_trace(client):
+    from app.services.rule_lifecycle_service import get_rule_lifecycle_store
+
+    store = get_rule_lifecycle_store()
+    candidate = store.create_candidate(
+        {
+            "project": "alpha",
+            "scope": "canonical_candidate",
+            "topic_path": "agent/task-framing/clarify-before-implementation",
+            "marker_kind": "rule_canonical_candidate",
+            "statement": "Agents must clarify task framing before implementation.",
+            "rationale": "This avoids implementing unresolved requirements.",
+            "evidence_refs": ["test:evidence"],
+            "source_task_id": "task-1",
+            "source_session_id": "sess-1",
+            "source_span_id": "span-promote-endpoint",
+            "source_work_id": "work-1",
+            "confidence": 0.9,
+            "promotion_hint": "",
+            "related_rule_hint": None,
+            "status": "candidate",
+        }
+    )
+
+    response = await client.post(
+        f"{PREFIX}/laws/candidates/{candidate.candidate_id}/promote",
+        json={
+            "title": "Clarify Task Framing Before Implementation",
+            "target_scope": "principle",
+            "status": "proposed",
+            "reason": "Promote after review packet found no duplicate.",
+            "acted_by": "codex",
+            "source": "test",
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["previous_status"] == "candidate"
+    assert data["new_status"] == "suppressed"
+    assert data["law"]["title"] == "Clarify Task Framing Before Implementation"
+    assert data["law"]["scope"] == "principle"
+    assert data["law"]["status"] == "proposed"
+    assert data["candidate"]["promoted_law_id"] == data["law"]["id"]
+    assert data["candidate"]["last_review_action"] == "promote"
+    assert data["candidate"]["promoted_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_revise_law_from_rule_candidate_endpoint_creates_pending_revision(client):
+    from app.services.rule_lifecycle_service import get_rule_lifecycle_store
+
+    created_law = await client.post(f"{PREFIX}/laws", json={
+        "project": "alpha",
+        "title": "Clarify Tasks",
+        "statement": "Agents should clarify tasks.",
+        "rationale": "Avoids confusion.",
+        "agent_id": "codex",
+        "scope": "project",
+        "status": "active",
+        "confirmed_by": "user",
+    })
+    assert created_law.status_code == 201, created_law.text
+    law_id = created_law.json()["id"]
+
+    store = get_rule_lifecycle_store()
+    candidate = store.create_candidate(
+        {
+            "project": "alpha",
+            "scope": "project",
+            "topic_path": "agent/task-framing",
+            "marker_kind": "rule_project_candidate",
+            "statement": "Agents must clarify task framing before implementation and present best options.",
+            "rationale": "This avoids implementing unresolved requirements.",
+            "evidence_refs": ["test:evidence"],
+            "source_task_id": "task-1",
+            "source_session_id": "sess-1",
+            "source_span_id": "span-revise-law-endpoint",
+            "source_work_id": "work-1",
+            "confidence": 0.9,
+            "promotion_hint": "",
+            "related_rule_hint": law_id,
+            "status": "candidate",
+        }
+    )
+
+    response = await client.post(
+        f"{PREFIX}/laws/candidates/{candidate.candidate_id}/revise-law",
+        json={
+            "law_id": law_id,
+            "reason": "Candidate improves the existing law.",
+            "acted_by": "codex",
+            "source": "test",
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["previous_status"] == "candidate"
+    assert data["new_status"] == "revision_pending"
+    assert data["candidate"]["revised_law_id"] == law_id
+    assert data["candidate"]["last_review_action"] == "revise_existing_law"
+    assert data["law"]["status"] == "active"
+    assert data["law"]["statement"] == "Agents should clarify tasks."
+    assert data["law"]["candidate_revision"]["statement"] == (
+        "Agents must clarify task framing before implementation and present best options."
+    )
+
+
+@pytest.mark.asyncio
 async def test_material_revision_creates_candidate_while_active_law_remains_effective(client):
     created = await client.post(f"{PREFIX}/laws", json={
         "project": "alpha",
@@ -335,3 +489,50 @@ async def test_import_project_laws_from_markdown_is_repeatable(client, tmp_path)
     assert listed.status_code == 200
     data = listed.json()
     assert data["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_rule_candidate_projection_endpoint_uses_stenographer_markers(client, monkeypatch):
+    stenographer = StenographerStore(Path(":memory:"))
+    lifecycle = RuleLifecycleStore(Path(":memory:"))
+    monkeypatch.setattr(stenographer_service, "_STORE", stenographer)
+    monkeypatch.setattr(rule_lifecycle_service, "_STORE", lifecycle)
+    try:
+        stenographer.start_work_session(
+            project="alpha",
+            task_id="task-rule",
+            agent_id="codex",
+            session_id="sess-rule",
+            work_id="work-rule",
+        )
+        stenographer.record_span(
+            project="alpha",
+            task_id="task-rule",
+            agent_id="codex",
+            session_id="sess-rule",
+            kind="rule_project_candidate",
+            source="reasoning_marker",
+            content=json.dumps({
+                "statement": "Alpha tests must use the declared Docker test contour.",
+                "rationale": "This keeps test storage isolated from live data.",
+                "topic_path": "testing/contour",
+                "confidence": 0.85,
+            }),
+        )
+
+        projected = await client.post(f"{PREFIX}/laws/candidates/project-from-stenography", json={"project": "alpha"})
+        assert projected.status_code == 200, projected.text
+        body = projected.json()
+        assert body["created_candidates"] == 1
+        assert body["candidates"][0]["status"] == "candidate"
+
+        listed = await client.get(f"{PREFIX}/laws/candidates?project=alpha")
+        assert listed.status_code == 200
+        listed_body = listed.json()
+        assert listed_body["total"] == 1
+        assert listed_body["items"][0]["statement"] == "Alpha tests must use the declared Docker test contour."
+    finally:
+        stenographer.close()
+        lifecycle.close()
+        monkeypatch.setattr(stenographer_service, "_STORE", None)
+        monkeypatch.setattr(rule_lifecycle_service, "_STORE", None)

@@ -22,6 +22,7 @@ from app.models.stenographer import (
 _DB_PATH = Path("qdrant_data") / "stenographer.db"
 _VALID_SPAN_KINDS = set(re.findall(r"\w+", STENOGRAPHER_KIND_PATTERN.split("^(", 1)[1].split(")$", 1)[0]))
 _VALID_TERMINAL_STATUSES = WORK_SESSION_TERMINAL_STATUSES
+_COMPLETED_CLOSEOUT_KINDS = ("verification", "changed_files", "next_step")
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS work_sessions (
@@ -211,6 +212,32 @@ class StenographerStore:
             row = self._conn.execute("SELECT * FROM work_sessions WHERE work_id = ?", (work_id,)).fetchone()
         return self._row_to_work(row) if row else None
 
+    def _closeout_review(self, work: WorkSessionRecord | None) -> dict[str, object]:
+        if work is None:
+            return {"required": False, "ready": False, "missing": [], "evidence": {}}
+        evidence: dict[str, list[str]] = {kind: [] for kind in _COMPLETED_CLOSEOUT_KINDS}
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT span_id, kind FROM stenographer_spans
+                 WHERE work_id = ? AND status = 'active'
+                   AND kind IN ('verification', 'changed_files', 'next_step')
+                 ORDER BY created_at ASC
+                """,
+                (work.work_id,),
+            ).fetchall()
+        for row in rows:
+            kind = str(row["kind"])
+            if kind in evidence:
+                evidence[kind].append(str(row["span_id"]))
+        missing = [kind for kind, span_ids in evidence.items() if not span_ids]
+        return {
+            "required": True,
+            "ready": not missing,
+            "missing": missing,
+            "evidence": evidence,
+        }
+
     def get_state(self, *, agent_id: str, session_id: str) -> WorkSessionState:
         active = self._active_work(agent_id=agent_id, session_id=session_id)
         with self._lock:
@@ -236,6 +263,10 @@ class StenographerStore:
                 "get_work_session_state",
             ],
         }[state]
+        closeout = self._closeout_review(active) if active else {"required": False, "ready": False, "missing": [], "evidence": {}}
+        protocol_violations = []
+        if active and closeout["missing"]:
+            protocol_violations.append("closeout_incomplete")
         return WorkSessionState(
             project=active.project if active else (parked[0].project if parked else ""),
             task_id=active.task_id if active else (parked[0].task_id if parked else ""),
@@ -245,6 +276,11 @@ class StenographerStore:
             active_work=active,
             parked_stack=parked,
             next_valid_tools=next_tools,
+            protocol_violations=protocol_violations,
+            closeout_required=bool(closeout["required"]),
+            closeout_ready=bool(closeout["ready"]),
+            closeout_missing=list(closeout["missing"]),  # type: ignore[arg-type]
+            closeout_evidence=closeout["evidence"],  # type: ignore[arg-type]
         )
 
     def start_work_session(
@@ -407,6 +443,18 @@ class StenographerStore:
                 required_next_tool="get_work_session_state",
                 state=self.get_state(agent_id=agent_id, session_id=session_id).model_dump(mode="json"),
             )
+        if status == "completed":
+            closeout = self._closeout_review(current)
+            if not closeout["ready"]:
+                raise ProtocolViolation(
+                    "closeout_required",
+                    "Completed work requires explicit closeout evidence: verification, changed_files, and next_step spans.",
+                    required_next_tool="record_stenographer_span",
+                    state={
+                        **self.get_state(agent_id=agent_id, session_id=session_id).model_dump(mode="json"),
+                        "closeout_missing": closeout["missing"],
+                    },
+                )
         now = _ts()
         with self._lock:
             self._conn.execute(
@@ -517,6 +565,37 @@ class StenographerStore:
         with self._lock:
             rows = self._conn.execute(
                 f"SELECT * FROM stenographer_spans {where} ORDER BY created_at DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [self._row_to_span(row) for row in rows]
+
+    def list_spans_after(
+        self,
+        *,
+        since_ts: float,
+        kinds: Iterable[str] | None = None,
+        project: str | None = None,
+        limit: int = 500,
+    ) -> list[StenographerSpanRecord]:
+        clauses = ["created_at > ?"]
+        params: list[object] = [float(since_ts)]
+        clean_kinds = [_clean_text(kind, 64) for kind in (kinds or []) if _clean_text(kind, 64)]
+        if clean_kinds:
+            placeholders = ",".join("?" for _ in clean_kinds)
+            clauses.append(f"kind IN ({placeholders})")
+            params.extend(clean_kinds)
+        if project:
+            clauses.append("project = ?")
+            params.append(project)
+        params.append(max(1, min(int(limit), 2000)))
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT * FROM stenographer_spans
+                 WHERE {' AND '.join(clauses)}
+                 ORDER BY created_at ASC
+                 LIMIT ?
+                """,
                 params,
             ).fetchall()
         return [self._row_to_span(row) for row in rows]

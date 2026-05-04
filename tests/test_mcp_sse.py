@@ -32,6 +32,299 @@ class TestMcpDiscovery:
 
 
 class TestMcpToolExecution:
+    async def test_tools_list_defaults_to_full_catalog_for_compatibility(self):
+        response = await mcp_sse._handle(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            "http://test",
+        )
+
+        tools = response["result"]["tools"]
+        assert len(tools) == len(mcp_sse.TOOLS)
+        assert any(tool["name"] == "operational_tray" for tool in tools)
+
+    async def test_tools_list_compact_catalog_surfaces_operational_tray_first(self):
+        response = await mcp_sse._handle(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"mode": "compact", "limit": 4}},
+            "http://test",
+        )
+
+        result = response["result"]
+        names = [tool["name"] for tool in result["tools"]]
+        assert names[0] == "operational_tray"
+        assert len(names) == 4
+        assert len(names) < len(mcp_sse.TOOLS)
+        assert result["_supermemory"]["catalog_mode"] == "compact"
+        assert result["_supermemory"]["schema_mode"] == "summary"
+        assert result["_supermemory"]["recommended_first_tool"] == "operational_tray"
+        assert result["_supermemory"]["full_catalog_available"] is True
+        assert "inputSummary" in result["tools"][0]
+        assert "inputSchema" not in result["tools"][0]
+
+    async def test_tools_list_compact_can_request_full_schemas(self):
+        response = await mcp_sse._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": {"mode": "compact", "limit": 2, "schema_mode": "full"},
+            },
+            "http://test",
+        )
+
+        result = response["result"]
+        assert result["_supermemory"]["catalog_mode"] == "compact"
+        assert result["_supermemory"]["schema_mode"] == "full"
+        assert "inputSchema" in result["tools"][0]
+        assert "inputSummary" not in result["tools"][0]
+
+    async def test_initialize_can_negotiate_compact_tools_list_default(self):
+        session_id = "sess-compact-tools-list"
+        initialized = await mcp_sse._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "Codex CLI"},
+                    "_supermemory": {"tool_catalog": {"preferred_mode": "compact"}},
+                },
+            },
+            "http://test",
+            session_id=session_id,
+        )
+        assert initialized["result"]["_supermemory"]["tool_catalog"]["negotiated_mode"] == "compact"
+
+        response = await mcp_sse._handle(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            "http://test",
+            session_id=session_id,
+        )
+        result = response["result"]
+        names = [tool["name"] for tool in result["tools"]]
+        assert names[0] == "operational_tray"
+        assert result["_supermemory"]["catalog_mode"] == "compact"
+        assert result["_supermemory"]["schema_mode"] == "summary"
+        assert "inputSummary" in result["tools"][0]
+        assert "inputSchema" not in result["tools"][0]
+        assert len(names) < len(mcp_sse.TOOLS)
+
+        full = await mcp_sse._handle(
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {"mode": "full"}},
+            "http://test",
+            session_id=session_id,
+        )
+        assert len(full["result"]["tools"]) == len(mcp_sse.TOOLS)
+        assert "_supermemory" not in full["result"]
+
+    async def test_initialize_can_negotiate_compact_tools_list_via_capabilities(self):
+        session_id = "sess-compact-tools-list-capabilities"
+        initialized = await mcp_sse._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "Codex CLI"},
+                    "capabilities": {
+                        "experimental": {
+                            "supermemory": {
+                                "tool_catalog_mode": "compact",
+                            }
+                        }
+                    },
+                },
+            },
+            "http://test",
+            session_id=session_id,
+        )
+        assert initialized["result"]["_supermemory"]["tool_catalog"]["negotiated_mode"] == "compact"
+
+        response = await mcp_sse._handle(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            "http://test",
+            session_id=session_id,
+        )
+        assert response["result"]["_supermemory"]["catalog_mode"] == "compact"
+
+    async def test_initialize_can_negotiate_small_context_hygiene(self):
+        session_id = "sess-small-context-hygiene"
+        initialized = await mcp_sse._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "Small Model Agent"},
+                    "_supermemory": {
+                        "tool_catalog": {"preferred_mode": "compact"},
+                        "context": {"hygiene_mode": "small_context"},
+                    },
+                },
+            },
+            "http://test",
+            session_id=session_id,
+        )
+
+        assert initialized["result"]["_supermemory"]["context_hygiene"]["negotiated_mode"] == "small_context"
+
+    async def test_initialize_infers_small_context_from_model_window(self):
+        session_id = "sess-small-context-window"
+        initialized = await mcp_sse._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "Small Window Agent"},
+                    "modelInfo": {"name": "local-dev-model", "contextWindow": 32000},
+                },
+            },
+            "http://test",
+            session_id=session_id,
+        )
+
+        info = initialized["result"]["_supermemory"]
+        assert info["tool_catalog"]["negotiated_mode"] == "compact"
+        assert info["tool_catalog"]["inferred"] is True
+        assert info["context_hygiene"]["negotiated_mode"] == "small_context"
+        assert info["context_hygiene"]["inferred"] is True
+        assert info["context_hygiene"]["model_context_window"] == 32000
+
+        listed = await mcp_sse._handle(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            "http://test",
+            session_id=session_id,
+        )
+        assert listed["result"]["_supermemory"]["catalog_mode"] == "compact"
+        assert listed["result"]["_supermemory"]["schema_mode"] == "summary"
+        assert "inputSummary" in listed["result"]["tools"][0]
+        assert "inputSchema" not in listed["result"]["tools"][0]
+
+    async def test_initialize_infers_small_context_from_model_profile(self):
+        initialized = await mcp_sse._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "Local SLM Agent"},
+                    "agent_profile": "local-slm",
+                },
+            },
+            "http://test",
+            session_id="sess-small-context-profile",
+        )
+
+        info = initialized["result"]["_supermemory"]
+        assert info["tool_catalog"]["negotiated_mode"] == "compact"
+        assert info["context_hygiene"]["negotiated_mode"] == "small_context"
+        assert info["context_hygiene"]["inference_reason"] == "small_model_profile"
+
+    async def test_initialize_explicit_full_overrides_small_window_inference(self):
+        initialized = await mcp_sse._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": "Debug Agent"},
+                    "modelInfo": {"contextWindow": 32000},
+                    "_supermemory": {
+                        "tool_catalog": {"preferred_mode": "full"},
+                        "context": {"hygiene_mode": "full"},
+                    },
+                },
+            },
+            "http://test",
+            session_id="sess-small-context-full-override",
+        )
+
+        info = initialized["result"]["_supermemory"]
+        assert info["tool_catalog"]["negotiated_mode"] == "full"
+        assert "inferred" not in info["tool_catalog"]
+        assert info["context_hygiene"]["negotiated_mode"] == "full"
+        assert "inferred" not in info["context_hygiene"]
+
+    async def test_tools_call_small_context_hides_service_keys(self, monkeypatch):
+        async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
+            return json.dumps(
+                {
+                    "project": "alpha",
+                    "state": "documentation",
+                    "readiness": {"ready_to_enter": True},
+                    "required_rules": [
+                        {
+                            "id": "law-1",
+                            "title": "Internal Text Is English",
+                            "scope": "principle",
+                            "status": "active",
+                            "rationale": "Long service-facing rationale.",
+                            "reason": "Matched required terms.",
+                        }
+                    ],
+                    "token_budget": {"estimated_tokens": 15000},
+                    "token_overhead": {"estimated_tokens": 15000},
+                    "coverage": {"active_laws_seen": 42},
+                    "feedback_expected": True,
+                    "follow_up": "tool_feedback",
+                },
+                ensure_ascii=False,
+            )
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute_tool)
+        response = await mcp_sse._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_task_execution_context",
+                    "arguments": {"task": "Document architecture.", "state": "documentation", "context_hygiene_mode": "small"},
+                },
+            },
+            "http://test",
+        )
+
+        text = response["result"]["content"][0]["text"]
+        data = json.loads(text)
+        assert "token_budget" not in data
+        assert "token_overhead" not in data
+        assert "coverage" not in data
+        assert "feedback_expected" not in data
+        assert data["required_rules"][0] == {
+            "id": "law-1",
+            "title": "Internal Text Is English",
+            "scope": "principle",
+            "status": "active",
+            "reason": "Matched required terms.",
+        }
+        assert data["_supermemory_refs"]["mode"] == "small_context"
+        assert data["_supermemory_refs"]["omitted_service_fields"] >= 1
+        assert "full_response" in data["_supermemory_refs"]
+
+    async def test_tools_call_full_context_keeps_service_keys(self, monkeypatch):
+        async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
+            return json.dumps({"project": "alpha", "token_budget": {"estimated_tokens": 15000}, "feedback_expected": True})
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute_tool)
+        response = await mcp_sse._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_task_execution_context",
+                    "arguments": {"task": "Document architecture.", "state": "documentation", "context_hygiene_mode": "full"},
+                },
+            },
+            "http://test",
+        )
+
+        text = response["result"]["content"][0]["text"]
+        data = json.loads(text)
+        assert data["token_budget"]["estimated_tokens"] == 15000
+        assert data["feedback_expected"] is True
+
     def test_sse_handoff_task_exposes_bounded_ownership_fields(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "handoff_task")
         props = tool["inputSchema"]["properties"]
@@ -45,6 +338,21 @@ class TestMcpToolExecution:
         assert "project" in props
         assert "limit" in props
         assert "status" not in props
+
+    def test_reconcile_completed_checkpoints_tool_is_exposed_report_only_by_default(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "reconcile_completed_checkpoints")
+        props = tool["inputSchema"]["properties"]
+        assert props["close"]["default"] is False
+        assert props["close_policy"]["default"] == "strict"
+        assert "project" in props
+        review_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "review_completed_checkpoint_scope")
+        review_props = review_tool["inputSchema"]["properties"]
+        assert "task_id" in review_tool["inputSchema"]["required"]
+        assert "next_step_scope" in review_tool["inputSchema"]["required"]
+        assert "follow_up_task" in review_props["next_step_scope"]["enum"]
+        batch_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "review_completed_checkpoint_scopes")
+        assert "decisions" in batch_tool["inputSchema"]["required"]
+        assert batch_tool["inputSchema"]["properties"]["decisions"]["maxItems"] == 50
 
     def test_normalize_mcp_intent_tool_is_exposed(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "normalize_mcp_intent")
@@ -61,7 +369,542 @@ class TestMcpToolExecution:
 
     def test_tool_discovery_family_tools_are_exposed(self):
         names = {tool["name"] for tool in mcp_sse.TOOLS}
-        assert {"list_tool_families", "tool_family_tools", "tool_explain", "tool_recommend", "tool_feedback", "continue_task", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint"} <= names
+        assert {"list_tool_families", "tool_family_tools", "tool_explain", "tool_recommend", "tool_feedback", "continue_task", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "get_task_execution_context", "operational_tray"} <= names
+
+    def test_operational_tray_tool_is_state_aware_facade(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "operational_tray")
+        schema = tool["inputSchema"]
+        assert {"task", "state", "action"} <= set(schema["required"])
+        assert schema["properties"]["action"]["enum"] == ["inspect", "execute"]
+        assert "record_stage_evidence" in schema["properties"]["tray_action"]["enum"]
+        assert "args" in schema["properties"]
+        assert "tool" in schema["properties"]
+        assert "arguments" in schema["properties"]
+
+    def test_upsert_knowledge_tree_node_tool_is_exposed(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "upsert_knowledge_tree_node")
+        schema = tool["inputSchema"]
+        assert {"topic_path", "title"} <= set(schema["required"])
+        assert "responsibility" in schema["properties"]
+        assert "projection_targets" in schema["properties"]
+
+    def test_task_execution_context_tool_is_state_scoped(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "get_task_execution_context")
+        schema = tool["inputSchema"]
+        assert {"task", "state"} <= set(schema["required"])
+        assert "verification" in schema["properties"]["state"]["enum"]
+        assert "live_validation" in schema["properties"]["state"]["enum"]
+        assert "documentation" in schema["properties"]["state"]["enum"]
+        assert "stage_evidence" in schema["properties"]
+        assert "prior_stage_recorded" in schema["properties"]
+
+    async def test_task_execution_context_tool_posts_state_payload(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "project": payload["project"],
+                "state": payload["state"],
+                "task": payload["task"],
+                "required_rules": [],
+                "recommended_rules": [],
+                "recommended_tools": [],
+                "risk_controls": [],
+                "expected_outputs": [],
+                "next_transitions": [],
+                "rationale": "test",
+                "coverage": {},
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "get_task_execution_context",
+            {
+                "project": "alpha",
+                "task": "Verify server change",
+                "state": "verification",
+                "changed_files": ["app/main.py"],
+                "stage_evidence": ["checkpoint:implementation-1"],
+                "prior_stage_recorded": True,
+            },
+            "http://test",
+        )
+
+        assert posted[0][0] == "/task-execution-context"
+        assert posted[0][1]["state"] == "verification"
+        assert posted[0][1]["changed_files"] == ["app/main.py"]
+        assert posted[0][1]["stage_evidence"] == ["checkpoint:implementation-1"]
+        assert posted[0][1]["prior_stage_recorded"] is True
+        assert '"stage": "testing"' in result
+
+    async def test_operational_tray_inspect_posts_context_request(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "project": payload["project"],
+                "state": payload["state"],
+                "task": payload["task"],
+                "readiness": {"ready_to_enter": True},
+                "operation_tray": {"primary_tools": ["record_task_checkpoint"]},
+                "required_rules": [],
+                "recommended_rules": [],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "operational_tray",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "task": "Inspect current tray.",
+                "state": "implementation",
+                "action": "inspect",
+                "stage_evidence": ["checkpoint:planning-1"],
+            },
+            "http://test",
+        )
+
+        assert posted == [
+            (
+                "/task-execution-context",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "task": "Inspect current tray.",
+                    "state": "implementation",
+                    "intent": "",
+                    "changed_files": [],
+                    "stage_evidence": ["checkpoint:planning-1"],
+                    "include_tools": True,
+                    "include_rules": True,
+                },
+            )
+        ]
+        assert '"catalog_hidden": true' in result
+        assert '"stage": "testing"' in result
+
+    async def test_operational_tray_blocks_non_evidence_action_when_not_ready(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "project": payload["project"],
+                "state": payload["state"],
+                "task": payload["task"],
+                "readiness": {
+                    "ready_to_enter": False,
+                    "missing_prerequisites": ["task_framing_not_recorded"],
+                },
+                "operation_tray": {"primary_tools": ["record_task_checkpoint"]},
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "operational_tray",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "task": "Review rule candidates.",
+                "state": "implementation",
+                "action": "execute",
+                "tray_action": "review_rule_candidates",
+            },
+            "http://test",
+        )
+
+        assert posted[0][0] == "/task-execution-context"
+        assert len(posted) == 1
+        assert '"blocked": true' in result
+        assert "task_framing_not_recorded" in result
+
+    async def test_operational_tray_executes_record_stage_evidence(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            if path == "/task-execution-context":
+                return {
+                    "project": payload["project"],
+                    "state": payload["state"],
+                    "task": payload["task"],
+                    "readiness": {
+                        "ready_to_enter": False,
+                        "missing_prerequisites": ["task_framing_not_recorded"],
+                    },
+                    "operation_tray": {"primary_tools": ["record_task_checkpoint"]},
+                }
+            return {"id": "change-1", "task_id": "task-1", "stage": "planning", "status": "planning"}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        result = await mcp_sse._execute_tool(
+            "operational_tray",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "task": "Record framing evidence.",
+                "state": "implementation",
+                "action": "execute",
+                "tray_action": "record_stage_evidence",
+                "args": {
+                    "stage": "planning",
+                    "summary": "Task framing recorded.",
+                },
+            },
+            "http://test",
+        )
+
+        assert posted[0][0] == "/task-execution-context"
+        assert posted[1][0] == "/project/tasks/task-1/changes"
+        assert "checkpoint_mode:lightweight" in posted[1][1]["tags"]
+        assert "Checkpoint recorded for task task-1" in result
+        assert "stage_evidence=checkpoint:change-1" in result
+
+    async def test_operational_tray_executes_checkpoint_with_documentation_state_aliases(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            if path == "/task-execution-context":
+                return {
+                    "project": payload["project"],
+                    "state": payload["state"],
+                    "task": payload["task"],
+                    "readiness": {"ready_to_enter": True},
+                    "operation_tray": {"primary_tools": ["record_task_checkpoint"]},
+                }
+            return {"id": "change-doc-1", "task_id": "task-1", "stage": "completed", "status": "done"}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        result = await mcp_sse._execute_tool(
+            "operational_tray",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "task": "Record documentation stage evidence.",
+                "state": "documentation",
+                "action": "execute",
+                "tool": "record_checkpoint",
+                "arguments": {
+                    "stage": "completed",
+                    "summary": "Documentation projection knowledge recorded.",
+                    "status": "done",
+                },
+                "stage_evidence": ["checkpoint:planning-1"],
+                "prior_stage_recorded": True,
+            },
+            "http://test",
+        )
+
+        assert posted[0] == (
+            "/task-execution-context",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "task": "Record documentation stage evidence.",
+                "state": "documentation",
+                "intent": "",
+                "changed_files": [],
+                "stage_evidence": ["checkpoint:planning-1"],
+                "include_tools": True,
+                "include_rules": True,
+                "prior_stage_recorded": True,
+            },
+        )
+        assert posted[1][0] == "/project/tasks/task-1/changes"
+        assert "task_stage:completed" in posted[1][1]["tags"]
+        assert "task_status:done" in posted[1][1]["tags"]
+        assert posted[1][1]["source"] == "operational_tray"
+        assert "stage_evidence=checkpoint:change-doc-1" in result
+
+    async def test_upsert_knowledge_tree_node_tool_posts_structured_payload(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "created": True,
+                "node_id": "node-1",
+                "topic_path": payload["topic_path"],
+                "node": {
+                    "id": "node-1",
+                    "title": payload["title"],
+                    "topic_path": payload["topic_path"],
+                    "meta_json": {"structured_knowledge": {"responsibility": payload["responsibility"]}},
+                },
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "upsert_knowledge_tree_node",
+            {
+                "topic_path": "supermemory/architecture/mcp/compact-discovery",
+                "title": "Compact MCP Discovery",
+                "responsibility": "Expose a small MCP catalog before the full flat tool list.",
+                "runtime_entrypoints": ["initialize", "tools/list"],
+                "projection_targets": ["README.md"],
+                "evidence_refs": ["checkpoint:abc"],
+            },
+            "http://test",
+        )
+
+        assert posted[0][0] == "/tree/upsert-by-path"
+        assert posted[0][1]["topic_path"] == "supermemory/architecture/mcp/compact-discovery"
+        assert posted[0][1]["type"] == "area"
+        assert posted[0][1]["source"] == "mcp_upsert_knowledge_tree_node"
+        assert '"created": true' in result
+        assert '"stage": "testing"' in result
+
+    def test_rule_candidate_tools_are_exposed(self):
+        names = {tool["name"] for tool in mcp_sse.TOOLS}
+        assert {"project_rule_candidates_from_stenography", "list_rule_candidates", "get_rule_candidate_review_packet"} <= names
+
+    async def test_project_rule_candidates_tool_posts_projection_request(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "scanned_spans": 1,
+                "created_candidates": 1,
+                "skipped_spans": 0,
+                "errors": [],
+                "last_processed_timestamp": 1.0,
+                "candidates": [],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "project_rule_candidates_from_stenography",
+            {"project": "alpha", "limit": 25},
+            "http://test",
+        )
+
+        assert posted == [("/laws/candidates/project-from-stenography", {"project": "alpha", "limit": 25})]
+        assert '"created_candidates": 1' in result
+        assert '"stage": "testing"' in result
+
+    async def test_list_rule_candidates_tool_formats_candidates(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {
+                "total": 1,
+                "items": [
+                    {
+                        "candidate_id": "candidate-1",
+                        "project": "alpha",
+                        "scope": "project",
+                        "topic_path": "testing/contour",
+                        "status": "candidate",
+                        "statement": "Use Docker test contour.",
+                        "source_span_id": "span-1",
+                    }
+                ],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        result = await mcp_sse._execute_tool(
+            "list_rule_candidates",
+            {"project": "alpha", "status": "candidate", "source_task_id": "task-1", "limit": 10},
+            "http://test",
+        )
+
+        assert seen["path"] == "/laws/candidates?limit=10&project=alpha&status=candidate&source_task_id=task-1"
+        assert "Use Docker test contour." in result
+        assert "candidate_id=candidate-1" in result
+
+    async def test_get_rule_candidate_review_packet_tool_posts_review_request(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "project": payload["project"],
+                "total_candidates": 0,
+                "items": [],
+                "risk_controls": [],
+                "next_actions": [],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "get_rule_candidate_review_packet",
+            {"project": "alpha", "status": "candidate", "source_task_id": "task-1", "limit": 10, "max_matches": 3},
+            "http://test",
+        )
+
+        assert posted == [
+            (
+                "/laws/candidates/review-packet",
+                {
+                    "project": "alpha",
+                    "status": "candidate",
+                    "source_task_id": "task-1",
+                    "limit": 10,
+                    "max_matches": 3,
+                },
+            )
+        ]
+        assert '"total_candidates": 0' in result
+        assert '"stage": "testing"' in result
+
+    async def test_review_rule_candidate_tool_posts_safe_action(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "candidate": {
+                    "candidate_id": "candidate-1",
+                    "status": "rejected",
+                    "project": "alpha",
+                    "scope": "project",
+                    "marker_kind": "rule_project_candidate",
+                    "statement": "Duplicate rule.",
+                    "source_span_id": "span-1",
+                    "created_at": "2026-04-29T00:00:00Z",
+                    "updated_at": "2026-04-29T00:00:00Z",
+                },
+                "previous_status": "candidate",
+                "new_status": "rejected",
+                "action": payload["action"],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "review_rule_candidate",
+            {
+                "candidate_id": "candidate-1",
+                "action": "reject",
+                "reason": "Duplicate of active law.",
+                "acted_by": "codex",
+            },
+            "http://test",
+        )
+
+        assert posted == [
+            (
+                "/laws/candidates/candidate-1/review",
+                {
+                    "action": "reject",
+                    "reason": "Duplicate of active law.",
+                    "acted_by": "codex",
+                    "source": "mcp_rule_candidate_review",
+                },
+            )
+        ]
+        assert '"new_status": "rejected"' in result
+        assert '"stage": "testing"' in result
+
+    async def test_promote_rule_candidate_tool_posts_promotion_request(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "candidate": {
+                    "candidate_id": "candidate-1",
+                    "status": "suppressed",
+                    "project": "alpha",
+                    "scope": "canonical_candidate",
+                    "marker_kind": "rule_canonical_candidate",
+                    "statement": "Clarify task framing.",
+                    "source_span_id": "span-1",
+                    "promoted_law_id": "law-1",
+                    "created_at": "2026-04-29T00:00:00Z",
+                    "updated_at": "2026-04-29T00:00:00Z",
+                },
+                "law": {"id": "law-1", "title": payload["title"], "status": payload["status"]},
+                "previous_status": "candidate",
+                "new_status": "suppressed",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "promote_rule_candidate",
+            {
+                "candidate_id": "candidate-1",
+                "title": "Clarify Task Framing Before Implementation",
+                "target_scope": "principle",
+                "status": "proposed",
+                "reason": "No duplicate in review packet.",
+                "acted_by": "codex",
+            },
+            "http://test",
+        )
+
+        assert posted == [
+            (
+                "/laws/candidates/candidate-1/promote",
+                {
+                    "title": "Clarify Task Framing Before Implementation",
+                    "target_scope": "principle",
+                    "status": "proposed",
+                    "reason": "No duplicate in review packet.",
+                    "acted_by": "codex",
+                    "source": "mcp_rule_candidate_promotion",
+                    "confirmation_source": "mcp_rule_candidate_promotion",
+                },
+            )
+        ]
+        assert '"promoted_law_id": "law-1"' in result
+        assert '"stage": "testing"' in result
+
+    async def test_revise_law_from_rule_candidate_tool_posts_revision_request(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "candidate": {
+                    "candidate_id": "candidate-1",
+                    "status": "revision_pending",
+                    "project": "alpha",
+                    "scope": "project",
+                    "marker_kind": "rule_project_candidate",
+                    "statement": "Clarify task framing.",
+                    "source_span_id": "span-1",
+                    "revised_law_id": payload["law_id"],
+                    "created_at": "2026-04-29T00:00:00Z",
+                    "updated_at": "2026-04-29T00:00:00Z",
+                },
+                "law": {"id": payload["law_id"], "status": "active", "candidate_revision": {}},
+                "previous_status": "candidate",
+                "new_status": "revision_pending",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "revise_law_from_rule_candidate",
+            {
+                "candidate_id": "candidate-1",
+                "law_id": "law-1",
+                "reason": "Candidate improves existing law.",
+                "acted_by": "codex",
+            },
+            "http://test",
+        )
+
+        assert posted == [
+            (
+                "/laws/candidates/candidate-1/revise-law",
+                {
+                    "law_id": "law-1",
+                    "reason": "Candidate improves existing law.",
+                    "acted_by": "codex",
+                    "source": "mcp_rule_candidate_law_revision",
+                },
+            )
+        ]
+        assert '"new_status": "revision_pending"' in result
+        assert '"stage": "testing"' in result
 
     def test_draft_task_checkpoint_tool_is_review_only(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "draft_task_checkpoint")
@@ -69,6 +912,12 @@ class TestMcpToolExecution:
         assert "raw_notes" in tool["inputSchema"]["required"]
         assert props["use_llm"]["default"] is True
         assert "raw_notes" in props
+        checkpoint_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "record_task_checkpoint")
+        assert "next_step_scope" in checkpoint_tool["inputSchema"]["properties"]
+        checkpoint_props = checkpoint_tool["inputSchema"]["properties"]
+        assert checkpoint_props["checkpoint_mode"]["default"] == "standard"
+        assert "lightweight" in checkpoint_props["checkpoint_mode"]["enum"]
+        assert "stage_evidence_refs" in checkpoint_props
 
     def test_stenographer_work_session_tools_are_exposed(self):
         names = {tool["name"] for tool in mcp_sse.TOOLS}
@@ -81,6 +930,8 @@ class TestMcpToolExecution:
             "record_stenographer_span",
             "list_stenographer_spans",
         } <= names
+        record_span_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "record_stenographer_span")
+        assert "changed_files" in record_span_tool["inputSchema"]["properties"]["kind"]["enum"]
 
     def test_checkpoint_draft_approval_tools_are_exposed(self):
         names = {tool["name"] for tool in mcp_sse.TOOLS}
@@ -91,6 +942,10 @@ class TestMcpToolExecution:
             "approve_checkpoint_draft",
             "reject_checkpoint_draft",
         } <= names
+        draft_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "draft_checkpoint_from_spans")
+        props = draft_tool["inputSchema"]["properties"]
+        assert props["preserve_evidence"]["default"] is False
+        assert "preserve_evidence" in props["mode"]["enum"]
 
     def test_tool_feedback_schema_exposes_evaluation_envelope_fields(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "tool_feedback")
@@ -301,6 +1156,141 @@ class TestMcpToolExecution:
         assert "updated_after=2026-04-17T00%3A00%3A00%2B04%3A00" in seen["path"]
         assert "updated_before=2026-04-18T00%3A00%3A00%2B04%3A00" in seen["path"]
 
+    async def test_reconcile_completed_checkpoints_tool_posts_report_only_by_default(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "project": payload["project"],
+                "scanned_tasks": 1,
+                "candidates": [],
+                "closed_artifact_keys": [],
+                "skipped_artifact_keys": [],
+                "errors": [],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool(
+            "reconcile_completed_checkpoints",
+            {"project": "alpha"},
+            "http://test",
+        )
+
+        assert posted == [
+            (
+                "/artifacts/reconcile-completed-checkpoints",
+                {
+                    "project": "alpha",
+                    "close": False,
+                    "close_policy": "strict",
+                    "acted_by": "codex",
+                    "action_source": "mcp_reconcile_completed_checkpoints",
+                    "reason": "Completed checkpoint reconciliation requested through MCP.",
+                    "limit": 100,
+                },
+            )
+        ]
+        assert '"closed_artifact_keys": []' in result
+        assert '"stage": "testing"' in result
+        assert '"feedback_expected": true' in result
+
+    async def test_review_completed_checkpoint_scope_tool_posts_scope_review(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "project": payload["project"],
+                "task_id": payload["task_id"],
+                "checkpoint_change_id": payload["checkpoint_change_id"],
+                "next_step_scope": payload["next_step_scope"],
+                "saved_change_id": "change-scope-1",
+                "content": "[task_checkpoint_scope_review]",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool(
+            "review_completed_checkpoint_scope",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "checkpoint_change_id": "checkpoint-1",
+                "next_step_scope": "follow_up_task",
+                "reason": "Separate follow-up slice.",
+                "acted_by": "codex",
+            },
+            "http://test",
+        )
+
+        assert posted == [
+            (
+                "/artifacts/completed-checkpoint-scope-review",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "checkpoint_change_id": "checkpoint-1",
+                    "next_step_scope": "follow_up_task",
+                    "reason": "Separate follow-up slice.",
+                    "acted_by": "codex",
+                    "source": "mcp_checkpoint_scope_review",
+                },
+            )
+        ]
+        assert '"next_step_scope": "follow_up_task"' in result
+        assert '"stage": "testing"' in result
+
+    async def test_review_completed_checkpoint_scopes_tool_posts_batch_scope_reviews(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "project": payload["project"],
+                "saved_count": 2,
+                "skipped_count": 0,
+                "error_count": 0,
+                "saved": [],
+                "skipped": [],
+                "errors": [],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool(
+            "review_completed_checkpoint_scopes",
+            {
+                "project": "alpha",
+                "decisions": [
+                    {
+                        "task_id": "task-1",
+                        "checkpoint_change_id": "checkpoint-1",
+                        "next_step_scope": "follow_up_task",
+                        "reason": "Separate follow-up slice.",
+                    },
+                    {
+                        "task_id": "task-2",
+                        "checkpoint_change_id": "checkpoint-2",
+                        "next_step_scope": "same_artifact_remaining_work",
+                    },
+                ],
+                "acted_by": "codex",
+            },
+            "http://test",
+        )
+
+        assert posted[0][0] == "/artifacts/completed-checkpoint-scope-review/batch"
+        assert posted[0][1]["project"] == "alpha"
+        assert posted[0][1]["decisions"][0]["next_step_scope"] == "follow_up_task"
+        assert posted[0][1]["decisions"][1]["next_step_scope"] == "same_artifact_remaining_work"
+        assert '"saved_count": 2' in result
+        assert '"stage": "testing"' in result
+
     async def test_normalize_mcp_intent_returns_canonical_form_for_resume_requests(self, monkeypatch):
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
 
@@ -371,7 +1361,9 @@ class TestMcpToolExecution:
                 "task_id": "task-1",
                 "stage": "planning",
                 "summary": "Framed the task and confirmed the first slice.",
+                "checkpoint_mode": "lightweight",
                 "blockers": ["Waiting for schema clarification."],
+                "stage_evidence_refs": ["checkpoint:framing-source"],
                 "next_step": "Record decision candidates.",
                 "reason": "Initial planning checkpoint.",
                 "acted_by": "codex",
@@ -383,10 +1375,14 @@ class TestMcpToolExecution:
 
         assert posted[0][0] == "/project/tasks/task-1/changes"
         assert "[task_checkpoint]" in posted[0][1]["content"]
+        assert "Stage evidence refs: checkpoint:framing-source" in posted[0][1]["content"]
         assert "task_checkpoint" in posted[0][1]["tags"]
+        assert "checkpoint_mode:lightweight" in posted[0][1]["tags"]
         assert fake_store.ctx["sess-1"]["task_checkpoint_recorded"] is True
         assert fake_store.ctx["sess-1"]["current_task_checkpoint"]["stage"] == "planning"
+        assert fake_store.ctx["sess-1"]["stage_evidence"] == "checkpoint:change-1"
         assert "Checkpoint recorded for task task-1" in result
+        assert "stage_evidence=checkpoint:change-1" in result
 
     async def test_record_task_checkpoint_creates_resume_handoff_for_blocked_stage(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
@@ -547,6 +1543,7 @@ class TestMcpToolExecution:
                 ("fact", "Implemented checkpoint draft approval by reference."),
                 ("decision", "Approve by draft_id and version, not by replaying payload."),
                 ("verification", "pytest tests/test_checkpoint_draft_service.py passed"),
+                ("changed_files", "app/services/checkpoint_draft_service.py; tests/test_checkpoint_draft_service.py"),
                 ("next_step", "Expose approve-by-reference through MCP."),
             ):
                 stenographer_store.record_span(
@@ -569,6 +1566,7 @@ class TestMcpToolExecution:
                     "agent_id": "codex",
                     "session_id": "sess-1",
                     "use_llm": False,
+                    "preserve_evidence": True,
                 },
                 "http://test",
             )
@@ -576,6 +1574,12 @@ class TestMcpToolExecution:
             assert drafted_data["version"] == 1
             assert drafted_data["mutates_memory"] is False
             assert drafted_data["recommended_next_tool"] == "approve_checkpoint_draft"
+            assert drafted_data["record_task_checkpoint_args"]["changed_files"] == [
+                "app/services/checkpoint_draft_service.py",
+                "tests/test_checkpoint_draft_service.py",
+            ]
+            assert drafted_data["source_evidence"]["preserved"] is True
+            assert drafted_data["source_evidence"]["items"]
 
             preview = await mcp_sse._execute_tool(
                 "get_checkpoint_draft",
@@ -584,6 +1588,7 @@ class TestMcpToolExecution:
             )
             preview_data = json.loads(preview)
             assert "record_task_checkpoint_args" not in preview_data
+            assert "source_evidence" not in preview_data
             assert preview_data["metrics"]["estimated_saved_chars"] > 0
         finally:
             stenographer_store.close()
@@ -1017,7 +2022,12 @@ class TestMcpToolExecution:
         info = response["result"]["_supermemory"]
         assert info["agent_id"] == "codex-cli"
         assert "get_onboarding" in info["tip"]
+        assert "operational_tray" in info["tip"]
         assert "pickup_coordination_messages" in info["tip"]
+        assert info["tool_catalog"]["preferred_mode"] == "compact"
+        assert info["tool_catalog"]["compact_request"] == {"method": "tools/list", "params": {"mode": "compact"}}
+        assert info["tool_catalog"]["full_request"] == {"method": "tools/list", "params": {"mode": "full"}}
+        assert info["tool_catalog"]["recommended_first_tool"] == "operational_tray"
         assert any("/api/v1/coordination/" in line for line in info["semantic_defaults"])
 
     async def test_get_onboarding_includes_supermemory_basics(self, monkeypatch):

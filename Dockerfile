@@ -10,6 +10,9 @@ COPY static/ static/
 COPY mcp/ mcp/
 COPY cli/ cli/
 COPY scripts/ scripts/
+COPY tests/ tests/
+COPY docs/ docs/
+COPY pytest.ini .
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

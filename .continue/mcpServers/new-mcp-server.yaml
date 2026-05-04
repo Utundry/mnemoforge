@@ -1,0 +1,10 @@
+name: New MCP server
+version: 0.0.1
+schema: v1
+mcpServers:
+  - name: super-memory
+    type: sse                 # тип соединения, как в JSON
+    url: http://localhost:8000/mcp/sse
+    headers:
+      X-Api-Key: supermemory-local
+    alwaysAllow: []

@@ -38,6 +38,18 @@ _TOOL_STAGES: dict[str, str] = {
     "reject_checkpoint_draft": "testing",
     "record_task_checkpoint": "testing",
     "report_task_checkpoint": "testing",
+    "operational_tray": "testing",
+    "upsert_knowledge_tree_node": "testing",
+    "get_task_execution_context": "testing",
+    "reconcile_completed_checkpoints": "testing",
+    "review_completed_checkpoint_scope": "testing",
+    "review_completed_checkpoint_scopes": "testing",
+    "project_rule_candidates_from_stenography": "testing",
+    "list_rule_candidates": "testing",
+    "get_rule_candidate_review_packet": "testing",
+    "review_rule_candidate": "testing",
+    "promote_rule_candidate": "testing",
+    "revise_law_from_rule_candidate": "testing",
 }
 
 _CREATE_SQL = """

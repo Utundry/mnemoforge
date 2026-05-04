@@ -118,6 +118,62 @@ async def test_workspace_actions_track_governance_metadata(client):
 
 
 @pytest.mark.asyncio
+async def test_upsert_node_by_path_creates_and_updates_structured_knowledge(client):
+    response = await client.post(
+        "/api/v1/tree/upsert-by-path",
+        json={
+            "topic_path": "supermemory/architecture/mcp/compact-discovery",
+            "title": "Compact MCP Discovery",
+            "type": "area",
+            "status": "active",
+            "description": "Compact MCP catalog negotiation and operational tray entrypoint.",
+            "responsibility": "Expose a small MCP catalog before the full flat tool list.",
+            "source_of_truth": "runtime_contract",
+            "runtime_entrypoints": ["initialize", "tools/list", "operational_tray"],
+            "tests": ["tests/test_mcp_sse.py"],
+            "current_debt": ["Generic MCP clients must opt in."],
+            "target_state": "Capable clients negotiate compact discovery at initialize.",
+            "projection_targets": ["README.md"],
+            "evidence_refs": ["checkpoint:abc"],
+            "tags": ["mcp", "compact-discovery"],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["created"] is True
+    node = body["node"]
+    assert node["topic_path"] == "supermemory/architecture/mcp/compact-discovery"
+    assert "structured_knowledge" in node["tags"]
+    structured = node["meta_json"]["structured_knowledge"]
+    assert structured["responsibility"] == "Expose a small MCP catalog before the full flat tool list."
+    assert structured["runtime_entrypoints"] == ["initialize", "tools/list", "operational_tray"]
+
+    updated = await client.post(
+        "/api/v1/tree/upsert-by-path",
+        json={
+            "topic_path": "supermemory/architecture/mcp/compact-discovery",
+            "title": "Compact MCP Discovery",
+            "type": "area",
+            "status": "active",
+            "target_state": "Compact discovery is the preferred client path.",
+            "structured_fields": {"projection_policy": "Markdown is generated or validated from structured nodes."},
+            "tags": ["docs-projection"],
+        },
+    )
+
+    assert updated.status_code == 200, updated.text
+    updated_body = updated.json()
+    assert updated_body["created"] is False
+    updated_node = updated_body["node"]
+    updated_structured = updated_node["meta_json"]["structured_knowledge"]
+    assert updated_structured["responsibility"] == "Expose a small MCP catalog before the full flat tool list."
+    assert updated_structured["target_state"] == "Compact discovery is the preferred client path."
+    assert updated_structured["projection_policy"] == "Markdown is generated or validated from structured nodes."
+    assert "docs-projection" in updated_node["tags"]
+
+
+@pytest.mark.asyncio
 async def test_archive_node_tracks_governance_action(client):
     store = get_tree_store()
     node_id = store.create_node(title="Task", type="task", status="active", topic_path="alpha/task")

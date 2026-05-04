@@ -14,6 +14,20 @@ from app.models.unified_artifact import (
     UnifiedArtifactReopenRequest,
     UnifiedArtifactResolveRequest,
 )
+from app.models.artifact_lifecycle import (
+    ArtifactLifecycleReconcileRequest,
+    ArtifactLifecycleReconcileResponse,
+    ArtifactLifecycleScopeReviewBatchRequest,
+    ArtifactLifecycleScopeReviewBatchResponse,
+    ArtifactLifecycleScopeReviewRequest,
+    ArtifactLifecycleScopeReviewResponse,
+)
+from app.models.project_task import ProjectTaskChangeCreate
+from app.services.artifact_lifecycle_service import (
+    build_checkpoint_scope_review_content,
+    reconcile_completed_checkpoint_artifacts,
+)
+from app.services.project_task_service import add_task_change
 from app.services.unified_artifact_service import get_unified_artifact_service
 
 logger = logging.getLogger(__name__)
@@ -154,6 +168,137 @@ async def list_artifacts(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list artifacts: {str(e)}",
         )
+
+
+@router.post("/reconcile-completed-checkpoints", response_model=ArtifactLifecycleReconcileResponse)
+async def reconcile_completed_checkpoints(body: ArtifactLifecycleReconcileRequest):
+    """Find open artifacts whose latest strict completion checkpoint says they are done."""
+    try:
+        return await reconcile_completed_checkpoint_artifacts(
+            project=body.project,
+            close=body.close,
+            close_policy=body.close_policy,
+            acted_by=body.acted_by,
+            action_source=body.action_source,
+            reason=body.reason,
+            limit=body.limit,
+        )
+    except Exception as e:
+        logger.error("Error reconciling completed checkpoint artifacts: %s", e)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reconcile completed checkpoint artifacts: {str(e)}",
+        )
+
+
+@router.post("/completed-checkpoint-scope-review", response_model=ArtifactLifecycleScopeReviewResponse)
+async def record_completed_checkpoint_scope_review(
+    body: ArtifactLifecycleScopeReviewRequest,
+    qdrant: QdrantDep,
+    ollama: OllamaDep,
+):
+    """Persist an operator review for a completed checkpoint's next_step scope."""
+    content = build_checkpoint_scope_review_content(
+        checkpoint_change_id=body.checkpoint_change_id,
+        next_step_scope=body.next_step_scope,
+        reason=body.reason,
+    )
+    try:
+        change = await add_task_change(
+            qdrant,
+            ollama,
+            task_id=body.task_id,
+            body=ProjectTaskChangeCreate(
+                project=body.project,
+                change_type="note",
+                content=content,
+                why=body.reason,
+                agent_id=body.acted_by,
+                source=body.source,
+                tags=["task_checkpoint_scope_review", f"next_step_scope:{body.next_step_scope}"],
+            ),
+        )
+        return ArtifactLifecycleScopeReviewResponse(
+            project=body.project,
+            task_id=body.task_id,
+            checkpoint_change_id=body.checkpoint_change_id,
+            next_step_scope=body.next_step_scope,
+            saved_change_id=str(change.id),
+            content=content,
+        )
+    except Exception as e:
+        logger.error("Error recording completed checkpoint scope review: %s", e)
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to record completed checkpoint scope review: {str(e)}",
+        )
+
+
+@router.post("/completed-checkpoint-scope-review/batch", response_model=ArtifactLifecycleScopeReviewBatchResponse)
+async def record_completed_checkpoint_scope_review_batch(
+    body: ArtifactLifecycleScopeReviewBatchRequest,
+    qdrant: QdrantDep,
+    ollama: OllamaDep,
+):
+    """Persist multiple completed-checkpoint next_step scope reviews without closing artifacts."""
+    result = ArtifactLifecycleScopeReviewBatchResponse(project=body.project)
+    seen: set[tuple[str, str]] = set()
+    for decision in body.decisions:
+        key = (decision.task_id, decision.checkpoint_change_id)
+        if key in seen:
+            result.skipped.append(
+                {
+                    "task_id": decision.task_id,
+                    "checkpoint_change_id": decision.checkpoint_change_id,
+                    "reason": "duplicate_decision",
+                }
+            )
+            continue
+        seen.add(key)
+        reason = decision.reason or body.default_reason
+        content = build_checkpoint_scope_review_content(
+            checkpoint_change_id=decision.checkpoint_change_id,
+            next_step_scope=decision.next_step_scope,
+            reason=reason,
+        )
+        try:
+            change = await add_task_change(
+                qdrant,
+                ollama,
+                task_id=decision.task_id,
+                body=ProjectTaskChangeCreate(
+                    project=body.project,
+                    change_type="note",
+                    content=content,
+                    why=reason,
+                    agent_id=body.acted_by,
+                    source=body.source,
+                    tags=["task_checkpoint_scope_review", f"next_step_scope:{decision.next_step_scope}"],
+                ),
+            )
+            result.saved.append(
+                ArtifactLifecycleScopeReviewResponse(
+                    project=body.project,
+                    task_id=decision.task_id,
+                    checkpoint_change_id=decision.checkpoint_change_id,
+                    next_step_scope=decision.next_step_scope,
+                    saved_change_id=str(change.id),
+                    content=content,
+                )
+            )
+        except Exception as e:
+            logger.error("Error recording completed checkpoint scope review batch item: %s", e)
+            result.errors.append(
+                {
+                    "task_id": decision.task_id,
+                    "checkpoint_change_id": decision.checkpoint_change_id,
+                    "error": str(e),
+                }
+            )
+    result.saved_count = len(result.saved)
+    result.skipped_count = len(result.skipped)
+    result.error_count = len(result.errors)
+    return result
 
 
 @router.get("/{artifact_key}", response_model=UnifiedArtifactRecord)

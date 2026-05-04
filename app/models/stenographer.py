@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 WORK_SESSION_STATUS_PATTERN = "^(active|parked|completed|blocked|failed|interrupted|cancelled)$"
 WORK_SESSION_TERMINAL_STATUSES = {"completed", "blocked", "failed", "interrupted", "cancelled"}
-STENOGRAPHER_KIND_PATTERN = "^(fact|decision|verification|risk|blocker|next_step|checkpoint_hint|handoff_hint|diagnostic|changed_files)$"
+STENOGRAPHER_KIND_PATTERN = "^(fact|decision|verification|risk|blocker|next_step|checkpoint_hint|handoff_hint|diagnostic|changed_files|rule_project_candidate|rule_canonical_candidate|rule_revision_hint|rule_merge_hint)$"
 
 
 class WorkSessionRecord(BaseModel):
@@ -58,3 +58,7 @@ class WorkSessionState(BaseModel):
     parked_stack: list[WorkSessionRecord] = Field(default_factory=list)
     next_valid_tools: list[str] = Field(default_factory=list)
     protocol_violations: list[str] = Field(default_factory=list)
+    closeout_required: bool = False
+    closeout_ready: bool = False
+    closeout_missing: list[str] = Field(default_factory=list)
+    closeout_evidence: dict[str, list[str]] = Field(default_factory=dict)

@@ -33,6 +33,8 @@ def build_task_checkpoint_content(
     verification: list[str] | None = None,
     remaining_risk: list[str] | None = None,
     next_step: str = "",
+    next_step_scope: str = "",
+    stage_evidence_refs: list[str] | None = None,
     reason: str = "",
 ) -> str:
     """Format a compact stage checkpoint for task_change storage."""
@@ -66,6 +68,12 @@ def build_task_checkpoint_content(
         for item in (remaining_risk or [])
         if normalize_text_for_display(item).strip()
     ]
+    cleaned_next_step_scope = normalize_text_for_display(next_step_scope).strip()
+    cleaned_stage_evidence_refs = [
+        normalize_text_for_display(item).strip()
+        for item in (stage_evidence_refs or [])
+        if normalize_text_for_display(item).strip()
+    ]
 
     lines = ["[task_checkpoint]", f"Checkpoint stage: {cleaned_stage}", f"Checkpoint status: {cleaned_status}"]
     if cleaned_summary:
@@ -82,6 +90,10 @@ def build_task_checkpoint_content(
         lines.append("Remaining risk: " + "; ".join(cleaned_remaining_risk))
     if cleaned_next_step:
         lines.append(f"Next step: {cleaned_next_step}")
+    if cleaned_next_step_scope:
+        lines.append(f"Next step scope: {cleaned_next_step_scope}")
+    if cleaned_stage_evidence_refs:
+        lines.append("Stage evidence refs: " + "; ".join(cleaned_stage_evidence_refs))
     if cleaned_reason:
         lines.append(f"Reason: {cleaned_reason}")
     return "\n".join(lines)

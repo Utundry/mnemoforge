@@ -16,6 +16,19 @@ from app.models.law import (
     ProjectLawStatusUpdate,
     ProjectLawUpdate,
 )
+from app.models.rule_lifecycle import (
+    RuleCandidateListResponse,
+    RuleCandidateProjectionReport,
+    RuleCandidateProjectionRequest,
+    RuleCandidateReviewActionRequest,
+    RuleCandidateReviewActionResponse,
+    RuleCandidateReviewPacket,
+    RuleCandidateReviewRequest,
+    RuleCandidatePromoteRequest,
+    RuleCandidatePromoteResponse,
+    RuleCandidateReviseLawRequest,
+    RuleCandidateReviseLawResponse,
+)
 from app.services.law_import_service import import_project_laws_from_markdown
 from app.services.law_service import (
     confirm_project_law,
@@ -24,6 +37,13 @@ from app.services.law_service import (
     list_project_laws,
     update_project_law,
     update_project_law_status,
+)
+from app.services.rule_lifecycle_service import (
+    build_rule_candidate_review_packet,
+    get_rule_lifecycle_store,
+    promote_rule_candidate,
+    project_rule_candidates_from_stenographer,
+    revise_law_from_rule_candidate,
 )
 
 router = APIRouter(prefix="/laws", tags=["laws"])
@@ -78,6 +98,75 @@ async def list_laws(
         limit=limit,
     )
     return ProjectLawListResponse(total=len(items), items=items)
+
+
+@router.post("/candidates/project-from-stenography", response_model=RuleCandidateProjectionReport)
+async def project_rule_candidates(body: RuleCandidateProjectionRequest):
+    try:
+        return project_rule_candidates_from_stenographer(project=body.project, limit=body.limit)
+    except Exception as exc:
+        raise _law_http_error(exc) from exc
+
+
+@router.get("/candidates", response_model=RuleCandidateListResponse)
+async def list_rule_candidates(
+    project: Optional[str] = Query(None, max_length=128),
+    status: Optional[str] = Query(None, pattern="^(candidate|needs_clarification|trial|revision_pending|rejected|suppressed)$"),
+    source_task_id: Optional[str] = Query(None, max_length=256),
+    limit: int = Query(100, ge=1, le=500),
+):
+    store = get_rule_lifecycle_store()
+    items = store.list_candidates(project=project, status=status, source_task_id=source_task_id, limit=limit)
+    return RuleCandidateListResponse(total=len(items), items=items)
+
+
+@router.post("/candidates/review-packet", response_model=RuleCandidateReviewPacket)
+async def rule_candidate_review_packet(body: RuleCandidateReviewRequest, qdrant: QdrantDep):
+    try:
+        return await build_rule_candidate_review_packet(qdrant, body)
+    except Exception as exc:
+        raise _law_http_error(exc) from exc
+
+
+@router.post("/candidates/{candidate_id}/review", response_model=RuleCandidateReviewActionResponse)
+async def review_rule_candidate(candidate_id: str, body: RuleCandidateReviewActionRequest):
+    try:
+        store = get_rule_lifecycle_store()
+        return store.review_candidate(
+            candidate_id,
+            action=body.action,
+            reason=body.reason,
+            acted_by=body.acted_by,
+            source=body.source,
+        )
+    except Exception as exc:
+        raise _law_http_error(exc) from exc
+
+
+@router.post("/candidates/{candidate_id}/promote", response_model=RuleCandidatePromoteResponse)
+async def promote_rule_candidate_endpoint(
+    candidate_id: str,
+    body: RuleCandidatePromoteRequest,
+    qdrant: QdrantDep,
+    ollama: OllamaDep,
+):
+    try:
+        return await promote_rule_candidate(qdrant, ollama, candidate_id, body)
+    except Exception as exc:
+        raise _law_http_error(exc) from exc
+
+
+@router.post("/candidates/{candidate_id}/revise-law", response_model=RuleCandidateReviseLawResponse)
+async def revise_law_from_rule_candidate_endpoint(
+    candidate_id: str,
+    body: RuleCandidateReviseLawRequest,
+    qdrant: QdrantDep,
+    ollama: OllamaDep,
+):
+    try:
+        return await revise_law_from_rule_candidate(qdrant, ollama, candidate_id, body)
+    except Exception as exc:
+        raise _law_http_error(exc) from exc
 
 
 @router.get("/{law_id}", response_model=ProjectLawRecord)

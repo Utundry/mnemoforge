@@ -13,6 +13,7 @@ from app.services.checkpoint_draft_service import (
     reject_checkpoint_draft,
     revise_checkpoint_draft,
 )
+from app.services.memory_scribe_service import draft_task_checkpoint
 from app.services.stenographer_service import StenographerStore
 
 
@@ -73,6 +74,49 @@ def _seed_spans(store: StenographerStore) -> None:
 
 
 @pytest.mark.asyncio
+async def test_memory_scribe_preserves_explicit_structured_fields_before_summary_compression() -> None:
+    raw_notes = "\n".join(
+        [
+            "Summary: Implemented conservative reconciliation for stale artifact lifecycle tails. "
+            + "Extra context. " * 80,
+            "Changed files: app/models/artifact_lifecycle.py, app/services/artifact_lifecycle_service.py, tests/test_unified_artifacts_router.py",
+            "Verification: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_pytest_docker.ps1 tests/test_unified_artifacts_router.py -q passed",
+            "Remaining risks: MCP tool exposure is not implemented yet",
+            "Next step: Expose reconciliation through MCP and run a report-only scan",
+            "Next step scope: follow_up_task",
+        ]
+    )
+
+    draft = await draft_task_checkpoint(
+        {
+            "project": "supermemory",
+            "task_id": "task-structured-first",
+            "stage": "completed",
+            "status": "done",
+            "raw_notes": raw_notes,
+            "use_llm": False,
+            "preserve_evidence": True,
+        }
+    )
+
+    args = draft["record_task_checkpoint_args"]
+    assert args["changed_files"] == [
+        "app/models/artifact_lifecycle.py",
+        "app/services/artifact_lifecycle_service.py",
+        "tests/test_unified_artifacts_router.py",
+    ]
+    assert args["verification"] == [
+        "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_pytest_docker.ps1 tests/test_unified_artifacts_router.py -q passed"
+    ]
+    assert args["remaining_risk"] == ["MCP tool exposure is not implemented yet"]
+    assert args["next_step"] == "Expose reconciliation through MCP and run a report-only scan"
+    assert args["next_step_scope"] == "follow_up_task"
+    assert "structured_fields_lost" not in draft["quality_gate"]["missing"]
+    assert draft["source_evidence"]["preserved"] is True
+    assert raw_notes in draft["source_evidence"]["raw_notes"]
+
+
+@pytest.mark.asyncio
 async def test_checkpoint_draft_from_spans_is_review_only(monkeypatch) -> None:
     stenographer = StenographerStore(_db_path("stenographer"))
     drafts = CheckpointDraftStore(_db_path("drafts"))
@@ -96,10 +140,42 @@ async def test_checkpoint_draft_from_spans_is_review_only(monkeypatch) -> None:
         assert draft.status == "drafted"
         assert draft.validation_report["can_approve"] is True
         assert draft.source_span_ids
+        assert draft.source_evidence["preserved"] is False
         assert draft.metrics["estimated_saved_chars"] > 0
         assert draft.record_task_checkpoint_args["task_id"] == "task-1"
         assert "Approve drafts by reference" in draft.record_task_checkpoint_args["decisions"][0]
         assert get_checkpoint_draft(draft.draft_id, store=drafts).preview == draft.preview
+    finally:
+        stenographer.close()
+        drafts.close()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_draft_can_preserve_original_span_evidence(monkeypatch) -> None:
+    stenographer = StenographerStore(_db_path("stenographer"))
+    drafts = CheckpointDraftStore(_db_path("drafts"))
+    monkeypatch.setattr(checkpoint_draft_service, "get_stenographer_store", lambda: stenographer)
+    try:
+        _seed_spans(stenographer)
+
+        draft = await draft_checkpoint_from_spans(
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "work_id": "work-1",
+                "agent_id": "codex",
+                "session_id": "sess-1",
+                "use_llm": False,
+                "preserve_evidence": True,
+            },
+            store=drafts,
+        )
+
+        assert draft.source_evidence["preserved"] is True
+        assert draft.source_evidence["source_span_count"] == len(draft.source_span_ids)
+        assert draft.source_evidence["items"][0]["kind"] == "fact"
+        assert "Implemented checkpoint drafts" in draft.source_evidence["items"][0]["content"]
+        assert get_checkpoint_draft(draft.draft_id, store=drafts).source_evidence["preserved"] is True
     finally:
         stenographer.close()
         drafts.close()
@@ -200,6 +276,18 @@ async def test_checkpoint_draft_drops_stale_next_step_after_later_evidence(monke
         assert draft.record_task_checkpoint_args["next_step"] == ""
         assert "next_step" in draft.validation_report["missing"]
         assert draft.validation_report["can_approve"] is False
+
+        revised = revise_checkpoint_draft(
+            draft.draft_id,
+            {
+                "changed_files": ["namedparams.py"],
+                "next_step": "Review generated symbol consumers.",
+            },
+            store=drafts,
+        )
+        assert revised.record_task_checkpoint_args["next_step"] == "Review generated symbol consumers."
+        assert "next_step" not in revised.validation_report["missing"]
+        assert revised.validation_report["can_approve"] is True
     finally:
         stenographer.close()
         drafts.close()

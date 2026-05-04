@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from app.models.checkpoint_draft import CheckpointDraftRecord
 from app.models.project_task import ProjectTaskChangeCreate
-from app.services.memory_scribe_service import draft_task_checkpoint
+from app.services.memory_scribe_service import draft_task_checkpoint, evaluate_scribe_quality
 from app.services.project_task_service import add_task_change
 from app.services.stenographer_service import get_stenographer_store
 
@@ -26,6 +26,7 @@ _ALLOWED_PATCH_FIELDS = {
     "verification",
     "remaining_risk",
     "next_step",
+    "next_step_scope",
     "stage",
     "status",
     "reason",
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS checkpoint_drafts (
     preview                          TEXT NOT NULL,
     record_task_checkpoint_args_json TEXT NOT NULL,
     validation_report_json           TEXT NOT NULL DEFAULT '{}',
+    source_evidence_json             TEXT NOT NULL DEFAULT '{}',
     source_span_ids_json             TEXT NOT NULL DEFAULT '[]',
     metrics_json                     TEXT NOT NULL DEFAULT '{}',
     content_hash                     TEXT NOT NULL,
@@ -178,6 +180,48 @@ def _metrics(args: dict[str, Any], preview: str, source_span_count: int) -> dict
     }
 
 
+def _build_source_evidence(spans: list[Any], *, preserve: bool, item_limit: int = 2000, total_limit: int = 20000) -> dict[str, Any]:
+    if not preserve:
+        return {
+            "preserved": False,
+            "source_span_count": len(spans),
+            "reason": "preserve_evidence was not requested",
+        }
+    items: list[dict[str, Any]] = []
+    total_chars = 0
+    truncated = False
+    for span in reversed(spans):
+        raw_content = str(getattr(span, "content", "") or "")
+        remaining = max(0, total_limit - total_chars)
+        if remaining <= 0:
+            truncated = True
+            break
+        content_limit = min(item_limit, remaining)
+        content = raw_content[:content_limit]
+        if len(raw_content) > content_limit:
+            truncated = True
+        total_chars += len(content)
+        items.append(
+            {
+                "span_id": str(getattr(span, "span_id", "")),
+                "kind": str(getattr(span, "kind", "")),
+                "source": str(getattr(span, "source", "")),
+                "content": content,
+                "content_chars": len(raw_content),
+                "truncated": len(raw_content) > content_limit,
+                "created_at": str(getattr(span, "created_at", "")),
+            }
+        )
+    return {
+        "preserved": True,
+        "source_span_count": len(spans),
+        "included_span_count": len(items),
+        "content_chars": total_chars,
+        "truncated": truncated,
+        "items": items,
+    }
+
+
 def _validate_checkpoint_args(args: dict[str, Any], *, source_span_ids: list[str], quality_gate: dict[str, Any]) -> dict[str, Any]:
     missing: list[str] = []
     if not _clean_text(args.get("summary"), 520):
@@ -208,7 +252,16 @@ class CheckpointDraftStore:
         self._lock = Lock()
         with self._lock:
             self._conn.executescript(_CREATE_SQL)
+            self._ensure_columns()
             self._conn.commit()
+
+    def _ensure_columns(self) -> None:
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(checkpoint_drafts)").fetchall()
+        }
+        if "source_evidence_json" not in columns:
+            self._conn.execute("ALTER TABLE checkpoint_drafts ADD COLUMN source_evidence_json TEXT NOT NULL DEFAULT '{}'")
 
     def close(self) -> None:
         with self._lock:
@@ -227,6 +280,7 @@ class CheckpointDraftStore:
             preview=str(row["preview"]),
             record_task_checkpoint_args=_json_loads(row["record_task_checkpoint_args_json"], {}),
             validation_report=_json_loads(row["validation_report_json"], {}),
+            source_evidence=_json_loads(row["source_evidence_json"], {}),
             source_span_ids=_json_loads(row["source_span_ids_json"], []),
             metrics=_json_loads(row["metrics_json"], {}),
             content_hash=str(row["content_hash"]),
@@ -248,10 +302,10 @@ class CheckpointDraftStore:
                 INSERT INTO checkpoint_drafts (
                     draft_id, version, status, project, task_id, work_id, agent_id, session_id,
                     preview, record_task_checkpoint_args_json, validation_report_json,
-                    source_span_ids_json, metrics_json, content_hash, created_by,
+                    source_evidence_json, source_span_ids_json, metrics_json, content_hash, created_by,
                     approved_by, rejected_by, rejection_reason, saved_change_id,
                     created_at, updated_at, approved_at, rejected_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.draft_id,
@@ -265,6 +319,7 @@ class CheckpointDraftStore:
                     record.preview,
                     _json_dumps(record.record_task_checkpoint_args),
                     _json_dumps(record.validation_report),
+                    _json_dumps(record.source_evidence),
                     _json_dumps(record.source_span_ids),
                     _json_dumps(record.metrics),
                     record.content_hash,
@@ -398,6 +453,8 @@ async def draft_checkpoint_from_spans(
     args = dict(scribe["record_task_checkpoint_args"])
     source_span_ids = [span.span_id for span in spans]
     validation = _validate_checkpoint_args(args, source_span_ids=source_span_ids, quality_gate=scribe.get("quality_gate") or {})
+    preserve_evidence = bool(payload.get("preserve_evidence") or str(payload.get("mode") or "") in {"preserve_evidence", "no_compression", "project_overview"})
+    source_evidence = _build_source_evidence(spans, preserve=preserve_evidence)
     preview = _preview_from_args(args, validation, source_span_count=len(source_span_ids))
     metrics = _metrics(args, preview, len(source_span_ids))
     draft_id = str(uuid4())
@@ -414,6 +471,7 @@ async def draft_checkpoint_from_spans(
         preview=preview,
         record_task_checkpoint_args=args,
         validation_report=validation,
+        source_evidence=source_evidence,
         source_span_ids=source_span_ids,
         metrics=metrics,
         content_hash=_content_hash(args),
@@ -451,13 +509,14 @@ def revise_checkpoint_draft(
     for key, value in patch.items():
         if key in {"blockers", "decisions", "changed_files", "verification", "remaining_risk"}:
             args[key] = _string_list(value)
-        elif key in {"summary", "next_step", "reason"}:
+        elif key in {"summary", "next_step", "next_step_scope", "reason"}:
             args[key] = _clean_text(value, 700 if key == "summary" else 360)
         elif key == "stage":
             args[key] = _clean_text(value, 32) or args.get(key)
         elif key == "status":
             args[key] = _clean_text(value, 32) or args.get(key)
-    validation = _validate_checkpoint_args(args, source_span_ids=current.source_span_ids, quality_gate=current.validation_report.get("quality_gate") or {"status": "ready"})
+    quality_gate = evaluate_scribe_quality(args)
+    validation = _validate_checkpoint_args(args, source_span_ids=current.source_span_ids, quality_gate=quality_gate)
     preview = _preview_from_args(args, validation, source_span_count=len(current.source_span_ids))
     metrics = _metrics(args, preview, len(current.source_span_ids))
     now = _utcnow()

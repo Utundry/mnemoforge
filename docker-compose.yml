@@ -83,6 +83,13 @@ services:
       DEEPSEEK_API_KEY: ""
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./app:/app/app
+      - ./static:/app/static
+      - ./mcp:/app/mcp
+      - ./cli:/app/cli
+      - ./scripts:/app/scripts
+      - ./pytest.ini:/app/pytest.ini:ro
     tmpfs:
       - /app/qdrant_data
 
@@ -93,5 +100,12 @@ services:
       - memory-server-test
     environment:
       SUPERMEMORY_SERVER_URL: http://memory-server-test:8000
+      SUPERMEMORY_DB_TEST_TARGETS: http://memory-server-test:8000
+      SUPERMEMORY_LIVE_TARGETS: http://memory-server-dev:8000,http://memory-server:8000
       API_KEY: test-api-key
+    volumes:
+      - ./app:/app/app
+      - ./tests:/app/tests
+      - ./scripts:/app/scripts
+      - ./pytest.ini:/app/pytest.ini:ro
     command: ["python", "scripts/docker_remote_mcp_e2e.py"]

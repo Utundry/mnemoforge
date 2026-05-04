@@ -19,6 +19,8 @@ def test_work_session_state_machine_requires_single_active_work():
         state = store.get_state(agent_id="codex", session_id="sess-1")
         assert state.state == "active_work"
         assert "record_stenographer_span" in state.next_valid_tools
+        assert state.closeout_ready is False
+        assert set(state.closeout_missing) == {"verification", "changed_files", "next_step"}
 
         with pytest.raises(ProtocolViolation) as exc_info:
             store.start_work_session(
@@ -30,6 +32,21 @@ def test_work_session_state_machine_requires_single_active_work():
             )
         assert exc_info.value.code == "active_work_exists"
 
+        for kind, content in (
+            ("verification", "Manual check passed."),
+            ("changed_files", "tests/test_stenographer_service.py"),
+            ("next_step", "No next step."),
+        ):
+            store.record_span(
+                project="alpha",
+                task_id="task-1",
+                agent_id="codex",
+                session_id="sess-1",
+                work_id="work-1",
+                kind=kind,
+                content=content,
+            )
+
         ended = store.end_work_session(
             work_id="work-1",
             task_id="task-1",
@@ -40,6 +57,44 @@ def test_work_session_state_machine_requires_single_active_work():
         )
         assert ended.status == "completed"
         assert store.get_state(agent_id="codex", session_id="sess-1").state == "no_active_work"
+    finally:
+        store.close()
+
+
+def test_completed_work_requires_explicit_closeout_spans():
+    store = StenographerStore(Path(":memory:"))
+    try:
+        store.start_work_session(
+            project="alpha",
+            task_id="task-1",
+            agent_id="codex",
+            session_id="sess-1",
+            work_id="work-1",
+        )
+        with pytest.raises(ProtocolViolation) as exc_info:
+            store.end_work_session(
+                work_id="work-1",
+                task_id="task-1",
+                agent_id="codex",
+                session_id="sess-1",
+                status="completed",
+            )
+        assert exc_info.value.code == "closeout_required"
+        assert exc_info.value.required_next_tool == "record_stenographer_span"
+        assert set(exc_info.value.state["closeout_missing"]) == {"verification", "changed_files", "next_step"}
+
+        store.record_span(
+            project="alpha",
+            task_id="task-1",
+            agent_id="codex",
+            session_id="sess-1",
+            work_id="work-1",
+            kind="verification",
+            content="pytest passed",
+        )
+        state = store.get_state(agent_id="codex", session_id="sess-1")
+        assert state.protocol_violations == ["closeout_incomplete"]
+        assert state.closeout_missing == ["changed_files", "next_step"]
     finally:
         store.close()
 
@@ -83,6 +138,21 @@ def test_parent_work_must_be_parked_before_child_work():
                 child_work_id="child-work",
             )
         assert exc_info.value.code == "active_work_exists"
+
+        for kind, content in (
+            ("verification", "Child checks passed."),
+            ("changed_files", "child.py"),
+            ("next_step", "Resume parent."),
+        ):
+            store.record_span(
+                project="alpha",
+                task_id="child-task",
+                agent_id="codex",
+                session_id="sess-1",
+                work_id="child-work",
+                kind=kind,
+                content=content,
+            )
 
         store.end_work_session(
             work_id="child-work",

@@ -10,6 +10,8 @@ import urllib.request
 import uuid
 from typing import Any
 
+from scripts.testing_guard import assert_db_backed_test_target
+
 
 SERVER = os.getenv("SUPERMEMORY_SERVER_URL", "http://memory-server-test:8000").rstrip("/")
 API_KEY = os.getenv("API_KEY", "test-api-key")
@@ -76,6 +78,7 @@ def _assert(condition: bool, message: str) -> None:
 
 def main() -> int:
     print(f"Remote MCP e2e target: {SERVER}")
+    assert_db_backed_test_target(SERVER, context="Remote MCP e2e")
     project = f"docker-e2e-{uuid.uuid4().hex[:8]}"
 
     try:

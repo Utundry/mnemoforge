@@ -294,6 +294,13 @@ def _snapshot_signature(snapshot: dict[str, str | bool] | None) -> tuple[str, st
     )
 
 
+def _display_commit(value: str) -> str:
+    value = str(value or "").strip()
+    if len(value) >= 40 and all(ch in "0123456789abcdefABCDEF" for ch in value):
+        return value[:12]
+    return value
+
+
 def _docs_cache_staleness(project: str, cached: DocsStatus) -> tuple[bool, str | None]:
     try:
         current_rows = get_component_docs_store().list_by_project_sync(project, limit=500)
@@ -312,7 +319,10 @@ def _docs_cache_staleness(project: str, cached: DocsStatus) -> tuple[bool, str |
     current_commit = str(current_snapshot.get("commit_sha") or "").strip()
     cached_commit = str((cached.snapshot or {}).get("commit_sha") or "").strip()
     if current_commit and cached_commit and current_commit != cached_commit:
-        return True, f"component snapshot commit changed from {cached_commit[:12]} to {current_commit[:12]}"
+        return True, (
+            "component snapshot commit changed from "
+            f"{_display_commit(cached_commit)} to {_display_commit(current_commit)}"
+        )
     if bool(current_snapshot.get("dirty_workspace")) != bool((cached.snapshot or {}).get("dirty_workspace")):
         return True, "component snapshot dirty-workspace state changed"
     return True, "component snapshot metadata changed"
@@ -594,8 +604,10 @@ def _gen_laws(laws: list[dict]) -> str:
     lines = []
     for law in laws:
         meta = law.get("meta") or {}
-        title = meta.get("title") or law.get("content", "").splitlines()[0].replace("Law: ", "", 1)
-        statement = meta.get("statement") or law.get("content", "")
+        content = str(law.get("content") or "")
+        first_line = next((line.strip() for line in content.splitlines() if line.strip()), "")
+        title = meta.get("title") or first_line.replace("Law: ", "", 1) or "Untitled law"
+        statement = meta.get("statement") or content.strip() or "_No statement recorded._"
         rationale = meta.get("rationale") or ""
         lines.append(f"- **{title}**: {statement}")
         if rationale:

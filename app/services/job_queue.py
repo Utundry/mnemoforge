@@ -224,7 +224,7 @@ class JobQueue:
             logger.info("Job %s done: %s", job_id[:8], job_type)
         except Exception as e:
             self._set_failed(job_id, str(e))
-            logger.error("Job %s failed (%s): %s", job_id[:8], job_type, e)
+            logger.exception("Job %s failed (%s): %s", job_id[:8], job_type, e)
 
     async def _worker_loop(self, queue: asyncio.Queue, *, lane: str, worker_index: int = 0) -> None:
         logger.info("Job queue worker started (lane=%s worker=%d)", lane, worker_index)
@@ -237,7 +237,7 @@ class JobQueue:
                 logger.info("Job queue worker stopped (lane=%s worker=%d)", lane, worker_index)
                 break
             except Exception as e:
-                logger.error("Unexpected worker error: %s", e)
+                logger.exception("Unexpected worker error: %s", e)
 
     async def start(self) -> None:
         """Re-queue interrupted jobs and start the background worker."""

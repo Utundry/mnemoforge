@@ -9,18 +9,31 @@ from app.services.replay_completeness_service import build_token_budget
 
 
 _SECTION_ALIASES = {
+    "blocker": "blockers",
+    "blockers": "blockers",
     "decision": "decisions",
     "decisions": "decisions",
     "changed": "changed_files",
+    "changed file": "changed_files",
     "changed files": "changed_files",
+    "changed_files": "changed_files",
     "files": "changed_files",
+    "test": "verification",
+    "tests": "verification",
     "verification": "verification",
     "verified": "verification",
     "risk": "remaining_risk",
     "risks": "remaining_risk",
+    "residual risk": "remaining_risk",
+    "residual risks": "remaining_risk",
     "remaining risk": "remaining_risk",
+    "remaining risks": "remaining_risk",
+    "remaining_risk": "remaining_risk",
     "next": "next_step",
     "next step": "next_step",
+    "next_step": "next_step",
+    "next step scope": "next_step_scope",
+    "next_step_scope": "next_step_scope",
     "summary": "summary",
 }
 
@@ -49,6 +62,30 @@ def _clean_list(value: Any, *, limit: int = 8, item_limit: int = 260) -> list[st
     items: list[str] = []
     for item in raw_items:
         text = _clip(item, item_limit)
+        if not text or text in items:
+            continue
+        items.append(text)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _clean_file_list(value: Any, *, limit: int = 16, item_limit: int = 180) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        raw_values = value
+    else:
+        raw_values = [value]
+    raw_items: list[Any] = []
+    for item in raw_values:
+        if isinstance(item, str):
+            raw_items.extend(re.split(r"(?:\n|;|,|\u2022|- )+", item))
+        else:
+            raw_items.append(item)
+    items: list[str] = []
+    for item in raw_items:
+        text = _clip(str(item).strip(" `[]"), item_limit)
         if not text or text in items:
             continue
         items.append(text)
@@ -114,7 +151,7 @@ def _extract_labeled_notes(raw_notes: str) -> dict[str, Any]:
         text = line.strip()
         if not text:
             continue
-        match = re.match(r"^([A-Za-z _-]{3,32})\s*:\s*(.+)$", text)
+        match = re.match(r"^([A-Za-z _-]{3,32})\s*:\s*(.*)$", text)
         if match:
             label = match.group(1).strip().lower().replace("_", " ")
             key = _SECTION_ALIASES.get(label)
@@ -125,10 +162,14 @@ def _extract_labeled_notes(raw_notes: str) -> dict[str, Any]:
                     value = re.sub(r"^\[[^\]]+\]\s*", "", value).strip()
                 if key == "next_step":
                     next_step_candidates.append((index, value))
+                elif key == "next_step_scope":
+                    extracted[key] = value
                 elif key == "summary":
                     extracted[key] = value
-                else:
+                elif value:
                     extracted.setdefault(key, []).append(value)
+                else:
+                    extracted.setdefault(key, [])
                 if key in evidence_keys:
                     latest_evidence_index = index
                 continue
@@ -141,6 +182,15 @@ def _extract_labeled_notes(raw_notes: str) -> dict[str, Any]:
             extracted["next_step"] = value
             break
     return extracted
+
+
+def _prefer_structured_list(labeled: dict[str, Any], draft: dict[str, Any], key: str, *, limit: int = 8, item_limit: int = 260) -> list[str]:
+    source = labeled.get(key) if labeled.get(key) else draft.get(key)
+    return _clean_list(source, limit=limit, item_limit=item_limit)
+
+
+def _prefer_structured_text(labeled: dict[str, Any], draft: dict[str, Any], key: str, *, limit: int) -> str:
+    return _clip(labeled.get(key) or draft.get(key) or "", limit)
 
 
 def _fallback_summary(raw_notes: str, task_title: str = "") -> str:
@@ -165,14 +215,21 @@ def _normalize_draft(
 ) -> dict[str, Any]:
     labeled = _extract_labeled_notes(raw_notes)
     summary = _clip(draft.get("summary") or labeled.get("summary") or _fallback_summary(raw_notes, task_title), 520)
-    next_step = _clip(draft.get("next_step") or labeled.get("next_step") or "", 360)
-    decisions = _clean_list(draft.get("decisions") or labeled.get("decisions"), limit=8)
-    changed_files = _clean_list(draft.get("changed_files") or labeled.get("changed_files"), limit=16, item_limit=180)
-    verification = _clean_list(draft.get("verification") or labeled.get("verification"), limit=8)
+    next_step = _prefer_structured_text(labeled, draft, "next_step", limit=360)
+    next_step_scope = _prefer_structured_text(labeled, draft, "next_step_scope", limit=80)
+    decisions = _prefer_structured_list(labeled, draft, "decisions", limit=8)
+    changed_files = _clean_file_list(labeled.get("changed_files") or draft.get("changed_files"), limit=16, item_limit=180)
+    verification = _prefer_structured_list(labeled, draft, "verification", limit=8)
     changed_files, blocked_changed_files = _filter_grounded_items(changed_files, raw_notes)
     verification, blocked_verification = _filter_grounded_items(verification, raw_notes)
-    remaining_risk = _clean_list(draft.get("remaining_risk") or labeled.get("remaining_risk"), limit=8)
-    blockers = _clean_list(draft.get("blockers") or labeled.get("blockers"), limit=8)
+    remaining_risk = _prefer_structured_list(labeled, draft, "remaining_risk", limit=8)
+    blockers = _prefer_structured_list(labeled, draft, "blockers", limit=8)
+    structured_lost = [
+        key for key in ("decisions", "changed_files", "verification", "remaining_risk", "blockers")
+        if labeled.get(key) and not locals()[key]
+    ]
+    if labeled.get("next_step") and not next_step:
+        structured_lost.append("next_step")
     return {
         "project": project,
         "task_id": task_id,
@@ -186,10 +243,13 @@ def _normalize_draft(
         "verification": verification,
         "remaining_risk": remaining_risk,
         "next_step": next_step,
+        "next_step_scope": next_step_scope,
         "_blocked_ungrounded": {
             "changed_files": blocked_changed_files,
             "verification": blocked_verification,
         },
+        "_structured_extracted": sorted(key for key, value in labeled.items() if value),
+        "_structured_lost": structured_lost,
     }
 
 
@@ -209,8 +269,11 @@ def evaluate_scribe_quality(draft: dict[str, Any]) -> dict[str, Any]:
         for key, value in (draft.get("_blocked_ungrounded") or {}).items()
         if value
     }
+    structured_lost = [str(item) for item in (draft.get("_structured_lost") or []) if str(item)]
     if blocked_ungrounded:
         missing.append("grounding_review")
+    if structured_lost:
+        missing.append("structured_fields_lost")
     status = "ready" if not missing else "needs_review"
     confidence = 0.9 if status == "ready" else max(0.35, 0.75 - 0.12 * len(missing))
     return {
@@ -220,6 +283,8 @@ def evaluate_scribe_quality(draft: dict[str, Any]) -> dict[str, Any]:
         "can_autofill_checkpoint": status == "ready",
         "requires_reasoning_model_review": status != "ready",
         "blocked_ungrounded": blocked_ungrounded,
+        "structured_fields_lost": structured_lost,
+        "summary_compressed": len(str(draft.get("summary") or "")) >= 520,
     }
 
 
@@ -236,6 +301,7 @@ def _checkpoint_args_from_draft(draft: dict[str, Any], payload: dict[str, Any]) 
         "verification": draft["verification"],
         "remaining_risk": draft["remaining_risk"],
         "next_step": draft["next_step"],
+        "next_step_scope": draft.get("next_step_scope") or "unknown",
         "status": draft["status"],
         "reason": str(payload.get("reason") or "draft_task_checkpoint").strip(),
         "acted_by": acted_by,
@@ -246,7 +312,7 @@ def _checkpoint_args_from_draft(draft: dict[str, Any], payload: dict[str, Any]) 
 def build_scribe_prompt(payload: dict[str, Any]) -> str:
     return (
         "Convert the raw agent work notes into a compact SuperMemory task checkpoint draft.\n"
-        "Return JSON only with keys: summary, blockers, decisions, changed_files, verification, remaining_risk, next_step.\n"
+        "Return JSON only with keys: summary, blockers, decisions, changed_files, verification, remaining_risk, next_step, next_step_scope.\n"
         "Rules: preserve concrete facts; do not invent files, tests, or decisions; use empty arrays when evidence is absent; keep each item short.\n\n"
         f"Project: {payload.get('project') or 'supermemory'}\n"
         f"Task id: {payload.get('task_id') or ''}\n"
@@ -301,10 +367,15 @@ async def compact_memory_scribe(payload: dict[str, Any], llm_gateway: Any | None
         raw_notes=raw_notes,
     )
     blocked_ungrounded = draft.pop("_blocked_ungrounded", {})
+    structured_extracted = draft.pop("_structured_extracted", [])
+    structured_lost = draft.pop("_structured_lost", [])
     if any(blocked_ungrounded.values()):
         draft["_blocked_ungrounded"] = blocked_ungrounded
+    if structured_lost:
+        draft["_structured_lost"] = structured_lost
     quality = evaluate_scribe_quality(draft)
     draft.pop("_blocked_ungrounded", None)
+    draft.pop("_structured_lost", None)
     checkpoint_args = _checkpoint_args_from_draft(draft, {**payload, "reason": str(payload.get("reason") or "memory_scribe_compact")})
     checkpoint_content = build_task_checkpoint_content(
         stage=stage,
@@ -316,6 +387,7 @@ async def compact_memory_scribe(payload: dict[str, Any], llm_gateway: Any | None
         verification=draft["verification"],
         remaining_risk=draft["remaining_risk"],
         next_step=draft["next_step"],
+        next_step_scope=draft.get("next_step_scope") or "",
         reason=str(payload.get("reason") or "memory_scribe_compact").strip(),
     )
     result = {
@@ -331,6 +403,12 @@ async def compact_memory_scribe(payload: dict[str, Any], llm_gateway: Any | None
             "mode": str(payload.get("mode") or "economy"),
             "mutates_memory": False,
             "error": scribe_error,
+        },
+        "source_evidence": {
+            "preserved": bool(payload.get("preserve_evidence") or str(payload.get("mode") or "") in {"preserve_evidence", "no_compression"}),
+            "raw_notes": raw_notes if bool(payload.get("preserve_evidence") or str(payload.get("mode") or "") in {"preserve_evidence", "no_compression"}) else "",
+            "raw_notes_chars": len(raw_notes),
+            "structured_extracted": structured_extracted,
         },
     }
     result["token_budget"] = build_token_budget(

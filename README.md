@@ -63,6 +63,26 @@ This uses the Docker Compose `test` profile (`memory-server-test`, `qdrant-test`
 `mcp-e2e-test-runner`) with disposable test storage so replay/e2e fixtures do not
 pollute the working `qdrant_data` database.
 
+DB-backed integration/e2e checks must use this Docker test contour. The live
+server is on host `8000`; the test server is on host `8010` and
+`memory-server-test:8000` inside Docker. Do not start a host `uvicorn` server or
+point DB-backed tests at `localhost:8000` unless the user explicitly approves the
+unsafe override `SUPERMEMORY_ALLOW_UNSAFE_LIVE_TESTS=1`.
+The guard reads the project contour from `SUPERMEMORY_DB_TEST_TARGETS` and live
+targets from `SUPERMEMORY_LIVE_TARGETS`; container names and ports belong in
+Compose/env configuration, not in the guard mechanism.
+
+Agent-facing pytest entrypoint:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps1 tests/test_testing_guard.py -q
+```
+
+This runs pytest inside the Compose `test` profile instead of the Windows host,
+so tests do not depend on host temp directory ACLs. Agents should prefer this
+wrapper over local `pytest` unless they are intentionally running a tiny
+host-only unit check.
+
 ## MCP
 
 Two transports are available:
@@ -71,6 +91,45 @@ Two transports are available:
   `.mcp.json` points to `http://localhost:8000/mcp/sse`
 - `STDIO`
   `python -m mcp.server`
+
+### Compact Tool Discovery
+
+Supermemory can expose a compact MCP catalog for clients that do not want to
+load the full flat tool list. The compact catalog starts with `operational_tray`,
+the state-aware facade for normal project work, followed by staged discovery
+tools.
+
+Compatibility default: `tools/list` without parameters still returns the full
+catalog unless the MCP session negotiated compact mode during `initialize`.
+
+Opt in during `initialize`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "clientInfo": {"name": "Example Client"},
+    "_supermemory": {
+      "tool_catalog": {
+        "preferred_mode": "compact"
+      }
+    }
+  }
+}
+```
+
+After that, empty `tools/list` calls in the same session return the compact
+catalog. Clients can also request either mode explicitly:
+
+```json
+{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"mode": "compact"}}
+{"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {"mode": "full"}}
+```
+
+Use `operational_tray` first for task work. Use `mode=full` only for debug,
+compatibility, or when staged discovery says a deeper tool surface is needed.
 
 ## Public Alpha Defaults
 
