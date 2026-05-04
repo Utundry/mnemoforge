@@ -447,6 +447,51 @@ async def test_create_active_law_without_confirmation_is_rejected(client):
 
 
 @pytest.mark.asyncio
+async def test_create_confirmed_law_uses_deterministic_vector_when_embedding_unavailable(client):
+    from app import dependencies
+    from app.config import settings
+
+    dependencies.get_ollama().embed.side_effect = RuntimeError("embedding provider unavailable")
+
+    created = await client.post(f"{PREFIX}/laws", json={
+        "project": "alpha",
+        "title": "Confirmed deterministic law",
+        "statement": "Confirmed user laws should not be blocked by an unavailable embedding provider.",
+        "agent_id": "codex",
+        "status": "active",
+        "confirmed_by": "user",
+        "confirmation_source": "test",
+    })
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["status"] == "active"
+    assert body["confirmed_by"] == "user"
+    fetched = await client.get(f"{PREFIX}/laws/{body['id']}")
+    assert fetched.status_code == 200
+    fetched_body = fetched.json()
+    assert fetched_body["status"] == "active"
+    record = await dependencies.get_qdrant().get(body["id"])
+    assert record.meta["embedding_fallback"] == "zero_vector"
+    assert len([0.0] * settings.embedding_dimensions) == settings.embedding_dimensions
+
+
+@pytest.mark.asyncio
+async def test_create_unconfirmed_law_still_fails_when_embedding_unavailable(client):
+    from app import dependencies
+
+    dependencies.get_ollama().embed.side_effect = RuntimeError("embedding provider unavailable")
+    created = await client.post(f"{PREFIX}/laws", json={
+        "project": "alpha",
+        "title": "Unconfirmed law",
+        "statement": "Unconfirmed laws still require normal semantic storage.",
+        "agent_id": "codex",
+        "status": "proposed",
+    })
+    assert created.status_code == 400
+    assert "embedding provider unavailable" in created.text
+
+
+@pytest.mark.asyncio
 async def test_import_project_laws_from_markdown_is_repeatable(client, tmp_path):
     path = tmp_path / "PROJECT_LAW.md"
     path.write_text(

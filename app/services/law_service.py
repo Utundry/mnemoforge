@@ -5,6 +5,7 @@ from typing import Optional
 
 from qdrant_client.http import models as qmodels
 
+from app.config import settings
 from app.models.enums import MemoryType
 from app.models.law import ProjectLawCandidate, ProjectLawConfirmRequest, ProjectLawCreate, ProjectLawRecord, ProjectLawUpdate
 from app.models.memory import MemoryCreate, MemoryUpdate
@@ -190,7 +191,17 @@ async def create_project_law(qdrant, ollama, body: ProjectLawCreate) -> ProjectL
         status=body.status,
         meta=meta,
     )
-    vector = await ollama.embed(memory.content)
+    try:
+        vector = await ollama.embed(memory.content)
+    except Exception:
+        if body.status not in CONFIRMED_STATUSES:
+            raise
+        vector = [0.0] * settings.embedding_dimensions
+        memory.meta = {
+            **(memory.meta or {}),
+            "embedding_fallback": "zero_vector",
+            "embedding_fallback_reason": "confirmed_law_create_embedding_unavailable",
+        }
     memory_id = await qdrant.insert(memory, vector)
     record = await qdrant.get(memory_id)
     return _law_record_from_memory(record, requested_project=body.project)

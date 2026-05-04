@@ -69,6 +69,46 @@ def _llm_status(lmstudio_status: dict | None = None) -> dict:
         },
     }
 
+
+def _provider_matrix_status(*, ollama_ok: bool, lmstudio_status: dict, llm: dict) -> dict:
+    cloud_ok = bool(llm.get("cloud_available"))
+    lmstudio_ok = bool((lmstudio_status or {}).get("reachable"))
+    providers = {
+        "ollama": {
+            "enabled": settings.local_llm_provider in {"", "auto", "ollama"}
+            or "ollama" in _parse_model_list(settings.local_llm_fallback_order),
+            "reachable": bool(ollama_ok),
+            "kind": "local",
+            "url": settings.ollama_base_url,
+        },
+        "lmstudio": {
+            "enabled": settings.local_llm_provider in {"auto", "lmstudio"}
+            or "lmstudio" in _parse_model_list(settings.local_llm_fallback_order),
+            "reachable": lmstudio_ok,
+            "kind": "local_openai_compatible",
+            "url": settings.lmstudio_base_url,
+            "selected_model": (lmstudio_status or {}).get("selected_model", ""),
+        },
+        "cloud": {
+            "enabled": cloud_ok,
+            "reachable": cloud_ok,
+            "kind": "cloud_openai_compatible",
+            "models": llm.get("configured_cloud_models") or [],
+            "default_provider": llm.get("default_cloud_provider"),
+        },
+    }
+    usable = [
+        name
+        for name, provider in providers.items()
+        if bool(provider.get("enabled")) and bool(provider.get("reachable"))
+    ]
+    return {
+        "healthy": bool(usable),
+        "usable_providers": usable,
+        "providers": providers,
+        "health_rule": "healthy when at least one enabled LLM provider is usable",
+    }
+
 _COMPONENTS = [
     {
         "id": "memory",
@@ -176,7 +216,8 @@ async def health(qdrant: QdrantDep, ollama: OllamaDep):
     data_hygiene = get_data_hygiene_store().overview()
     storage_trust = build_storage_trust_report()
     llm = _llm_status(lmstudio)
-    status = "ok" if (qdrant_ok and ollama_ok and integrity["status"] == "ok") else "degraded"
+    llm_providers = _provider_matrix_status(ollama_ok=ollama_ok, lmstudio_status=lmstudio, llm=llm)
+    status = "ok" if (qdrant_ok and llm_providers["healthy"] and integrity["status"] == "ok") else "degraded"
     return {
         "status": status,
         "started_at": _STARTED_AT,
@@ -184,6 +225,7 @@ async def health(qdrant: QdrantDep, ollama: OllamaDep):
         "ollama": {"reachable": ollama_ok},
         "lmstudio": lmstudio,
         "llm": llm,
+        "llm_providers": llm_providers,
         "integrity": integrity,
         "data_hygiene": data_hygiene,
         "storage_trust": storage_trust,
@@ -208,6 +250,7 @@ async def system_info(qdrant: QdrantDep, ollama: OllamaDep):
     data_hygiene = get_data_hygiene_store().overview()
     storage_trust = build_storage_trust_report()
     llm = _llm_status(lmstudio)
+    llm_providers = _provider_matrix_status(ollama_ok=ollama_ok, lmstudio_status=lmstudio, llm=llm)
 
     # Live counters — best-effort, don't fail if unavailable
     memory_count = 0
@@ -260,7 +303,7 @@ async def system_info(qdrant: QdrantDep, ollama: OllamaDep):
         pass
 
     return {
-        "status": "ok" if (qdrant_ok and ollama_ok and integrity["status"] == "ok") else "degraded",
+        "status": "ok" if (qdrant_ok and llm_providers["healthy"] and integrity["status"] == "ok") else "degraded",
         "started_at": _STARTED_AT,
         "uptime_seconds": int(time.time()) - _STARTED_AT,
         "infrastructure": {
@@ -270,6 +313,7 @@ async def system_info(qdrant: QdrantDep, ollama: OllamaDep):
             "embedding_model": settings.ollama_embedding_model,
             "embedding_dimensions": settings.embedding_dimensions,
             "llm": llm,
+            "llm_providers": llm_providers,
         },
         "counters": {
             "memories": memory_count,

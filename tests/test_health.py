@@ -15,6 +15,7 @@ async def test_health(client):
     assert "ollama" in data
     assert "lmstudio" in data
     assert "llm" in data
+    assert "llm_providers" in data
     assert "integrity" in data
     assert "data_hygiene" in data
     assert "storage_trust" in data
@@ -23,6 +24,35 @@ async def test_health(client):
     assert "reachable" in data["lmstudio"]
     assert "cloud_available" in data["llm"]
     assert "configured_cloud_models" in data["llm"]
+    assert data["llm_providers"]["healthy"] is True
+    assert "ollama" in data["llm_providers"]["providers"]
+
+
+@pytest.mark.asyncio
+async def test_health_is_ok_when_ollama_down_but_lmstudio_available(client, monkeypatch):
+    get_data_integrity_store().clear()
+    from app import dependencies
+    from app.routers import health as health_router
+
+    dependencies.get_ollama().health.return_value = False
+
+    async def fake_lmstudio_status():
+        return {
+            "reachable": True,
+            "url": "http://localhost:1234/v1",
+            "model": "auto",
+            "selected_model": "local-lmstudio",
+            "models": ["local-lmstudio"],
+        }
+
+    monkeypatch.setattr(health_router, "_lmstudio_status", fake_lmstudio_status)
+    resp = await client.get(f"{PREFIX}/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["ollama"]["reachable"] is False
+    assert data["llm_providers"]["healthy"] is True
+    assert "lmstudio" in data["llm_providers"]["usable_providers"]
 
 
 @pytest.mark.asyncio

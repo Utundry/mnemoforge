@@ -29,8 +29,34 @@ function Invoke-DockerChecked {
     }
 }
 
+function Test-DockerAccess {
+    Write-Host "[pytest-docker] preflight: checking Docker daemon access"
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & docker version --format "{{.Server.Version}}" 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -eq 0) {
+        return
+    }
+
+    $message = ($output | Out-String).Trim()
+    Write-Host "[pytest-docker] Docker preflight failed before test setup."
+    Write-Host "[pytest-docker] This usually means the agent cannot access Docker from the current Windows security context."
+    Write-Host "[pytest-docker] Use the approved Docker pytest contour with elevated permissions instead of retrying host pytest."
+    if ($message) {
+        Write-Host "[pytest-docker] docker version output: $message"
+    }
+    throw "Docker daemon is not accessible from this shell; rerun the Docker test wrapper with elevated permissions."
+}
+
 Write-Host "[pytest-docker] project root: $Root"
 Write-Host "[pytest-docker] service: $Service"
+Test-DockerAccess
 Write-Host "[pytest-docker] checking docker compose test profile"
 Invoke-DockerChecked @("compose", "--profile", "test", "config", "--quiet")
 
