@@ -30,6 +30,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
+from app.services.llm_gateway import get_cloud_gateway
+
 logger = logging.getLogger(__name__)
 
 
@@ -480,7 +482,16 @@ class ModelMirror:
             # Call LLM
             logger.info("Model mirror: calling LLM (source=%s, events=%d, patterns=%d)",
                         analysis_source, result.events_analyzed, result.patterns_found)
-            raw_response = await ollama.generate(prompt, model=MODEL_MIRROR_GENERATE_MODEL)
+            raw_response = await get_cloud_gateway().generate(
+                prompt,
+                task_type="memory_extraction",
+                mode="economy",
+                max_tokens=1200,
+                temperature=0.0,
+                timeout=60.0,
+                allow_local_fallback=True,
+                prefer_local=True,
+            )
 
             if not raw_response:
                 result.errors.append("LLM returned empty response")

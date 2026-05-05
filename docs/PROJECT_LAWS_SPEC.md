@@ -1,11 +1,11 @@
 # Project Laws Specification
 
 Status: draft
-Scope: architecture target for `supermemory`
+Scope: architecture target for `mnemoforge`
 
 ## Purpose
 
-`supermemory` must support project-specific laws for agents.
+`mnemoforge` must support project-specific laws for agents.
 
 A project law is a governed knowledge artifact that defines how agents should behave while working on a specific project.
 

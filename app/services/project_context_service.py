@@ -9,6 +9,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qmodels
 
 from app.services.improvements_store import get_improvements_store
+from app.services.embedding_gateway import embed_query
 from app.services.knowledge_language import canonicalize_agent_fields_to_english
 from app.services.crystallization_service import list_canonicals
 from app.services.law_service import build_law_context_block, list_project_laws
@@ -147,11 +148,11 @@ def _is_runtime_hint_retrieval_worthy(row: dict[str, Any]) -> bool:
 
     if not content:
         return False
-    if "supermemory-demo" in payload_blob:
+    if "mnemoforge-demo" in payload_blob:
         return False
-    if project_ref == "supermemory-demo":
+    if project_ref == "mnemoforge-demo":
         return False
-    if "project:supermemory-demo" in tags:
+    if "project:mnemoforge-demo" in tags:
         return False
 
     # Suppress weak legacy/demo artifacts that have little evidence.
@@ -1069,7 +1070,11 @@ async def _fetch_promoted_canonicals(
     if not force:
         return []
     try:
-        vector = await ollama.embed(task)
+        vector, _embedding_meta = await embed_query(
+            task,
+            primary=ollama,
+            purpose="promoted_canonical_search",
+        )
     except Exception as exc:
         logger.debug("Promoted canonical embedding failed: %s", exc)
         return []

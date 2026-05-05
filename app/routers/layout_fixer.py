@@ -26,12 +26,12 @@ from datetime import datetime, timezone
 from time import perf_counter
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.config import settings
 from app.dependencies import OllamaDep, QdrantDep
+from app.services.embedding_gateway import embed_query, embed_text
+from app.services.llm_gateway import get_cloud_gateway
 from app.services.performance_tracker import get_tracker
 
 logger = logging.getLogger(__name__)
@@ -353,16 +353,17 @@ def _rule_fix(text: str) -> tuple[str, str, float]:
 # ── LLM engine ────────────────────────────────────────────────────────────────
 
 async def _llm_call(prompt: str) -> str:
-    async with httpx.AsyncClient(timeout=60.0) as c:
-        r = await c.post(
-            f"{settings.ollama_base_url}/api/generate",
-            json={"model": MANAGER_MODEL, "prompt": prompt, "stream": False},
-        )
-        r.raise_for_status()
-        text = r.json()["response"].strip()
-        # Strip qwen3 <think>...</think> blocks
-        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-        return text
+    text = await get_cloud_gateway().generate(
+        prompt,
+        task_type="layout_fix",
+        mode="economy",
+        max_tokens=300,
+        temperature=0.0,
+        timeout=60.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
 async def _search_examples(
@@ -370,7 +371,11 @@ async def _search_examples(
 ) -> list[dict]:
     """Find similar past corrections from Qdrant to use as few-shot examples."""
     try:
-        vector = await ollama.embed(text)
+        vector, _embedding_meta = await embed_query(
+            text,
+            primary=ollama,
+            purpose="layout_examples",
+        )
         from qdrant_client.http import models as qmodels
         hits = await qdrant._client.search(
             collection_name=qdrant._collection,
@@ -526,7 +531,12 @@ async def _store_correction(
             if direction != "none"
             else f'"{original}" → unchanged (correct language)'
         )
-        vector = await ollama.embed(original)  # embed original for similarity search
+        vector, embedding_meta = await embed_text(
+            original,
+            primary=ollama,
+            purpose="layout_correction",
+            fallback_reason="layout_correction_embedding_unavailable",
+        )
 
         from app.models.memory import MemoryCreate
         from app.models.enums import MemoryType
@@ -558,6 +568,7 @@ async def _store_correction(
             "direction": direction,
             "confirmed": None,       # updated by /feedback endpoint
             "caller_agent": agent_id or "unknown",
+            "meta": embedding_meta,
         }
         await qdrant._client.upsert(
             collection_name=qdrant._collection,

@@ -12,11 +12,18 @@ load_dotenv()
 API_KEY = (
     os.environ.get("MEMORY_SERVER_API_KEY") or
     os.environ.get("API_KEY") or
+    os.environ.get("MNEMOFORGE_API_KEY") or
     os.environ.get("SUPER_MEMORY_API_KEY") or
     os.environ.get("SUPERMEMORY_API_KEY") or
     ""
 ).strip()
-BASE_URL = os.environ.get("SUPERMEMORY_SERVER_URL", "http://localhost:8000").rstrip("/")
+BASE_URL = (
+    os.environ.get("MNEMOFORGE_SERVER_URL") or
+    os.environ.get("MNEMOFORGE_URL") or
+    os.environ.get("SUPERMEMORY_SERVER_URL") or
+    os.environ.get("SUPERMEMORY_URL") or
+    "http://localhost:8000"
+).rstrip("/")
 API_PREFIX = os.environ.get("API_PREFIX", "/api/v1").strip()
 if not API_PREFIX.startswith("/"):
     API_PREFIX = "/" + API_PREFIX
@@ -49,7 +56,7 @@ def require_api_key() -> str:
         return API_KEY
     raise MissingApiKeyError(
         "Live API request requires X-API-Key, but no key was found. "
-        "Set MEMORY_SERVER_API_KEY, API_KEY, SUPER_MEMORY_API_KEY, or SUPERMEMORY_API_KEY."
+        "Set MEMORY_SERVER_API_KEY, API_KEY, MNEMOFORGE_API_KEY, SUPER_MEMORY_API_KEY, or SUPERMEMORY_API_KEY."
     )
 
 

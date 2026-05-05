@@ -19,14 +19,14 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.config import settings
 from app.dependencies import LayoutMemoryDep, OllamaDep, QdrantDep
 from app.models.enums import MemoryType
 from app.models.memory import MemoryCreate
+from app.services.embedding_gateway import embed_query, embed_text
+from app.services.llm_gateway import get_cloud_gateway
 from app.services.scoring_service import ScoringService
 
 logger = logging.getLogger(__name__)
@@ -242,18 +242,20 @@ async def _fix_layout_with_memory(
 # ── LLM call ───────────────────────────────────────────────────────────────────
 
 async def _llm(prompt: str) -> str:
-    """Call the local manager LLM via Ollama generate API."""
+    """Call the configured LLM gateway for memory-management prompts."""
     import re
-    async with httpx.AsyncClient(timeout=120.0) as c:
-        r = await c.post(
-            f"{settings.ollama_base_url}/api/generate",
-            json={"model": MANAGER_MODEL, "prompt": prompt, "stream": False},
-        )
-        r.raise_for_status()
-        text = r.json()["response"].strip()
-        # Strip qwen3 <think>...</think> blocks before returning
-        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-        return text
+
+    text = await get_cloud_gateway().generate(
+        prompt,
+        task_type="memory_extraction",
+        mode="economy",
+        max_tokens=1200,
+        temperature=0.0,
+        timeout=120.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
 # ── Prompts ────────────────────────────────────────────────────────────────────
@@ -375,7 +377,13 @@ async def auto_extract(body: ExtractRequest, qdrant: QdrantDep, ollama: OllamaDe
         )
 
         try:
-            vector = await ollama.embed(memory.content)
+            vector, embedding_meta = await embed_text(
+                memory.content,
+                primary=ollama,
+                purpose="auto_extract_memory",
+                fallback_reason="auto_extract_memory_embedding_unavailable",
+            )
+            memory.meta.update(embedding_meta)
             await qdrant.insert(memory, vector)
             stored += 1
             results.append(ExtractedMemory(
@@ -412,7 +420,11 @@ async def auto_context(body: ContextRequest, qdrant: QdrantDep, ollama: OllamaDe
 
     for term in search_terms[:3]:
         try:
-            vector = await ollama.embed(term)
+            vector, _embedding_meta = await embed_query(
+                term,
+                primary=ollama,
+                purpose="auto_context_search",
+            )
             hits = await qdrant.search(
                 vector=vector,
                 agent_id=body.agent_id,
@@ -550,7 +562,12 @@ async def extract_preview(body: PreviewRequest, qdrant: QdrantDep, ollama: Ollam
                 import uuid as _uuid
 
                 draft_id = str(_uuid.uuid4())
-                vector = await ollama.embed(candidate.content)
+                vector, embedding_meta = await embed_text(
+                    candidate.content,
+                    primary=ollama,
+                    purpose="auto_extract_draft",
+                    fallback_reason="auto_extract_draft_embedding_unavailable",
+                )
                 now = datetime.now(timezone.utc)
                 payload = {
                     "content": candidate.content,
@@ -564,6 +581,7 @@ async def extract_preview(body: PreviewRequest, qdrant: QdrantDep, ollama: Ollam
                     "access_count": 0,
                     "session_id": body.session_id,
                     "status": "draft",
+                    "meta": embedding_meta,
                     "decay_rate": 3.0,  # drafts decay fast if not confirmed
                 }
                 await qdrant._client.upsert(

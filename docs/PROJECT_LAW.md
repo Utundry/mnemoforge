@@ -1,11 +1,11 @@
-# SuperMemory Project Law
+# MnemoForge Project Law
 
-This document is a law of the current project: `supermemory`.
+This document is a law of the current project: `mnemoforge`.
 
 It is not a universal law for all projects.
 Other projects may and should have their own laws.
 
-`supermemory` exists to help agents work with any project, in any subject area, while preserving project-specific memory, tasks, documentation, and reusable experience.
+`mnemoforge` exists to help agents work with any project, in any subject area, while preserving project-specific memory, tasks, documentation, and reusable experience.
 
 ## Law 1: Every Project Has Its Own Laws
 
@@ -16,7 +16,7 @@ They are not global defaults.
 They are not hidden prompt assumptions.
 They are not hardcoded subject-matter rules.
 
-For `supermemory` itself, this means the system must support project-specific laws as a first-class capability.
+For `mnemoforge` itself, this means the system must support project-specific laws as a first-class capability.
 
 ## Law 2: Laws Live in Memory, Not in Code
 
@@ -76,15 +76,15 @@ LLM-generated documentation is allowed only as a synthesis layer over project ev
 
 ## Law 6: RepRap Is a Normal Case
 
-When `supermemory` works on itself, it is still just a project operating under project laws.
+When `mnemoforge` works on itself, it is still just a project operating under project laws.
 
 Self-reference does not grant special permission to hardcode project-specific knowledge into mechanisms.
 
-`supermemory` must improve itself by using the same project-memory, improvement, documentation, and law-evolution loops that it provides to other projects.
+`mnemoforge` must improve itself by using the same project-memory, improvement, documentation, and law-evolution loops that it provides to other projects.
 
 ## Law 7: Self-Improving Project Laws Are A Core Goal
 
-One of the main goals of `supermemory` is to let project laws evolve safely over time.
+One of the main goals of `mnemoforge` is to let project laws evolve safely over time.
 
 That means the system must support:
 - creating project laws
@@ -104,4 +104,4 @@ When choosing between:
 
 the second option is the default.
 
-If an implementation makes `supermemory` better only for the current project by embedding project-specific domain knowledge into code, it is almost certainly wrong.
+If an implementation makes `mnemoforge` better only for the current project by embedding project-specific domain knowledge into code, it is almost certainly wrong.

@@ -29,7 +29,7 @@ def _http_json(url: str, *, method: str = "GET", payload: dict | None = None, ap
 
 
 def main() -> int:
-    server = os.getenv("SUPERMEMORY_SERVER_URL", "http://127.0.0.1:8000").rstrip("/")
+    server = (os.getenv("MNEMOFORGE_SERVER_URL") or os.getenv("SUPERMEMORY_SERVER_URL", "http://127.0.0.1:8000")).rstrip("/")
     api_key = os.getenv("MEMORY_SERVER_API_KEY", "").strip()
 
     print(f"Testing unified artifacts MCP tools at {server}")
@@ -44,7 +44,7 @@ def main() -> int:
 
     # Test 2: List artifacts (HTTP endpoint)
     try:
-        artifacts = _http_json(f"{server}/api/v1/artifacts?project=supermemory&limit=10", api_key=api_key)
+        artifacts = _http_json(f"{server}/api/v1/artifacts?project=mnemoforge&limit=10", api_key=api_key)
         items = artifacts.get("items", [])
         print(f"✓ List artifacts (HTTP): {len(items)} items")
     except Exception as e:
@@ -77,7 +77,7 @@ def main() -> int:
             "params": {
                 "name": "list_artifacts",
                 "arguments": {
-                    "project": "supermemory",
+                    "project": "mnemoforge",
                     "limit": 5
                 }
             }

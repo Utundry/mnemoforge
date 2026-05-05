@@ -1,15 +1,15 @@
 # External Project Readiness Roadmap
 
 Status: active  
-Project: `supermemory`  
-Goal: make `supermemory` usable on a different project in a controlled pilot mode before claiming general readiness.
+Project: `mnemoforge`  
+Goal: make `mnemoforge` usable on a different project in a controlled pilot mode before claiming general readiness.
 
 Priority rule:
 - always prefer the next step that reduces hidden operator knowledge for an external project
-- findings discovered during the roadmap should be recorded in SuperMemory and fixed later unless they block the current slice
+- findings discovered during the roadmap should be recorded in MnemoForge and fixed later unless they block the current slice
 
 Current status summary:
-- Phase 0 is effectively complete for the `supermemory` project itself
+- Phase 0 is effectively complete for the `mnemoforge` project itself
 - Phase 1 is the highest-priority execution slice
 - Phases 2-4 are architectural follow-through and should not preempt Phase 1 unless a blocker is found
 
@@ -22,7 +22,7 @@ Completed or largely completed:
 - `task` and `task_change` entities
 - `decision_memoir` anchoring with quality filtering
 - `runtime_hint` inclusion with governance
-- governed `law` layer and live migration for `supermemory`
+- governed `law` layer and live migration for `mnemoforge`
 - `doc_section` sync into the shared memory layer
 - docs as projection, not truth source
 - coverage, missing-sources, and code-fallback signals
@@ -126,7 +126,7 @@ Exit criteria:
 Status: target milestone
 
 Objective:
-- run `supermemory` on one real non-self project in a test mode
+- run `mnemoforge` on one real non-self project in a test mode
 
 Pilot requirements:
 - new project bootstrap succeeds
@@ -137,4 +137,4 @@ Pilot requirements:
 - project context is machine-facing in English while preserving original evidence for auditability
 
 Success condition:
-- another project can use `supermemory` in a test workflow without relying on hidden repo-specific knowledge about `supermemory` itself
+- another project can use `mnemoforge` in a test workflow without relying on hidden repo-specific knowledge about `mnemoforge` itself

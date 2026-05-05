@@ -36,7 +36,11 @@ class Settings(BaseSettings):
     max_search_results: int = Field(20, alias="MAX_SEARCH_RESULTS")
     cleanup_min_importance: float = Field(0.2, alias="CLEANUP_MIN_IMPORTANCE")
     cleanup_max_age_days: int = Field(30, alias="CLEANUP_MAX_AGE_DAYS")
-    self_project_id: str = Field("supermemory", alias="SELF_PROJECT_ID")
+    self_project_id: str = Field("mnemoforge", alias="SELF_PROJECT_ID")
+    runtime_kind: str = Field("auto", alias="MNEMOFORGE_RUNTIME_KIND")
+    runtime_owner_guard: bool = Field(True, alias="MNEMOFORGE_RUNTIME_OWNER_GUARD")
+    runtime_owner_allow_takeover: bool = Field(False, alias="MNEMOFORGE_RUNTIME_OWNER_ALLOW_TAKEOVER")
+    runtime_owner_stale_seconds: float = Field(120.0, alias="MNEMOFORGE_RUNTIME_OWNER_STALE_SECONDS")
 
     # Module control — comma-separated list of module names to disable
     # Example: DISABLED_MODULES=watcher,layout_fixer,log_filter

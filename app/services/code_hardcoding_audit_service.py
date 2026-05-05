@@ -50,7 +50,7 @@ _PATTERN_REGISTRY: list[dict[str, Any]] = [
         "description": "Looks like a concrete API key or shared secret value is embedded in code or scripts.",
         "suggestion": "Remove fixed credentials from code paths and replace them with environment/config injection.",
         "regex": re.compile(
-            r"(?i)(?:supermemory-local|api[_-]?key\s*[:=]\s*['\"][^'\"]{6,}['\"]|x-api-key['\"]?\s*[:=]\s*['\"][^'\"]{6,}['\"])",
+            r"(?i)(?:mnemoforge-local|api[_-]?key\s*[:=]\s*['\"][^'\"]{6,}['\"]|x-api-key['\"]?\s*[:=]\s*['\"][^'\"]{6,}['\"])",
         ),
     },
     {

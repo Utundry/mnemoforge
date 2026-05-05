@@ -30,7 +30,7 @@ _DB_PATH = Path("qdrant_data") / "improvements.db"
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS improvements (
     id              TEXT PRIMARY KEY,
-    project         TEXT NOT NULL DEFAULT 'supermemory',
+    project         TEXT NOT NULL DEFAULT 'mnemoforge',
     title           TEXT NOT NULL,
     norm_title      TEXT NOT NULL DEFAULT '',
     description     TEXT NOT NULL DEFAULT '',
@@ -155,7 +155,7 @@ class ImprovementsStore:
         *,
         title: str,
         description: str,
-        project: str = "supermemory",
+        project: str = "mnemoforge",
         agent_id: str = "llm",
         importance_score: float = 0.7,
         tags: list[str] | None = None,
@@ -189,7 +189,7 @@ class ImprovementsStore:
         *,
         title: str,
         description: str,
-        project: str = "supermemory",
+        project: str = "mnemoforge",
         agent_id: str = "llm",
         importance_score: float = 0.7,
         tags: list[str] | None = None,

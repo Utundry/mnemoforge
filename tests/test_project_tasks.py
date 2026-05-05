@@ -16,6 +16,7 @@ from app.services import memoir_service
 from app.services.memory_store import get_memory_store
 from app.services.project_task_service import backfill_tasks_from_improvements, list_project_tasks
 from app.services.project_tasks_store import ProjectTasksStore
+import app.services.project_identity_service as project_identity_service
 
 
 @pytest.mark.asyncio
@@ -65,6 +66,64 @@ async def test_project_tasks_api_roundtrip(client) -> None:
     listing = listed.json()
     assert listing["total"] == 1
     assert listing["items"][0]["task_id"] == "task-alpha-1"
+
+
+@pytest.mark.asyncio
+async def test_project_tasks_api_resolves_project_alias_for_resume_paths(client, monkeypatch) -> None:
+    project_identity_service.close_project_identity_store()
+    alias_store = project_identity_service.ProjectIdentityStore(Path(":memory:"))
+    monkeypatch.setattr(project_identity_service, "_STORE", alias_store)
+    alias_store.upsert_alias(
+        alias="mnemoforge",
+        project_id="mnemoforge",
+        reason="canonical",
+    )
+    alias_store.upsert_alias(
+        alias="supermemory",
+        project_id="mnemoforge",
+        reason="old working name",
+    )
+    try:
+        create = await client.post(
+            "/api/v1/project/tasks",
+            json={
+                "task_id": "publish-release",
+                "project": "supermemory",
+                "title": "Publish release",
+                "description": "Publish to GitHub and Docker Hub.",
+                "agent_id": "codex",
+                "status": "active",
+                "tags": ["github", "dockerhub", "project:supermemory"],
+            },
+        )
+        assert create.status_code == 201, create.text
+
+        change = await client.post(
+            "/api/v1/project/tasks/publish-release/changes",
+            json={
+                "project": "supermemory",
+                "change_type": "decision",
+                "content": "Use MnemoForge as release identity.",
+                "agent_id": "codex",
+                "tags": ["project:supermemory"],
+            },
+        )
+        assert change.status_code == 201, change.text
+
+        fetched = await client.get("/api/v1/project/tasks/publish-release?project=mnemoforge")
+        assert fetched.status_code == 200, fetched.text
+        body = fetched.json()
+        assert body["task_id"] == "publish-release"
+        assert body["project"] == "mnemoforge"
+        assert "project:mnemoforge" in body["tags"]
+        assert "project:supermemory" not in body["tags"]
+        assert body["changes"][0]["project"] == "mnemoforge"
+        assert "project:mnemoforge" in body["changes"][0]["tags"]
+
+        statement = await client.get("/api/v1/project/tasks/publish-release/statement?project=mnemoforge")
+        assert statement.status_code == 200, statement.text
+    finally:
+        alias_store.close()
 
 
 @pytest.mark.asyncio
@@ -262,6 +321,116 @@ async def test_task_change_normalizes_artifact_key_before_capture_refresh_job(cl
     ]
     assert matching
     assert all((job.get("payload") or {}).get("task_id") != "task:alpha:task-artifact-key-capture-1" for job in jobs)
+
+
+@pytest.mark.asyncio
+async def test_task_change_uses_lmstudio_embedding_fallback_when_primary_embedding_is_down(client, monkeypatch) -> None:
+    from app.dependencies import get_ollama
+
+    create = await client.post(
+        "/api/v1/project/tasks",
+        json={
+            "task_id": "task-lmstudio-embedding-fallback-1",
+            "project": "alpha",
+            "title": "Keep checkpointing provider-flexible",
+            "description": "Task changes should not require Ollama when another local embedding provider is available.",
+            "agent_id": "architect",
+            "status": "active",
+        },
+    )
+    assert create.status_code == 201, create.text
+
+    class FakeLMStudioService:
+        async def embed(self, text: str) -> list[float]:
+            return [0.2] * settings.embedding_dimensions
+
+        async def close(self) -> None:
+            return None
+
+    get_ollama().embed.side_effect = RuntimeError("Cannot connect to Ollama")
+    monkeypatch.setattr("app.services.embedding_gateway.LMStudioService", FakeLMStudioService)
+
+    change = await client.post(
+        "/api/v1/project/tasks/task-lmstudio-embedding-fallback-1/changes",
+        json={
+            "project": "alpha",
+            "change_type": "implementation",
+            "content": "Recorded checkpoint through LM Studio embedding fallback.",
+            "why": "Checkpointing must use available configured providers instead of requiring Ollama.",
+            "agent_id": "codex",
+            "source": "mcp",
+        },
+    )
+    assert change.status_code == 201, change.text
+
+    fetched = await client.get("/api/v1/project/tasks/task-lmstudio-embedding-fallback-1?project=alpha")
+    assert fetched.status_code == 200, fetched.text
+    body = fetched.json()
+    assert body["changes"][0]["content"].startswith("[implementation]")
+
+
+@pytest.mark.asyncio
+async def test_task_change_uses_cloud_semantic_fallback_when_local_embeddings_are_down(client, monkeypatch) -> None:
+    from app.dependencies import get_ollama, get_qdrant
+
+    create = await client.post(
+        "/api/v1/project/tasks",
+        json={
+            "task_id": "task-cloud-embedding-fallback-1",
+            "project": "alpha",
+            "title": "Keep checkpointing cloud-capable",
+            "description": "Task changes should survive when local embedding services are unavailable.",
+            "agent_id": "architect",
+            "status": "active",
+        },
+    )
+    assert create.status_code == 201, create.text
+
+    class FakeLMStudioService:
+        async def embed(self, text: str) -> list[float]:
+            return []
+
+        async def close(self) -> None:
+            return None
+
+    class FakeCloudGateway:
+        async def generate(self, prompt: str, **kwargs) -> str:
+            assert kwargs["allow_local_fallback"] is False
+            return "checkpoint cloud fallback deepseek release readiness task change"
+
+    get_ollama().embed.side_effect = RuntimeError("Cannot connect to Ollama")
+    monkeypatch.setattr("app.services.embedding_gateway.LMStudioService", FakeLMStudioService)
+    monkeypatch.setattr("app.services.embedding_gateway.get_cloud_gateway", lambda: FakeCloudGateway())
+
+    change = await client.post(
+        "/api/v1/project/tasks/task-cloud-embedding-fallback-1/changes",
+        json={
+            "project": "alpha",
+            "change_type": "implementation",
+            "content": "Recorded checkpoint through cloud semantic fallback.",
+            "why": "Checkpointing should not require local LLM services when cloud LLM is configured.",
+            "agent_id": "codex",
+            "source": "mcp",
+        },
+    )
+    assert change.status_code == 201, change.text
+
+    rows, _ = await get_qdrant()._client.scroll(
+        collection_name=settings.qdrant_collection_name,
+        scroll_filter=qmodels.Filter(
+            must=[
+                qmodels.FieldCondition(key="category", match=qmodels.MatchValue(value="task_change")),
+                qmodels.FieldCondition(key="tags", match=qmodels.MatchValue(value="task_id:task-cloud-embedding-fallback-1")),
+            ]
+        ),
+        limit=5,
+        with_payload=True,
+        with_vectors=False,
+    )
+    assert rows
+    payload = rows[0].payload or {}
+    assert payload["meta"]["embedding_provider"] == "cloud_semantic_hash"
+    assert payload["meta"]["embedding_fallback_from"] == "local_embeddings"
 
 
 @pytest.mark.asyncio

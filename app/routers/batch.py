@@ -11,6 +11,7 @@ from app.models.memory import (
     CleanupRequest,
     CleanupResponse,
 )
+from app.services.embedding_gateway import embed_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/memories", tags=["batch"])
@@ -18,13 +19,17 @@ router = APIRouter(prefix="/memories", tags=["batch"])
 
 @router.post("/batch", response_model=BatchCreateResponse)
 async def batch_create(body: BatchCreateRequest, qdrant: QdrantDep, ollama: OllamaDep, response: Response):
-    texts = [m.content for m in body.memories]
-    vectors = await ollama.embed_batch(texts)
-
     created_ids: list[UUID] = []
     failed = 0
-    for memory, vector in zip(body.memories, vectors):
+    for memory in body.memories:
         try:
+            vector, embedding_meta = await embed_text(
+                memory.content,
+                primary=ollama,
+                purpose="memory_batch_store",
+                fallback_reason="memory_batch_store_embedding_unavailable",
+            )
+            memory.meta = {**(memory.meta or {}), **embedding_meta}
             mid = await qdrant.insert(memory, vector)
             created_ids.append(mid)
         except Exception as e:

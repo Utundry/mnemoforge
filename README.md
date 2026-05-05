@@ -1,8 +1,12 @@
-# Supermemory
+# MnemoForge
 
 Local-first project memory and coordination server for AI coding agents.
 
-Supermemory is not just a long chat log or a bigger prompt window. It gives agents a shared memory layer for:
+MnemoForge is the public release name for this project. The development project
+may still appear internally as `mnemoforge` in task history, storage metadata,
+and compatibility-oriented code paths.
+
+MnemoForge is not just a long chat log or a bigger prompt window. It gives agents a shared memory layer for:
 - semantic retrieval
 - project-scoped context
 - governed knowledge such as laws, runtime hints, and improvements
@@ -11,9 +15,9 @@ Supermemory is not just a long chat log or a bigger prompt window. It gives agen
 
 Stack: FastAPI + Qdrant + SQLite + Ollama.
 
-## Why Supermemory
+## Why MnemoForge
 
-Use Supermemory when you want agents to work with durable project memory instead of starting every session from scratch.
+Use MnemoForge when you want agents to work with durable project memory instead of starting every session from scratch.
 
 What it does well:
 - project-aware memory, not only user-profile memory
@@ -28,6 +32,8 @@ What it does well:
 - Client setup: `CLIENT_SETUP.md`
 - Public alpha status: `STATUS.md`
 - External-project roadmap: `docs/EXTERNAL_PROJECT_ROADMAP.md`
+- Usage conditions: `docs/USAGE_CONDITIONS.md`
+- Public release checklist: `docs/PUBLIC_RELEASE_CHECKLIST.md`
 - Safe demo dataset: `demo/README.md`
 
 ### Docker Compose
@@ -38,8 +44,11 @@ docker compose up -d
 
 Default ports:
 - Qdrant: `6333` / `6334`
-- API, dev/live-mount service: `8000`
-- API, baked production image: `8001`
+- API, development container published on host `8000`: `8000`
+- API, baked production container published on host `8001`: `8001`
+
+Local development and container layout details are documented in
+[`docs/CONTAINER_STATUS.md`](docs/CONTAINER_STATUS.md).
 
 Health probe:
 
@@ -67,10 +76,16 @@ DB-backed integration/e2e checks must use this Docker test contour. The live
 server is on host `8000`; the test server is on host `8010` and
 `memory-server-test:8000` inside Docker. Do not start a host `uvicorn` server or
 point DB-backed tests at `localhost:8000` unless the user explicitly approves the
-unsafe override `SUPERMEMORY_ALLOW_UNSAFE_LIVE_TESTS=1`.
-The guard reads the project contour from `SUPERMEMORY_DB_TEST_TARGETS` and live
-targets from `SUPERMEMORY_LIVE_TARGETS`; container names and ports belong in
+unsafe override `MNEMOFORGE_ALLOW_UNSAFE_LIVE_TESTS=1`.
+The guard reads the project contour from `MNEMOFORGE_DB_TEST_TARGETS` and live
+targets from `MNEMOFORGE_LIVE_TARGETS`; container names and ports belong in
 Compose/env configuration, not in the guard mechanism.
+
+Production `qdrant_data` also has a runtime ownership guard. A writable server
+writes `qdrant_data/runtime_owner.json` with a heartbeat; another writable
+runtime on the same DB is refused while that owner is active. Host restarts via
+`scripts\restart_server.ps1 -Mode local` perform the same preflight and require
+the explicit `-AllowSharedDb` override if a Docker runtime owns the DB.
 
 Agent-facing pytest entrypoint:
 
@@ -94,7 +109,7 @@ Two transports are available:
 
 ### Compact Tool Discovery
 
-Supermemory can expose a compact MCP catalog for clients that do not want to
+MnemoForge can expose a compact MCP catalog for clients that do not want to
 load the full flat tool list. The compact catalog starts with `operational_tray`,
 the state-aware facade for normal project work, followed by staged discovery
 tools.
@@ -111,7 +126,7 @@ Opt in during `initialize`:
   "method": "initialize",
   "params": {
     "clientInfo": {"name": "Example Client"},
-    "_supermemory": {
+    "_mnemoforge": {
       "tool_catalog": {
         "preferred_mode": "compact"
       }
@@ -138,6 +153,25 @@ Recommended defaults for a public alpha:
 - do not ship live service data
 - keep experimental modules disabled by default
 - enable `API_KEY` when the server is reachable outside localhost
+- use `.env.public.example` as the public-release template instead of the full internal `.env.example`
+
+Public bootstrap:
+
+```bash
+python scripts/bootstrap_public_release.py --check
+```
+
+Release artifact audit:
+
+```bash
+python scripts/audit_release_artifacts.py
+```
+
+Docker Hub publish helper:
+
+```bash
+python scripts/publish_docker_image.py --repository yourname/mnemoforge --tag latest --push
+```
 
 Current recommended `DISABLED_MODULES` baseline:
 

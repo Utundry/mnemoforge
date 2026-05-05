@@ -26,6 +26,7 @@ from app.services.governed_artifact import (
     prefixed_candidate_patch,
 )
 from app.services.data_hygiene_service import memory_payload_should_be_excluded_from_learning
+from app.services.embedding_gateway import embed_text
 from app.services.project_tree_store import get_tree_store
 from app.services.qdrant_service import _point_to_record
 
@@ -676,7 +677,12 @@ async def apply_crystallization(
             target_scope=candidate.target_scope,
         )
     )
-    vector = await ollama_svc.embed(statement)
+    vector, embedding_meta = await embed_text(
+        statement,
+        primary=ollama_svc,
+        purpose="crystallization_canonical",
+        fallback_reason="crystallization_canonical_embedding_unavailable",
+    )
     candidate.statement = statement
 
     existing_matches = await qdrant_client.search(
@@ -748,6 +754,7 @@ async def apply_crystallization(
             "source_scope": candidate.source_scope,
             "observation": candidate.observation,
             "why_it_matters": candidate.why_it_matters,
+            "meta": embedding_meta,
             **_clear_candidate_revision_patch(),
         }
         await qdrant_client.upsert(
@@ -1150,7 +1157,13 @@ async def apply_canonical_candidate(
         "last_review_reason": reason or None,
         **_clear_candidate_revision_patch(),
     }
-    vector = await ollama_svc.embed(content)
+    vector, embedding_meta = await embed_text(
+        content,
+        primary=ollama_svc,
+        purpose="crystallization_canonical_review",
+        fallback_reason="crystallization_canonical_review_embedding_unavailable",
+    )
+    patch["meta"] = {**(payload.get("meta") or {}), **embedding_meta}
     await qdrant_client.set_payload(collection_name=collection, payload=patch, points=[canonical_id])
     await qdrant_client.update_vectors(
         collection_name=collection,

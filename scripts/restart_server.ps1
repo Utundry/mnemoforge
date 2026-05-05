@@ -9,6 +9,7 @@ param(
   [switch]$WaitHealthy,
   [int]$WaitSeconds = 15,
   [bool]$FailOnUnhealthy = $true,
+  [switch]$AllowSharedDb,
   [switch]$DryRun
 )
 
@@ -210,6 +211,61 @@ function Test-ProcessAlive {
   }
 }
 
+function Read-JsonFile {
+  param([string]$Path)
+  try {
+    if (!(Test-Path $Path)) { return $null }
+    return Get-Content $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    return $null
+  }
+}
+
+function Test-RuntimeOwnerActive {
+  param(
+    [object]$Owner,
+    [double]$StaleSeconds = 120.0
+  )
+  if ($null -eq $Owner) { return $false }
+  try {
+    $updatedAt = [double]$Owner.updated_at
+    if ($updatedAt -le 0) { return $false }
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0
+    return (($now - $updatedAt) -lt $StaleSeconds)
+  } catch {
+    return $false
+  }
+}
+
+function Get-RunningComposeServices {
+  try {
+    $raw = docker compose ps --services --filter status=running 2>$null
+    if (!$raw) { return @() }
+    return @($raw | Where-Object { $_ })
+  } catch {
+    return @()
+  }
+}
+
+function Assert-LocalRuntimeCanOwnDb {
+  param(
+    [string]$RepoRoot,
+    [switch]$AllowSharedDb
+  )
+  if ($AllowSharedDb -or $env:MNEMOFORGE_ALLOW_SHARED_DB_RUNTIME -eq "1") { return }
+
+  $ownerPath = Join-Path $RepoRoot "qdrant_data\runtime_owner.json"
+  $owner = Read-JsonFile -Path $ownerPath
+  if ((Test-RuntimeOwnerActive -Owner $owner) -and "$($owner.runtime_kind)" -ne "host") {
+    throw "Refusing to start host runtime: qdrant_data is actively owned by $($owner.owner_id). Stop that runtime or pass -AllowSharedDb for an explicit unsafe override."
+  }
+
+  $services = @(Get-RunningComposeServices)
+  if ($services -contains "memory-server-dev") {
+    throw "Refusing to start host runtime: Docker service memory-server-dev is running and uses the same qdrant_data directory. Stop it or pass -AllowSharedDb for an explicit unsafe override."
+  }
+}
+
 function Stop-UvicornFallback {
   param([int]$Port)
   try {
@@ -278,6 +334,8 @@ try {
     }
     exit 0
   }
+
+  Assert-LocalRuntimeCanOwnDb -RepoRoot $repoRoot -AllowSharedDb:$AllowSharedDb
 
   $pidFile = Join-Path $repoRoot ".server.pid"
   $null = Stop-ByPidFile -PidPath $pidFile

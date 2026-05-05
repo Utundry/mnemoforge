@@ -7,6 +7,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qmodels
 
 from app.config import settings
+from app.services.embedding_gateway import embed_text
 from app.services.ollama_service import OllamaService
 from app.services.project_tasks_content import build_task_content, build_task_change_content
 from app.services.project_tasks_store import get_project_tasks_store
@@ -22,7 +23,12 @@ async def _upsert_task_memory(
     row: dict,
 ) -> None:
     content = build_task_content(row["title"], row["description"])
-    vector = await ollama.embed(content)
+    vector, embedding_meta = await embed_text(
+        content,
+        primary=ollama,
+        purpose="project_task_rebuild",
+        fallback_reason="project_task_rebuild_embedding_unavailable",
+    )
     payload = {
         "content": content,
         "agent_id": row.get("agent_id") or "system",
@@ -43,6 +49,7 @@ async def _upsert_task_memory(
             "created_at": _iso_from_ts(row["created_at"]),
             "updated_at": _iso_from_ts(row["updated_at"]),
             "linked_improvement_id": row.get("linked_improvement_id"),
+            **embedding_meta,
         },
         "project": row["project"],
         "status": row["status"],
@@ -61,7 +68,12 @@ async def _upsert_change_memory(
     row: dict,
 ) -> None:
     content = build_task_change_content(row["change_type"], row["content"], row["why"])
-    vector = await ollama.embed(content)
+    vector, embedding_meta = await embed_text(
+        content,
+        primary=ollama,
+        purpose="project_task_change_rebuild",
+        fallback_reason="project_task_change_rebuild_embedding_unavailable",
+    )
     payload = {
         "content": content,
         "agent_id": row.get("agent_id") or "system",
@@ -80,6 +92,7 @@ async def _upsert_change_memory(
             "change_type": row["change_type"],
             "why": row["why"],
             "created_at": _iso_from_ts(row["created_at"]),
+            **embedding_meta,
         },
         "project": row["project"],
         "scope": "project",

@@ -24,6 +24,7 @@ from app.models.enums import MemoryType
 from app.models.memory import MemoryCreate
 from app.core.path_security import is_path_allowed
 from app.services.ai_dir_parser import ParsedChunk, default_ai_dirs, extract_jsonl_conversation, scan_directory
+from app.services.embedding_gateway import embed_text
 from app.services.watcher_service import _analyze_conversation, set_services as watcher_set_services
 from app.services.watcher_service import watcher
 
@@ -46,7 +47,13 @@ async def _store(chunk: ParsedChunk, agent_id: str, ollama: OllamaDep, qdrant: Q
         source=_make_source("watcher:", chunk.source_path),
         tags=chunk.tags + ([chunk.file_hash] if chunk.file_hash else []),
     )
-    vector = await ollama.embed(mem.content)
+    vector, embedding_meta = await embed_text(
+        mem.content,
+        primary=ollama,
+        purpose="watcher_scan_chunk",
+        fallback_reason="watcher_scan_chunk_embedding_unavailable",
+    )
+    mem.meta.update(embedding_meta)
     await qdrant.insert(mem, vector)
 
 

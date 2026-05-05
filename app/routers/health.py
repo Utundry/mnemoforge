@@ -37,9 +37,19 @@ async def _lmstudio_status() -> dict:
 
 
 def _llm_status(lmstudio_status: dict | None = None) -> dict:
-    from app.services.cloud_llm import available_cloud_models, cloud_available, cloud_provider
+    from app.services.cloud_llm import configured_cloud_model_profiles, cloud_available, cloud_provider
 
-    cloud_models = available_cloud_models()
+    cloud_profiles = configured_cloud_model_profiles()
+    cloud_models = list(cloud_profiles.keys())
+    cloud_model_details = [
+        {
+            "model": model_id,
+            "provider": profile.provider,
+            "api_style": profile.api_style,
+            "base_url": profile.base_url,
+        }
+        for model_id, profile in cloud_profiles.items()
+    ]
     default_provider = cloud_provider() if cloud_available() else "cloud-llm"
     local_provider = os.getenv("LOCAL_LLM_PROVIDER", settings.local_llm_provider).strip().lower() or "auto"
     local_order = _parse_model_list(os.getenv("LOCAL_LLM_FALLBACK_ORDER", settings.local_llm_fallback_order))
@@ -59,6 +69,7 @@ def _llm_status(lmstudio_status: dict | None = None) -> dict:
         "cloud_available": cloud_available(),
         "default_cloud_provider": default_provider,
         "configured_cloud_models": cloud_models,
+        "configured_cloud_model_details": cloud_model_details,
         "gateway": {
             "local_fallback_enabled": os.getenv("LLM_GATEWAY_ENABLE_LOCAL_FALLBACK", "1").strip().lower()
             not in {"0", "false", "no", "off"},
@@ -73,17 +84,19 @@ def _llm_status(lmstudio_status: dict | None = None) -> dict:
 def _provider_matrix_status(*, ollama_ok: bool, lmstudio_status: dict, llm: dict) -> dict:
     cloud_ok = bool(llm.get("cloud_available"))
     lmstudio_ok = bool((lmstudio_status or {}).get("reachable"))
+    local_provider = os.getenv("LOCAL_LLM_PROVIDER", settings.local_llm_provider).strip().lower() or "auto"
+    local_order = _parse_model_list(os.getenv("LOCAL_LLM_FALLBACK_ORDER", settings.local_llm_fallback_order))
     providers = {
         "ollama": {
-            "enabled": settings.local_llm_provider in {"", "auto", "ollama"}
-            or "ollama" in _parse_model_list(settings.local_llm_fallback_order),
+            "enabled": local_provider in {"", "auto", "ollama"} or "ollama" in local_order,
             "reachable": bool(ollama_ok),
             "kind": "local",
             "url": settings.ollama_base_url,
+            "model": os.getenv("LOCAL_GENERATE_MODEL", settings.learning_mirror_model or "qwen3:1.7b").strip()
+            or "qwen3:1.7b",
         },
         "lmstudio": {
-            "enabled": settings.local_llm_provider in {"auto", "lmstudio"}
-            or "lmstudio" in _parse_model_list(settings.local_llm_fallback_order),
+            "enabled": local_provider in {"auto", "lmstudio"} or "lmstudio" in local_order,
             "reachable": lmstudio_ok,
             "kind": "local_openai_compatible",
             "url": settings.lmstudio_base_url,
@@ -94,6 +107,7 @@ def _provider_matrix_status(*, ollama_ok: bool, lmstudio_status: dict, llm: dict
             "reachable": cloud_ok,
             "kind": "cloud_openai_compatible",
             "models": llm.get("configured_cloud_models") or [],
+            "model_details": llm.get("configured_cloud_model_details") or [],
             "default_provider": llm.get("default_cloud_provider"),
         },
     }
@@ -102,9 +116,42 @@ def _provider_matrix_status(*, ollama_ok: bool, lmstudio_status: dict, llm: dict
         for name, provider in providers.items()
         if bool(provider.get("enabled")) and bool(provider.get("reachable"))
     ]
+    available_llms = []
+    for name, provider in providers.items():
+        if name not in usable:
+            continue
+        if name == "cloud":
+            for detail in provider.get("model_details") or []:
+                available_llms.append(
+                    {
+                        "id": detail.get("model"),
+                        "provider": detail.get("provider") or "cloud",
+                        "kind": provider.get("kind"),
+                        "scope": "cloud",
+                    }
+                )
+            if not provider.get("model_details"):
+                available_llms.append(
+                    {
+                        "id": provider.get("default_provider") or "cloud-llm",
+                        "provider": "cloud",
+                        "kind": provider.get("kind"),
+                        "scope": "cloud",
+                    }
+                )
+            continue
+        available_llms.append(
+            {
+                "id": provider.get("selected_model") or provider.get("model") or name,
+                "provider": name,
+                "kind": provider.get("kind"),
+                "scope": "local",
+            }
+        )
     return {
         "healthy": bool(usable),
         "usable_providers": usable,
+        "available_llms": available_llms,
         "providers": providers,
         "health_rule": "healthy when at least one enabled LLM provider is usable",
     }
@@ -241,7 +288,7 @@ async def stats(qdrant: QdrantDep):
 async def system_info(qdrant: QdrantDep, ollama: OllamaDep):
     """
     Full system overview: status, components, live counters, models.
-    Use this to understand what supermemory can do and what's currently running.
+    Use this to understand what MnemoForge can do and what's currently running.
     """
     qdrant_ok = await qdrant.health()
     ollama_ok = await ollama.health()

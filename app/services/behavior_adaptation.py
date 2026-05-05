@@ -140,4 +140,3 @@ def iter_behavior_evals(agent_id: str) -> list[BehaviorEval]:
             )
         )
     return evals
-

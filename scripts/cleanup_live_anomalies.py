@@ -62,7 +62,7 @@ def _artifact_cleanup_reasons(row: sqlite3.Row) -> list[str]:
         reasons.append("telemetry_derived_rule")
 
     if signal_type == "new_terminology":
-        if "supermemory" in blob_lower and "new term" in blob_lower:
+        if "mnemoforge" in blob_lower and "new term" in blob_lower:
             reasons.append("project_term_misclassified_as_new_terminology")
 
     if signal_type in {"new_terminology", "skill_gap"}:

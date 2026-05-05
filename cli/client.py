@@ -1,5 +1,5 @@
 """
-Super Memory CLI — interact with the memory server.
+MnemoForge CLI — interact with the memory server.
 
 Usage examples:
   python -m cli.client store --content "User prefers short answers" --agent agent1 --type preference --importance 0.8
@@ -24,7 +24,7 @@ from rich import print as rprint
 from rich.console import Console
 from rich.table import Table
 
-app = typer.Typer(help="Super Memory CLI")
+app = typer.Typer(help="MnemoForge CLI")
 console = Console()
 
 BASE_URL = os.environ.get("MEMORY_SERVER_URL", "http://localhost:8000")

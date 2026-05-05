@@ -17,6 +17,7 @@ from app.models.project_task import (
     TaskStatementProjectionResponse,
 )
 from app.services.learning_store import get_learning_store, make_context_signature
+from app.services.llm_gateway import get_cloud_gateway
 from app.services.task_statement_service import build_task_statement_projection
 from app.services.text_localization import normalize_text_for_display
 
@@ -318,7 +319,16 @@ Key meanings:
 
 
 async def _generate_local_capture_fill(ollama, prompt: str) -> str:
-    return await ollama.generate(prompt, model=_LOCAL_MODEL, timeout=45.0)
+    return await get_cloud_gateway().generate(
+        prompt,
+        task_type="memory_extraction",
+        mode="economy",
+        max_tokens=800,
+        temperature=0.0,
+        timeout=45.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
 
 
 def _parse_local_response(raw: str, missing: list[str]) -> dict[str, list[str] | str]:

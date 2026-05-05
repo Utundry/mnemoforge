@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.dependencies import OllamaDep, QdrantDep
+from app.services.embedding_gateway import embed_text
 from app.services.skill_crystallizer import CRYSTALLIZE_THRESHOLD, assess, crystallize, generate_skill_md
 from qdrant_client.http import models as qmodels
 
@@ -261,7 +262,12 @@ async def evolve_skills(qdrant: QdrantDep, ollama: OllamaDep) -> dict:
         f"gaps_detected={','.join(gaps_detected[:5]) or 'none'} "
         f"crystallized_patterns={','.join(crystallized_patterns) or 'none'}"
     )
-    vector = await ollama.embed(report_content)
+    vector, embedding_meta = await embed_text(
+        report_content,
+        primary=ollama,
+        purpose="skill_evolution_log",
+        fallback_reason="skill_evolution_log_embedding_unavailable",
+    )
     report_mem = MemoryCreate(
         content=report_content,
         agent_id="skill-evolver",
@@ -270,6 +276,7 @@ async def evolve_skills(qdrant: QdrantDep, ollama: OllamaDep) -> dict:
         importance_score=0.4,
         source="crystallizer/evolve",
         tags=["skill_evolution_log"],
+        meta=embedding_meta,
         session_id=None,
     )
     await qdrant.insert(report_mem, vector)

@@ -619,7 +619,7 @@ async def operational_instinct_playbook(
 
 @router.get("/functionality-review-hints")
 async def functionality_review_hints(
-    scope: str = Query("supermemory"),
+    scope: str = Query("mnemoforge"),
     _: None = Depends(_admin_guard),
 ) -> dict[str, Any]:
     items = list_functionality_review_hints(scope=scope)
@@ -638,7 +638,7 @@ async def upsert_functionality_review_hint_route(
     if not payload.get("reason"):
         raise HTTPException(status_code=400, detail="reason is required")
     return upsert_functionality_review_hint(
-        scope=str(payload.get("scope") or "supermemory"),
+        scope=str(payload.get("scope") or "mnemoforge"),
         module=str(payload["module"]),
         status=str(payload["status"]),
         reason=str(payload["reason"]),
@@ -647,7 +647,7 @@ async def upsert_functionality_review_hint_route(
 
 @router.post("/functionality-review-hints/bootstrap")
 async def bootstrap_functionality_review_hints_route(
-    scope: str = Query("supermemory"),
+    scope: str = Query("mnemoforge"),
     overwrite: bool = Query(False),
     _: None = Depends(_admin_guard),
 ) -> dict[str, Any]:

@@ -16,10 +16,6 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-import httpx
-
-from app.config import settings
-
 logger = logging.getLogger(__name__)
 
 MANAGER_MODEL = "qwen3:1.7b"
@@ -110,14 +106,17 @@ async def _llm(prompt: str, timeout: float = 60.0) -> str:
             logger.warning("Cloud LLM failed, falling back to local: %s", e)
 
     # Local fallback — Ollama
-    async with httpx.AsyncClient(timeout=timeout) as c:
-        r = await c.post(
-            f"{settings.ollama_base_url}/api/generate",
-            json={"model": MANAGER_MODEL, "prompt": prompt, "stream": False},
-        )
-        r.raise_for_status()
-        text = r.json()["response"].strip()
-        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    result = await get_cloud_gateway().generate(
+        prompt,
+        task_type="text_summarization",
+        mode="economy",
+        max_tokens=700,
+        temperature=0.2,
+        timeout=timeout,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
+    return re.sub(r"<think>.*?</think>", "", result, flags=re.DOTALL).strip()
 
 
 @dataclass

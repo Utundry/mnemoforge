@@ -2,7 +2,7 @@
 
 ## Обзор
 
-Документ содержит актуальный статус реализации Task Memory Capture Protocol в SuperMemory.
+Документ содержит актуальный статус реализации Task Memory Capture Protocol в MnemoForge.
 
 ---
 

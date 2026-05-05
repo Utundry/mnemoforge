@@ -26,7 +26,7 @@ class DocsStatus(BaseModel):
 
 class DocsRebuildRequest(BaseModel):
     project: str = Field(
-        default="supermemory",
+        default="mnemoforge",
         min_length=1,
         max_length=128,
         description="Project identifier used for docs cache keying.",

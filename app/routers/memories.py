@@ -18,6 +18,7 @@ from app.models.memory import (
     SearchResult,
 )
 from app.services.context_service import _context_svc
+from app.services.embedding_gateway import embed_query, embed_text
 from app.services.normalization_service import _norm_svc
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,13 @@ async def create_memory(body: MemoryCreate, qdrant: QdrantDep, ollama: OllamaDep
     from app.services.learning_store import make_context_signature
 
     t0 = time.perf_counter()
-    vector = await ollama.embed(body.content)
+    vector, embedding_meta = await embed_text(
+        body.content,
+        primary=ollama,
+        purpose="memory_store",
+        fallback_reason="memory_store_embedding_unavailable",
+    )
+    body.meta = {**(body.meta or {}), **embedding_meta}
     memory_id = await qdrant.insert(body, vector)
     duration_s = max(0.0, time.perf_counter() - t0)
     background_tasks.add_task(_semantic_dedup, memory_id, body.agent_id, vector, qdrant)
@@ -166,7 +173,13 @@ async def get_memory(memory_id: UUID, qdrant: QdrantDep):
 async def update_memory(memory_id: UUID, body: MemoryUpdate, qdrant: QdrantDep, ollama: OllamaDep):
     new_vector = None
     if body.content is not None:
-        new_vector = await ollama.embed(body.content)
+        new_vector, embedding_meta = await embed_text(
+            body.content,
+            primary=ollama,
+            purpose="memory_update",
+            fallback_reason="memory_update_embedding_unavailable",
+        )
+        body.meta = {**(body.meta or {}), **embedding_meta}
     return await qdrant.update(memory_id, body, new_vector)
 
 
@@ -218,7 +231,7 @@ async def search_memories(body: SearchRequest, qdrant: QdrantDep, ollama: Ollama
         except Exception as e:
             logger.warning("Normalization failed, using original query: %s", e)
 
-    vector = await ollama.embed(query)
+    vector, _embedding_meta = await embed_query(query, primary=ollama, purpose="memory_search")
     raw = await qdrant.search(
         vector=vector,
         agent_id=body.agent_id,
@@ -307,7 +320,7 @@ async def assemble_context(
         except Exception as e:
             logger.warning("Normalization failed, using original query: %s", e)
 
-    vector = await ollama.embed(query)
+    vector, _embedding_meta = await embed_query(query, primary=ollama, purpose="memory_context")
     raw = await qdrant.search(
         vector=vector,
         agent_id=body.agent_id,

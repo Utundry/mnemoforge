@@ -23,6 +23,7 @@ from qdrant_client.http import models as qm
 
 from app.config import settings
 from app.services.component_docs_store import get_component_docs_store
+from app.services.embedding_gateway import embed_query, embed_text as gateway_embed_text
 from app.services.ollama_service import OllamaService
 
 logger = logging.getLogger(__name__)
@@ -179,8 +180,14 @@ class ProjectKnowledgeService:
         if extra_payload:
             payload.update(extra_payload)
 
-        embed_text = self._build_embed_text(name, purpose, implementation, endpoints, key_files)
-        vector = await self._ollama.embed(embed_text)
+        embedding_text = self._build_embed_text(name, purpose, implementation, endpoints, key_files)
+        vector, embedding_meta = await gateway_embed_text(
+            embedding_text,
+            primary=self._ollama,
+            purpose="project_component_doc",
+            fallback_reason="project_component_doc_embedding_unavailable",
+        )
+        payload["meta"] = {**(payload.get("meta") or {}), **embedding_meta}
 
         await self._q.upsert(
             collection_name=COLLECTION,
@@ -234,7 +241,11 @@ class ProjectKnowledgeService:
     async def search(self, project_id: str, query: str, limit: int = SEARCH_LIMIT) -> list[dict]:
         """Semantic search across components of a project."""
         try:
-            vector = await self._ollama.embed(query)
+            vector, _embedding_meta = await embed_query(
+                query,
+                primary=self._ollama,
+                purpose="project_component_search",
+            )
         except Exception as e:
             logger.warning("Embed failed for project search: %s", e)
             return []

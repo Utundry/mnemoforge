@@ -1,4 +1,4 @@
-# Super Memory — Инструкция по установке на новую машину
+# MnemoForge — Инструкция по установке на новую машину
 
 Локальный сервер семантической памяти для ИИ-агентов.
 Стек: **FastAPI + Qdrant (Docker) + Ollama (хост) + nomic-embed-text**
@@ -69,8 +69,8 @@ curl http://localhost:11434/api/embed -d '{"model":"nomic-embed-text","input":"t
 ## 2. Получить код проекта
 
 ```bash
-git clone <repo-url> <SUPERMEMORY_HOME>
-cd <SUPERMEMORY_HOME>
+git clone <repo-url> <MNEMOFORGE_HOME>
+cd <MNEMOFORGE_HOME>
 ```
 
 > Если git-репозитория нет — скопировать папку проекта на новую машину.
@@ -207,26 +207,26 @@ which claude
 
 ### Зарегистрировать MCP-сервер
 
-**Windows** (заменить `<SUPERMEMORY_HOME>` на путь к локальному репозиторию):
+**Windows** (заменить `<MNEMOFORGE_HOME>` на путь к локальному репозиторию):
 ```powershell
 claude mcp add -s user `
   -e "MEMORY_SERVER_URL=http://localhost:8000" `
-  super-memory `
-  -- "<SUPERMEMORY_HOME>\.venv\Scripts\python.exe" "<SUPERMEMORY_HOME>\mcp\server.py"
+  mnemoforge `
+  -- "<MNEMOFORGE_HOME>\.venv\Scripts\python.exe" "<MNEMOFORGE_HOME>\mcp\server.py"
 ```
 
 **Linux/macOS:**
 ```bash
 claude mcp add -s user \
   -e "MEMORY_SERVER_URL=http://localhost:8000" \
-  super-memory \
-  -- /path/to/supermemory/.venv/bin/python /path/to/supermemory/mcp/server.py
+  mnemoforge \
+  -- /path/to/mnemoforge/.venv/bin/python /path/to/mnemoforge/mcp/server.py
 ```
 
 Проверить:
 ```bash
 claude mcp list
-# super-memory: ... - ✓ Connected
+# mnemoforge: ... - ✓ Connected
 ```
 
 ---
@@ -289,7 +289,7 @@ ollama serve   # Linux/macOS
 ### MCP статус `✗ Failed` вместо `✓ Connected`
 ```bash
 # Проверить путь к Python
-"<SUPERMEMORY_HOME>\.venv\Scripts\python.exe" -c "import httpx; print('OK')"
+"<MNEMOFORGE_HOME>\.venv\Scripts\python.exe" -c "import httpx; print('OK')"
 
 # Проверить что сервер доступен
 curl http://localhost:8000/api/v1/health

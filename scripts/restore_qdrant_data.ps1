@@ -18,7 +18,7 @@ if ($rootPath -match "^[A-Za-z]:\\?$") {
 }
 
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$tempExtractDir = Join-Path ([System.IO.Path]::GetTempPath()) ("supermemory-restore-" + [guid]::NewGuid().ToString("N"))
+$tempExtractDir = Join-Path ([System.IO.Path]::GetTempPath()) ("mnemoforge-restore-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $tempExtractDir | Out-Null
 
 try {

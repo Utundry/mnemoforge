@@ -24,6 +24,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qm
 
 from app.config import settings
+from app.services.embedding_gateway import embed_query, embed_text
 from app.services.ollama_service import OllamaService
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,11 @@ class LayoutMemoryService:
         Returns None if no match found.
         """
         try:
-            vector = await self._ollama.embed(word.lower())
+            vector, _embedding_meta = await embed_query(
+                word.lower(),
+                primary=self._ollama,
+                purpose="layout_term_lookup",
+            )
         except Exception:
             return None
 
@@ -104,7 +109,12 @@ class LayoutMemoryService:
     ) -> None:
         """Store or update a correction record. Increments count on existing records."""
         try:
-            vector = await self._ollama.embed(original.lower())
+            vector, embedding_meta = await embed_text(
+                original.lower(),
+                primary=self._ollama,
+                purpose="layout_term_store",
+                fallback_reason="layout_term_store_embedding_unavailable",
+            )
         except Exception:
             return
 
@@ -129,6 +139,7 @@ class LayoutMemoryService:
                     "corrected": corrected,
                     "action": action,
                     "count": old_count + 1,
+                    "meta": embedding_meta,
                 },
                 points=[point_id],
             )
@@ -144,6 +155,7 @@ class LayoutMemoryService:
                             "corrected": corrected,
                             "action": action,
                             "count": 1,
+                            "meta": embedding_meta,
                         },
                     )
                 ],

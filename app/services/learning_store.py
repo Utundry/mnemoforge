@@ -1237,11 +1237,17 @@ class LearningStore:
         if _VECTOR_DEDUP_ENABLED and semantic_text:
             try:
                 from app.dependencies import get_ollama, get_qdrant
+                from app.services.embedding_gateway import embed_text
                 from app.services.learning_vector_index import search_similar_candidates, upsert_artifact_vector
 
                 qdrant = get_qdrant()
                 ollama = get_ollama()
-                vector = await ollama.embed(semantic_text)
+                vector, _embedding_meta = await embed_text(
+                    semantic_text,
+                    primary=ollama,
+                    purpose="learning_candidate_dedup",
+                    fallback_reason="learning_candidate_dedup_embedding_unavailable",
+                )
 
                 matches = await search_similar_candidates(
                     qdrant._client,

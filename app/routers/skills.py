@@ -24,6 +24,8 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.dependencies import JobQueueDep, OllamaDep, QdrantDep
 from app.services.data_integrity_service import SKILL_DOMAIN_TAGS_FILTER_SLICE_ID
+from app.services.embedding_gateway import embed_query, embed_text as gateway_embed_text
+from app.services.llm_gateway import get_cloud_gateway
 from app.services.new_terminology import sanitize_new_terminology_candidate
 from app.services.new_terminology import (
     sanitize_successful_pattern_candidate,
@@ -234,14 +236,17 @@ async def _llm(prompt: str) -> str:
         except Exception as e:
             logger.warning("Cloud LLM failed in skills, falling back to local: %s", e)
 
-    async with httpx.AsyncClient(timeout=60.0) as c:
-        r = await c.post(
-            f"{settings.ollama_base_url}/api/generate",
-            json={"model": MANAGER_MODEL, "prompt": prompt, "stream": False},
-        )
-        r.raise_for_status()
-        text = r.json()["response"].strip()
-        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    text = await get_cloud_gateway().generate(
+        prompt,
+        task_type="text_summarization",
+        mode="economy",
+        max_tokens=700,
+        temperature=0.2,
+        timeout=60.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
 async def _extract_skill_meta(name: str, content: str) -> tuple[str, list[str]]:
@@ -672,7 +677,18 @@ async def _bg_retag_skill(memory_id: str, content: str, current_desc: str, curre
             )
             # Re-embed with enriched text
             skill_name = content.split("\n")[0].lstrip("# ").strip()
-            new_vector = await ollama.embed(f"{skill_name} {new_desc} {' '.join(new_tags)}")
+            new_vector, embedding_meta = await gateway_embed_text(
+                f"{skill_name} {new_desc} {' '.join(new_tags)}",
+                primary=ollama,
+                purpose="skill_retag",
+                fallback_reason="skill_retag_embedding_unavailable",
+            )
+            patch["meta"] = {**(patch.get("meta") or {}), **embedding_meta}
+            await qdrant._client.set_payload(
+                collection_name=qdrant._collection,
+                payload={"meta": patch["meta"]},
+                points=[memory_id],
+            )
             await qdrant._client.update_vectors(
                 collection_name=qdrant._collection,
                 points=[{"id": memory_id, "vector": new_vector}],
@@ -727,7 +743,13 @@ async def publish_skill(body: SkillPublish, qdrant: QdrantDep, ollama: OllamaDep
     )
 
     # Store extra fields in payload via raw upsert
-    vector = await ollama.embed(f"{body.name} {description} {' '.join(domain_tags)}")
+    vector, embedding_meta = await gateway_embed_text(
+        f"{body.name} {description} {' '.join(domain_tags)}",
+        primary=ollama,
+        purpose="skill_publish",
+        fallback_reason="skill_publish_embedding_unavailable",
+    )
+    mem.meta.update(embedding_meta)
     memory_id = await qdrant.insert(mem, vector)
 
     # Patch payload with skill-specific fields
@@ -983,14 +1005,17 @@ async def _regenerate_single_skill(skill_id: str, name: str, description: str, t
                 prefer_local=True,
             )
         else:
-            async with httpx.AsyncClient(timeout=60.0) as c:
-                r = await c.post(
-                    f"{settings.ollama_base_url}/api/generate",
-                    json={"model": MANAGER_MODEL, "prompt": prompt, "stream": False},
-                )
-                r.raise_for_status()
-                content = r.json()["response"].strip()
-                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+            content = await get_cloud_gateway().generate(
+                prompt,
+                task_type="skill_tagging",
+                mode="economy",
+                max_tokens=700,
+                temperature=0.2,
+                timeout=60.0,
+                allow_local_fallback=True,
+                prefer_local=True,
+            )
+            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
 
         if not content or len(content) < 50:
             return False
@@ -1003,7 +1028,17 @@ async def _regenerate_single_skill(skill_id: str, name: str, description: str, t
         )
         # Re-embed with content
         embed_text = f"{name} {description} {' '.join(tags)} {content[:300]}"
-        new_vector = await ollama.embed(embed_text)
+        new_vector, embedding_meta = await gateway_embed_text(
+            embed_text,
+            primary=ollama,
+            purpose="skill_content_update",
+            fallback_reason="skill_content_update_embedding_unavailable",
+        )
+        await qdrant._client.set_payload(
+            collection_name=qdrant._collection,
+            payload={"meta": embedding_meta},
+            points=[skill_id],
+        )
         await qdrant._client.update_vectors(
             collection_name=qdrant._collection,
             points=[{"id": skill_id, "vector": new_vector}],
@@ -1201,7 +1236,13 @@ async def generate_skill_for_domain(body: GenerateForDomainRequest, qdrant: Qdra
         tags=[skill_name, body.platform] + all_tags,
         session_id=None,
     )
-    vector = await ollama.embed(f"{skill_name} {description} {' '.join(domains)}")
+    vector, embedding_meta = await gateway_embed_text(
+        f"{skill_name} {description} {' '.join(domains)}",
+        primary=ollama,
+        purpose="skill_generate",
+        fallback_reason="skill_generate_embedding_unavailable",
+    )
+    mem.meta.update(embedding_meta)
     memory_id = await qdrant.insert(mem, vector)
 
     await qdrant._client.set_payload(
@@ -1529,7 +1570,12 @@ async def _store_pack(qdrant, ollama, pack_id: str, agent_id: str,
     from app.models.enums import MemoryType
 
     content = f"skill_pack:{pack_id} phase={phase} domains={','.join(domains)} task_type={task_type}"
-    vector = await ollama.embed(content)
+    vector, embedding_meta = await gateway_embed_text(
+        content,
+        primary=ollama,
+        purpose="skill_pack",
+        fallback_reason="skill_pack_embedding_unavailable",
+    )
     mem = MemoryCreate(
         content=content,
         agent_id=agent_id,
@@ -1538,6 +1584,7 @@ async def _store_pack(qdrant, ollama, pack_id: str, agent_id: str,
         importance_score=0.3,
         source=f"skill-pack:{pack_id}",
         tags=["skill_pack", f"phase:{phase}"] + domains,
+        meta=embedding_meta,
         session_id=None,
     )
     memory_id = await qdrant.insert(mem, vector)
@@ -1590,7 +1637,13 @@ async def _do_enrich(pack_id: str, domains: list[str], agent_id: str,
                 tags=[skill_name, "claude"] + all_tags,
                 session_id=None,
             )
-            vector = await ollama.embed(f"{skill_name} {' '.join(gap_domains)}")
+            vector, embedding_meta = await gateway_embed_text(
+                f"{skill_name} {' '.join(gap_domains)}",
+                primary=ollama,
+                purpose="skill_enrichment",
+                fallback_reason="skill_enrichment_embedding_unavailable",
+            )
+            mem.meta.update(embedding_meta)
             memory_id = await qdrant.insert(mem, vector)
             # Fix 2712d6ac: Phase 2 enriched skills are immediately active for the current task
             # (review_status="task_enrichment" — visible in review queue but not suppressed).
@@ -1793,7 +1846,12 @@ async def record_skill_outcome(
         f"helpful={len(body.skills_helpful)} unused={len(body.skills_unused)} "
         f"missing_domains={','.join(body.missing_domains)} success={body.success}"
     )
-    vector = await ollama.embed(content)
+    vector, embedding_meta = await gateway_embed_text(
+        content,
+        primary=ollama,
+        purpose="skill_outcome",
+        fallback_reason="skill_outcome_embedding_unavailable",
+    )
     mem = MemoryCreate(
         content=content,
         agent_id=body.agent_id,
@@ -1807,6 +1865,7 @@ async def record_skill_outcome(
             + [f"unused:{sid}" for sid in body.skills_unused]
             + body.missing_domains
         ),
+        meta=embedding_meta,
         session_id=None,
     )
     await qdrant.insert(mem, vector)
@@ -2513,7 +2572,12 @@ async def analyze_dialogue_transcript(
         + ([file_hash] if file_hash else [])
     )
 
-    vector = await ollama.embed(content)
+    vector, embedding_meta = await gateway_embed_text(
+        content,
+        primary=ollama,
+        purpose="dialogue_signal",
+        fallback_reason="dialogue_signal_embedding_unavailable",
+    )
     mem = MemoryCreate(
         content=content,
         agent_id=agent_id,
@@ -2522,6 +2586,7 @@ async def analyze_dialogue_transcript(
         importance_score=0.5,
         source=source_path or "dialogue-analyzer",
         tags=tags,
+        meta=embedding_meta,
         session_id=session_id,
     )
     mem_id = await qdrant.insert(mem, vector)
@@ -2542,7 +2607,12 @@ async def analyze_dialogue_transcript(
             pref_text = pref.strip()
             if not pref_text:
                 continue
-            pref_vector = await ollama.embed(f"user preference {pref_text}")
+            pref_vector, pref_embedding_meta = await gateway_embed_text(
+                f"user preference {pref_text}",
+                primary=ollama,
+                purpose="dialogue_user_preference",
+                fallback_reason="dialogue_user_preference_embedding_unavailable",
+            )
             pref_mem = MemoryCreate(
                 content=pref_text,
                 agent_id=agent_id,
@@ -2551,6 +2621,7 @@ async def analyze_dialogue_transcript(
                 importance_score=0.55,
                 source="dialogue-analyzer:user-preference",
                 tags=["user_preference", transport] + ([f"session:{session_id}"] if session_id else []),
+                meta=pref_embedding_meta,
                 session_id=session_id,
             )
             pref_id = await qdrant.insert(pref_mem, pref_vector)
@@ -2569,7 +2640,12 @@ async def analyze_dialogue_transcript(
                 f"helpful=0 unused=0 "
                 f"missing_domains={','.join(signal.missing_skill)} success=True"
             )
-            outcome_vector = await ollama.embed(outcome_content)
+            outcome_vector, outcome_embedding_meta = await gateway_embed_text(
+                outcome_content,
+                primary=ollama,
+                purpose="dialogue_skill_outcome",
+                fallback_reason="dialogue_skill_outcome_embedding_unavailable",
+            )
             outcome_mem = MemoryCreate(
                 content=outcome_content,
                 agent_id=agent_id,
@@ -2582,6 +2658,7 @@ async def analyze_dialogue_transcript(
                     + signal.missing_skill
                     + ([f"session:{session_id}"] if session_id else [])
                 ),
+                meta=outcome_embedding_meta,
                 session_id=session_id,
             )
             await qdrant.insert(outcome_mem, outcome_vector)
@@ -3766,7 +3843,13 @@ async def _run_retag(qdrant, ollama, limit: int, *, record_ids: list[str] | None
                     continue
                 memory_id, embed_text, payload = point
                 try:
-                    vector = await ollama.embed(embed_text)
+                    vector, embedding_meta = await gateway_embed_text(
+                        embed_text,
+                        primary=ollama,
+                        purpose="skill_sqlite_recovery",
+                        fallback_reason="skill_sqlite_recovery_embedding_unavailable",
+                    )
+                    payload["meta"] = {**(payload.get("meta") or {}), **embedding_meta}
                 except Exception as exc:
                     logger.warning("retag sqlite recovery embed failed for %s: %s", memory_id, exc)
                     continue
@@ -3860,15 +3943,22 @@ async def _run_retag(qdrant, ollama, limit: int, *, record_ids: list[str] | None
 
         embed_text = f"{meta['name']} {meta['description']} {' '.join(meta['domain_tags'])}"
         try:
-            vector = await ollama.embed(embed_text)
+            vector, embedding_meta = await gateway_embed_text(
+                embed_text,
+                primary=ollama,
+                purpose="skill_retag_fix",
+                fallback_reason="skill_retag_fix_embedding_unavailable",
+            )
         except Exception:
             vector = None
+            embedding_meta = {}
 
         payload_update = {
             "skill_name": meta["name"],
             "skill_description": meta["description"],
             "domain_tags": meta["domain_tags"],
             "content": content,
+            "meta": embedding_meta,
         }
         await qdrant._client.set_payload(
             collection_name=qdrant._collection,
@@ -3972,15 +4062,22 @@ async def retag_skills(qdrant: QdrantDep, ollama: OllamaDep, queue: JobQueueDep,
         # Re-embed with enriched text for better retrieval
         embed_text = f"{meta['name']} {meta['description']} {' '.join(meta['domain_tags'])}"
         try:
-            vector = await ollama.embed(embed_text)
+            vector, embedding_meta = await gateway_embed_text(
+                embed_text,
+                primary=ollama,
+                purpose="skill_retag",
+                fallback_reason="skill_retag_embedding_unavailable",
+            )
         except Exception:
             vector = None
+            embedding_meta = {}
 
         payload_update = {
             "skill_name": meta["name"],
             "skill_description": meta["description"],
             "domain_tags": meta["domain_tags"],
             "content": content,  # preserve full content in correct field
+            "meta": embedding_meta,
         }
 
         await qdrant._client.set_payload(

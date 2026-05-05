@@ -17,6 +17,7 @@ from app.dependencies import OllamaDep, QdrantDep
 from app.models.enums import MemoryType
 from app.models.memory import MemoryCreate
 from app.core.path_security import allowed_roots, check_path_allowed, is_path_allowed
+from app.services.embedding_gateway import embed_text
 from app.services.file_parser import ParsedChunk, parse_file, scan_directory
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,13 @@ async def _ingest_chunks(
             session_id=request.session_id,
         )
         try:
-            vector = await ollama.embed(mem.content)
+            vector, embedding_meta = await embed_text(
+                mem.content,
+                primary=ollama,
+                purpose="ingest_chunk",
+                fallback_reason="ingest_chunk_embedding_unavailable",
+            )
+            mem.meta.update(embedding_meta)
             await qdrant.insert(mem, vector)
             inserted += 1
         except Exception as e:

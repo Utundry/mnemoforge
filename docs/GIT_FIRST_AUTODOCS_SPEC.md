@@ -1,7 +1,7 @@
 # Git-First Autodocs Spec
 
 Status: proposed  
-Project: `supermemory`  
+Project: `mnemoforge`  
 Priority: high
 
 Related specs:

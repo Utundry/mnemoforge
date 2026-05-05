@@ -116,7 +116,7 @@ class MemoryRecord(BaseModel):
 class ImprovementCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=256)
     description: str = Field(..., min_length=1, max_length=10000)
-    project: str = Field("supermemory", max_length=128)
+    project: str = Field("mnemoforge", max_length=128)
     agent_id: str = Field("llm", max_length=256)
     importance_score: float = Field(0.7, ge=0.0, le=1.0)
     tags: list[str] = Field(default_factory=list)

@@ -28,6 +28,7 @@ from app.services.coordination_service import (
     update_coordination_message_status,
 )
 from app.services.docs_service import load_docs_cache
+from app.services.embedding_gateway import embed_text
 from app.services.improvements_store import get_improvements_store
 from app.services.law_service import get_project_law
 from app.services.learning_store import get_learning_store
@@ -610,7 +611,6 @@ async def _create_handoff_record(
     from app.models.enums import MemoryType
     from app.models.memory import MemoryCreate
 
-    vector = await ollama.embed(content)
     mem = MemoryCreate(
         content=content,
         agent_id=body.agent_id,
@@ -657,6 +657,13 @@ async def _create_handoff_record(
             "project_context_snapshot": body.project_context_snapshot[:4000] if body.project_context_snapshot else None,
         },
     )
+    vector, embedding_meta = await embed_text(
+        content,
+        primary=ollama,
+        purpose="handoff_packet",
+        fallback_reason="handoff_packet_embedding_unavailable",
+    )
+    mem.meta.update(embedding_meta)
     memory_id = await qdrant.insert(mem, vector)
     await qdrant.mark_handoff_pending(memory_id)
 
@@ -2037,7 +2044,7 @@ async def report_limit(body: ReportLimitRequest):
 @router.post("/handoff")
 async def create_handoff(body: HandoffRequest, qdrant: QdrantDep, ollama: OllamaDep):
     """
-    Package task context in supermemory for pickup by target CLI.
+    Package task context in MnemoForge for pickup by target CLI.
 
     Stores handoff packet content/metadata durably in SQLite and keeps a
     lightweight reference payload in Qdrant (category='handoff', status='pending').

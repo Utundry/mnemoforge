@@ -311,10 +311,10 @@ def _checkpoint_args_from_draft(draft: dict[str, Any], payload: dict[str, Any]) 
 
 def build_scribe_prompt(payload: dict[str, Any]) -> str:
     return (
-        "Convert the raw agent work notes into a compact SuperMemory task checkpoint draft.\n"
+        "Convert the raw agent work notes into a compact MnemoForge task checkpoint draft.\n"
         "Return JSON only with keys: summary, blockers, decisions, changed_files, verification, remaining_risk, next_step, next_step_scope.\n"
         "Rules: preserve concrete facts; do not invent files, tests, or decisions; use empty arrays when evidence is absent; keep each item short.\n\n"
-        f"Project: {payload.get('project') or 'supermemory'}\n"
+        f"Project: {payload.get('project') or 'mnemoforge'}\n"
         f"Task id: {payload.get('task_id') or ''}\n"
         f"Task title: {payload.get('task_title') or ''}\n"
         f"Stage: {payload.get('stage') or 'in_progress'}\n"
@@ -325,7 +325,7 @@ def build_scribe_prompt(payload: dict[str, Any]) -> str:
 
 
 async def compact_memory_scribe(payload: dict[str, Any], llm_gateway: Any | None = None) -> dict[str, Any]:
-    project = str(payload.get("project") or "supermemory").strip() or "supermemory"
+    project = str(payload.get("project") or "mnemoforge").strip() or "mnemoforge"
     task_id = str(payload.get("task_id") or "").strip()
     task_title = str(payload.get("task_title") or "").strip()
     stage = str(payload.get("stage") or "in_progress").strip().lower() or "in_progress"

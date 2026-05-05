@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.dependencies import JobQueueDep, OllamaDep, QdrantDep
+from app.services.llm_gateway import get_cloud_gateway
 from app.services.project_context_service import (
     assemble_project_context,
     assess_project_readiness,
@@ -42,6 +43,8 @@ from app.services.data_hygiene_service import get_data_hygiene_store
 from app.services.data_integrity_service import get_data_integrity_store
 from app.services.learning_store import get_learning_store, make_context_signature
 from app.services.project_knowledge import ProjectKnowledgeService
+from app.services.project_identity_service import get_project_identity_store, resolve_project_id
+from app.services.project_rename_service import rename_project_identity
 
 # Local generative model — same as used in auto_memory
 MANAGER_MODEL = "qwen3:1.7b"
@@ -148,7 +151,7 @@ class RemoteSnapshotSyncRequest(RemoteSnapshotPlanRequest):
 
 class IngestRequest(BaseModel):
     project_id: str = Field(..., min_length=1, max_length=128,
-                            description="Project identifier, e.g. 'supermemory' or 'my-app'")
+                            description="Project identifier, e.g. 'mnemoforge' or 'my-app'")
     project_name: str = Field("", description="Display name for the project")
     components: list[ComponentSpec] = Field(
         default_factory=list,
@@ -283,6 +286,15 @@ class BootstrapFromMemoriesRequest(BaseModel):
 class TaskTriageRequest(BaseModel):
     project_id: str = Field(..., min_length=1, max_length=128)
     limit: int = Field(5, ge=1, le=20)
+
+
+class ProjectRenameRequest(BaseModel):
+    old_project_id: str = Field(..., min_length=1, max_length=128)
+    new_project_id: str = Field(..., min_length=1, max_length=128)
+    apply: bool = Field(False, description="Apply the rename. False returns a dry-run report.")
+    include_text: bool = Field(False, description="Also rewrite free-text history fields.")
+    ensure_alias: bool = Field(True, description="Create canonical and legacy alias rows.")
+    reason: str = Field("", max_length=1000)
 
 
 # ── File utilities ─────────────────────────────────────────────────────────────
@@ -537,7 +549,16 @@ async def _summarize_component_source(ollama, name: str, file_labels: list[str],
         source=source,
     )
     try:
-        raw = await ollama.generate(prompt, model=MANAGER_MODEL)
+        raw = await get_cloud_gateway().generate(
+            prompt,
+            task_type="text_summarization",
+            mode="economy",
+            max_tokens=500,
+            temperature=0.0,
+            timeout=60.0,
+            allow_local_fallback=True,
+            prefer_local=True,
+        )
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
         return _parse_llm_summary(raw)
     except Exception as e:
@@ -621,6 +642,32 @@ def _parse_json_object(value: str) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
+@router.get("/identity/aliases")
+async def list_project_aliases(project_id: str | None = Query(None)):
+    """List active project identity aliases, optionally scoped to one canonical project."""
+    canonical = resolve_project_id(project_id) if project_id else None
+    return {
+        "project_id": canonical,
+        "aliases": get_project_identity_store().list_aliases(project_id),
+    }
+
+
+@router.post("/rename")
+async def rename_project(body: ProjectRenameRequest):
+    """Treat project rename as a first-class lifecycle operation."""
+    try:
+        return rename_project_identity(
+            old_project_id=body.old_project_id,
+            new_project_id=body.new_project_id,
+            apply=body.apply,
+            include_text=body.include_text,
+            ensure_alias=body.ensure_alias,
+            reason=body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 async def _insert_audit_finding_artifact(
     *,
     project_id: str,
@@ -684,7 +731,16 @@ async def _summarize_component(ollama, name: str, files: list[str], root: str = 
         source=source,
     )
     try:
-        raw = await ollama.generate(prompt, model=MANAGER_MODEL)
+        raw = await get_cloud_gateway().generate(
+            prompt,
+            task_type="text_summarization",
+            mode="economy",
+            max_tokens=500,
+            temperature=0.0,
+            timeout=60.0,
+            allow_local_fallback=True,
+            prefer_local=True,
+        )
         # Strip qwen3 <think>...</think> blocks
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
         return _parse_llm_summary(raw)

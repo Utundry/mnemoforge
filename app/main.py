@@ -33,7 +33,9 @@ from app.services.data_integrity_service import (
     run_integrity_audit,
 )
 from app.services.ollama_service import OllamaService
+from app.services.lmstudio_service import LMStudioService
 from app.services.qdrant_service import QdrantService
+from app.services.runtime_owner_guard import acquire_runtime_ownership
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +100,102 @@ async def _warmup_ollama_embeddings(ollama_svc: OllamaService) -> int:
 
     assert last_error is not None
     raise last_error
+
+
+async def _warmup_lmstudio_embeddings() -> int:
+    attempts = max(1, int(os.getenv("LMSTUDIO_WARMUP_ATTEMPTS", "2")))
+    delay_seconds = max(0.1, float(os.getenv("LMSTUDIO_WARMUP_RETRY_SECONDS", "1.5")))
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        service = LMStudioService(timeout=30.0)
+        try:
+            warmup_vector = await service.embed("warmup", timeout=20.0)
+            if not warmup_vector:
+                raise RuntimeError("LM Studio embedding endpoint returned an empty vector")
+            return len(warmup_vector)
+        except Exception as exc:
+            last_error = exc
+            if attempt >= attempts:
+                break
+            logger.warning(
+                "LM Studio warmup attempt %d/%d failed; retrying in %.1fs: %s",
+                attempt,
+                attempts,
+                delay_seconds,
+                exc,
+            )
+            await asyncio.sleep(delay_seconds)
+        finally:
+            await service.close()
+
+    assert last_error is not None
+    raise last_error
+
+
+def _env_enabled(name: str, default: str = "1") -> bool:
+    return os.getenv(name, default).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _local_llm_provider_order() -> tuple[str, list[str]]:
+    local_provider = os.getenv("LOCAL_LLM_PROVIDER", settings.local_llm_provider).strip().lower() or "auto"
+    fallback_order = [
+        item.strip().lower()
+        for item in os.getenv("LOCAL_LLM_FALLBACK_ORDER", settings.local_llm_fallback_order).split(",")
+        if item.strip()
+    ]
+    return local_provider, fallback_order
+
+
+def _ollama_warmup_enabled() -> bool:
+    if not _env_enabled("OLLAMA_WARMUP_ENABLED", "1"):
+        return False
+    local_provider, fallback_order = _local_llm_provider_order()
+    return local_provider in {"", "auto", "ollama"} or "ollama" in fallback_order
+
+
+def _lmstudio_warmup_enabled() -> bool:
+    if not _env_enabled("LMSTUDIO_WARMUP_ENABLED", "1"):
+        return False
+    local_provider, fallback_order = _local_llm_provider_order()
+    return local_provider in {"auto", "lmstudio"} or "lmstudio" in fallback_order
+
+
+async def _warmup_local_embedding_services(ollama_svc: OllamaService) -> None:
+    if _ollama_warmup_enabled():
+        try:
+            actual_dim = await _warmup_ollama_embeddings(ollama_svc)
+            if actual_dim != settings.embedding_dimensions:
+                logger.warning(
+                    "Ollama embedding dimension mismatch: model '%s' produces %d-dim vectors, "
+                    "but EMBEDDING_DIMENSIONS=%d; embedding gateway will try the next provider.",
+                    settings.ollama_embedding_model,
+                    actual_dim,
+                    settings.embedding_dimensions,
+                )
+            else:
+                logger.info("Ollama embed model warmed up (dim=%d)", actual_dim)
+        except Exception as e:
+            logger.warning("Ollama warmup failed after retries (will retry via embedding gateway): %s", e)
+    else:
+        logger.info("Ollama warmup skipped: Ollama is not enabled in the local LLM provider order")
+
+    if _lmstudio_warmup_enabled():
+        try:
+            actual_dim = await _warmup_lmstudio_embeddings()
+            if actual_dim != settings.embedding_dimensions:
+                logger.warning(
+                    "LM Studio embedding dimension mismatch: selected embedding model produces %d-dim vectors, "
+                    "but EMBEDDING_DIMENSIONS=%d; embedding gateway will try the next provider.",
+                    actual_dim,
+                    settings.embedding_dimensions,
+                )
+            else:
+                logger.info("LM Studio embedding model warmed up (dim=%d)", actual_dim)
+        except Exception as e:
+            logger.warning("LM Studio warmup failed after retries (will retry via embedding gateway): %s", e)
+    else:
+        logger.info("LM Studio warmup skipped: LM Studio is not enabled in the local LLM provider order")
 
 
 async def _enqueue_startup_docs_refresh(
@@ -263,6 +361,12 @@ async def lifespan(app: FastAPI):
     setup_logging()
     loop, previous_handler = _install_asyncio_exception_filter()
     logger.info("Starting memory server")
+    runtime_owner = acquire_runtime_ownership(
+        runtime_kind=settings.runtime_kind,
+        enabled=settings.runtime_owner_guard and not settings.qdrant_in_memory,
+        allow_takeover=settings.runtime_owner_allow_takeover,
+        stale_seconds=settings.runtime_owner_stale_seconds,
+    )
     from app.routers.admin import register_task, start_task as _admin_start_task
 
     # Init Qdrant
@@ -277,26 +381,14 @@ async def lifespan(app: FastAPI):
     qdrant_svc = QdrantService(client)
     await qdrant_svc.ensure_collection()
 
-    # Init Ollama + warm up embedding model
+    # Init Ollama service object; warmup is local-only and optional.
     ollama_svc = OllamaService()
     set_ollama_service(ollama_svc)
 
     # Wire watcher service — without this watcher silently does nothing
     from app.services.watcher_service import set_services as watcher_set_services
     watcher_set_services(qdrant_svc, ollama_svc)
-    try:
-        actual_dim = await _warmup_ollama_embeddings(ollama_svc)
-        if actual_dim != settings.embedding_dimensions:
-            raise RuntimeError(
-                f"Embedding dimension mismatch: model '{settings.ollama_embedding_model}' "
-                f"produces {actual_dim}-dim vectors, but EMBEDDING_DIMENSIONS={settings.embedding_dimensions}. "
-                f"Set EMBEDDING_DIMENSIONS={actual_dim} in .env or switch models."
-            )
-        logger.info("Ollama embed model warmed up (dim=%d)", actual_dim)
-    except RuntimeError:
-        raise
-    except Exception as e:
-        logger.warning("Ollama warmup failed after retries (will retry on first request): %s", e)
+    await _warmup_local_embedding_services(ollama_svc)
 
     # Optional auto-start for AI directory watcher so dialogue learning keeps moving
     if settings.watcher_auto_start and "watcher" not in _disabled():
@@ -337,7 +429,7 @@ async def lifespan(app: FastAPI):
         from app.services.memoir_service import generate_and_store_memoir
         from app.config import settings
         task_id = payload["task_id"]
-        project = payload.get("project", "supermemory")
+        project = payload.get("project", "mnemoforge")
         qdrant = get_qdrant()
         memoir_id = await generate_and_store_memoir(
             task_id=task_id,
@@ -354,7 +446,7 @@ async def lifespan(app: FastAPI):
         from app.dependencies import get_qdrant, get_ollama
         from app.services.docs_service import invalidate_docs_cache, rebuild_docs, sync_docs_projection_memory
         from app.config import settings
-        project_id = payload.get("project", "supermemory")
+        project_id = payload.get("project", "mnemoforge")
         force = payload.get("force", False)
         changed_component_ids = [str(item).strip() for item in (payload.get("changed_component_ids") or []) if str(item).strip()]
         changed_files = [str(item).strip() for item in (payload.get("changed_files") or []) if str(item).strip()]
@@ -384,7 +476,7 @@ async def lifespan(app: FastAPI):
         from app.dependencies import get_qdrant, get_ollama
         from app.services.docs_service import sync_docs_projection_memory
 
-        project_id = payload.get("project", "supermemory")
+        project_id = payload.get("project", "mnemoforge")
         synced = await sync_docs_projection_memory(project_id, get_qdrant(), get_ollama())
         return {"project": project_id, "synced_doc_sections": synced}
 
@@ -862,7 +954,7 @@ async def lifespan(app: FastAPI):
                 improvement_id=_UUID(str(_pt.id)),
                 title=_p.get("title", _p.get("content", "")[:256]),
                 description=_p.get("description", _p.get("content", "")),
-                project=_p.get("project", "supermemory"),
+                project=_p.get("project", "mnemoforge"),
                 agent_id=_p.get("agent_id", "llm"),
                 importance_score=float(_p.get("importance_score", 0.7)),
                 tags=_p.get("tags") or [],
@@ -1706,6 +1798,8 @@ async def lifespan(app: FastAPI):
         close_data_hygiene_store()
         logger.info("Memory server stopped")
     finally:
+        if runtime_owner is not None:
+            runtime_owner.close()
         loop.set_exception_handler(previous_handler)
 
 
@@ -1785,7 +1879,7 @@ def _add_security_middleware(app: FastAPI) -> None:
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Super Memory Server",
+        title="MnemoForge Server",
         description="Local semantic memory store for AI agents (Qdrant + Ollama)",
         version="1.0.0",
         lifespan=lifespan,

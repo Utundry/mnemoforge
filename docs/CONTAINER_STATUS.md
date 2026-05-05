@@ -77,13 +77,13 @@ DB-backed integration/e2e tests are allowed to target only:
 - `http://localhost:8010` / `http://127.0.0.1:8010` from the host
 
 The guard in `scripts/testing_guard.py` reads allowed DB test targets from
-`SUPERMEMORY_DB_TEST_TARGETS` and live targets from `SUPERMEMORY_LIVE_TARGETS`.
+`MNEMOFORGE_DB_TEST_TARGETS` and live targets from `MNEMOFORGE_LIVE_TARGETS`.
 For this project, the Compose `test` profile configures those values for
 `mcp-e2e-test-runner`. The mechanism must stay generic: container names and host
 ports belong in Compose/env/project rules, not in Python constants.
 
 The guard refuses live-like targets unless
-`SUPERMEMORY_ALLOW_UNSAFE_LIVE_TESTS=1` is set after explicit unsafe approval.
+`MNEMOFORGE_ALLOW_UNSAFE_LIVE_TESTS=1` is set after explicit unsafe approval.
 Agents should treat host `uvicorn app.main:app` as the wrong runtime for
 DB-backed integration/e2e checks; use the Docker test profile instead.
 

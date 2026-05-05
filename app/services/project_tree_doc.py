@@ -11,6 +11,7 @@ import time
 from typing import TYPE_CHECKING
 
 from app.services.governed_artifact import stage_buffered_revision
+from app.services.embedding_gateway import embed_query
 
 if TYPE_CHECKING:
     from app.services.project_tree_store import ProjectTreeStore
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DOC_PROMPT = """\
-You are a technical documentation writer for an AI memory system called Supermemory.
+You are a technical documentation writer for an AI memory system called MnemoForge.
 Write concise documentation for a project tree node in Markdown.
 Always write in English. Be precise and LLM-friendly (avoid fluff).
 
@@ -84,7 +85,11 @@ async def generate_doc(node: dict, qdrant=None, ollama=None) -> str:
     project_name = topic_path.split("/")[0] if topic_path else ""
     if qdrant and ollama and topic_path:
         try:
-            vec = await ollama.embed(f"{node.get('title','')} {node.get('description','')}")
+            vec, _embedding_meta = await embed_query(
+                f"{node.get('title','')} {node.get('description','')}",
+                primary=ollama,
+                purpose="project_tree_doc_memory_search",
+            )
             results = await qdrant.search(vector=vec, limit=20)
             relevant = []
             for r, score in results:

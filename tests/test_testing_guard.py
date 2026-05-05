@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from scripts.testing_guard import (
+    LEGACY_TEST_TARGETS_ENV,
+    LEGACY_UNSAFE_OVERRIDE_ENV,
     LIVE_TARGETS_ENV,
     TEST_TARGETS_ENV,
     UNSAFE_OVERRIDE_ENV,
@@ -50,7 +52,7 @@ def test_db_backed_guard_rejects_live_like_targets(url: str):
 
     message = str(exc_info.value)
     assert "integration test refused" in message
-    assert "SUPERMEMORY_ALLOW_UNSAFE_LIVE_TESTS" in message
+    assert "MNEMOFORGE_ALLOW_UNSAFE_LIVE_TESTS" in message
 
 
 def test_db_backed_guard_rejects_unknown_targets():
@@ -62,6 +64,15 @@ def test_db_backed_guard_rejects_unknown_targets():
 
 def test_db_backed_guard_allows_explicit_unsafe_override(monkeypatch):
     monkeypatch.setenv(UNSAFE_OVERRIDE_ENV, "1")
+    assert_db_backed_test_target("http://localhost:8000")
+
+
+def test_db_backed_guard_keeps_legacy_env_aliases(monkeypatch):
+    monkeypatch.delenv(TEST_TARGETS_ENV)
+    monkeypatch.setenv(LEGACY_TEST_TARGETS_ENV, "http://legacy-test:8000")
+    assert_db_backed_test_target("http://legacy-test:8000")
+
+    monkeypatch.setenv(LEGACY_UNSAFE_OVERRIDE_ENV, "1")
     assert_db_backed_test_target("http://localhost:8000")
 
 

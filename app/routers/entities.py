@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from app.dependencies import OllamaDep, QdrantDep
 from app.models.enums import MemoryType
+from app.services.embedding_gateway import embed_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/entities", tags=["entities"])
@@ -148,7 +149,12 @@ async def create_entity(body: EntityCreate, qdrant: QdrantDep, ollama: OllamaDep
     from app.models.memory import MemoryCreate
 
     content = _entity_content(body)
-    vector = await ollama.embed(content)
+    vector, embedding_meta = await embed_text(
+        content,
+        primary=ollama,
+        purpose="entity_profile",
+        fallback_reason="entity_profile_embedding_unavailable",
+    )
 
     mem = MemoryCreate(
         content=content,
@@ -158,6 +164,7 @@ async def create_entity(body: EntityCreate, qdrant: QdrantDep, ollama: OllamaDep
         importance_score=body.importance_score,
         source="entities",
         tags=["entity", f"type:{body.entity_type}", f"name:{body.name}"] + body.tags,
+        meta=embedding_meta,
         decay_rate=0.0,  # entity profiles are permanent
     )
     memory_id = await qdrant.insert(mem, vector)
@@ -284,11 +291,21 @@ async def update_entity(entity_id: UUID, body: EntityUpdate, qdrant: QdrantDep, 
 
         # Re-embed if content changed
         if body.description is not None:
-            new_vector = await ollama.embed(body.description)
+            new_vector, embedding_meta = await embed_text(
+                body.description,
+                primary=ollama,
+                purpose="entity_profile_update",
+                fallback_reason="entity_profile_update_embedding_unavailable",
+            )
             from qdrant_client.http import models as qmodels
             await qdrant._client.update_vectors(
                 collection_name=qdrant._collection,
                 points=[qmodels.PointVectors(id=str(entity_id), vector=new_vector)],
+            )
+            await qdrant._client.set_payload(
+                collection_name=qdrant._collection,
+                payload={"meta": embedding_meta},
+                points=[str(entity_id)],
             )
 
     updated = await qdrant._client.retrieve(
@@ -312,7 +329,7 @@ async def delete_entity(entity_id: UUID, qdrant: QdrantDep):
 async def create_relation(body: RelationCreate, qdrant: QdrantDep, ollama: OllamaDep):
     """
     Create a directed relation between two entities.
-    Example: user-alice --[uses]--> project-supermemory
+    Example: user-alice --[uses]--> project-mnemoforge
     """
     from app.models.memory import MemoryCreate
 
@@ -320,7 +337,12 @@ async def create_relation(body: RelationCreate, qdrant: QdrantDep, ollama: Ollam
         f"{body.from_entity_id} --[{body.relation_type}]--> {body.to_entity_id}"
         + (f": {body.description}" if body.description else "")
     )
-    vector = await ollama.embed(content)
+    vector, embedding_meta = await embed_text(
+        content,
+        primary=ollama,
+        purpose="entity_relation",
+        fallback_reason="entity_relation_embedding_unavailable",
+    )
 
     mem = MemoryCreate(
         content=content,
@@ -335,6 +357,7 @@ async def create_relation(body: RelationCreate, qdrant: QdrantDep, ollama: Ollam
             f"to_entity:{body.to_entity_id}",
             f"rel:{body.relation_type}",
         ],
+        meta=embedding_meta,
         decay_rate=0.5,
     )
     memory_id = await qdrant.insert(mem, vector)

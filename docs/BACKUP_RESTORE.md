@@ -1,4 +1,4 @@
-# Backup and Restore (SuperMemory Data)
+# Backup and Restore (MnemoForge Data)
 
 This runbook covers backup and restore of local `qdrant_data` state, including:
 

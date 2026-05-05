@@ -1,7 +1,7 @@
 # Task Memory Capture Protocol
 
 Status: proposed  
-Project: `supermemory`  
+Project: `mnemoforge`  
 Priority: critical
 
 ## Problem

@@ -16,6 +16,7 @@ from app.models.unified_artifact import (
     to_unified_status,
 )
 from app.services.improvements_store import get_improvements_store
+from app.services.project_identity_service import project_lookup_ids, resolve_project_id
 from app.services.project_task_service import _task_capture_summary_map
 from app.services.project_tasks_store import get_project_tasks_store
 
@@ -56,6 +57,7 @@ class UnifiedArtifactService:
     async def get_artifact(self, artifact_key: str) -> UnifiedArtifactRecord:
         """Получить сущность по artifact_key независимо от типа."""
         key = ArtifactKey.parse(artifact_key)
+        key = ArtifactKey(type=key.type, project=resolve_project_id(key.project), local_id=key.local_id)
 
         if key.type == "improvement":
             return await self._get_improvement(key)
@@ -73,24 +75,29 @@ class UnifiedArtifactService:
             raise ValueError(f"Improvement not found: {improvement_id}")
 
         # Получить связанный task по task_id (= improvement_id) если есть
+        canonical_project = resolve_project_id(row["project"])
         linked_artifact_key = None
         linked_status = None
         try:
-            linked_task = self._tasks_store.get_task_by_task_id(
-                project=row["project"],
-                task_id=str(improvement_id),
-            )
+            linked_task = None
+            for lookup_project in project_lookup_ids(canonical_project):
+                linked_task = self._tasks_store.get_task_by_task_id(
+                    project=lookup_project,
+                    task_id=str(improvement_id),
+                )
+                if linked_task:
+                    break
             if linked_task:
-                linked_artifact_key = f"task:{row['project']}:{linked_task['task_id']}"
+                linked_artifact_key = f"task:{canonical_project}:{linked_task['task_id']}"
                 linked_status = to_unified_status("task", linked_task["status"])
         except Exception as e:
             logger.warning(f"Failed to get linked task for improvement {improvement_id}: {e}")
 
         return UnifiedArtifactRecord(
-            artifact_key=str(key),
+            artifact_key=str(ArtifactKey(type="improvement", project=canonical_project, local_id=key.local_id)),
             type="improvement",
             id=improvement_id,
-            project=row["project"],
+            project=canonical_project,
             title=row["title"],
             description=row["description"],
             status=to_unified_status("improvement", row["status"]),
@@ -111,16 +118,21 @@ class UnifiedArtifactService:
 
     async def _get_task(self, key: ArtifactKey) -> UnifiedArtifactRecord:
         """Получить task и преобразовать в UnifiedArtifactRecord."""
-        row = self._tasks_store.get_task_by_task_id(
-            project=key.project,
-            task_id=key.local_id,
-        )
+        row = None
+        canonical_project = resolve_project_id(key.project)
+        for lookup_project in project_lookup_ids(canonical_project):
+            row = self._tasks_store.get_task_by_task_id(
+                project=lookup_project,
+                task_id=key.local_id,
+            )
+            if row:
+                break
 
         if not row:
             raise ValueError(f"Task not found: {key.local_id}")
 
         # Получить связанный improvement, если есть
-        summary = (await _task_capture_summary_map(key.project, limit_hint=1)).get(key.local_id) or {}
+        summary = (await _task_capture_summary_map(canonical_project, limit_hint=1)).get(key.local_id) or {}
 
         linked_artifact_key = None
         linked_status = None
@@ -129,16 +141,16 @@ class UnifiedArtifactService:
                 linked_improvement_id = UUID(row["linked_improvement_id"])
                 linked_improvement = await self._improvements_store.get(linked_improvement_id)
                 if linked_improvement:
-                    linked_artifact_key = f"improvement:{row['project']}:{linked_improvement_id}"
+                    linked_artifact_key = f"improvement:{canonical_project}:{linked_improvement_id}"
                     linked_status = to_unified_status("improvement", linked_improvement["status"])
             except (ValueError, Exception) as e:
                 logger.warning(f"Failed to get linked improvement for task {key.local_id}: {e}")
 
         return UnifiedArtifactRecord(
-            artifact_key=str(key),
+            artifact_key=str(ArtifactKey(type="task", project=canonical_project, local_id=key.local_id)),
             type="task",
             id=UUID(row["id"]),
-            project=row["project"],
+            project=canonical_project,
             title=row["title"],
             description=row["description"],
             status=to_unified_status("task", row["status"]),
@@ -170,6 +182,8 @@ class UnifiedArtifactService:
         limit: int = 50,
     ) -> UnifiedArtifactListResponse:
         """Получить список сущностей с фильтрацией по типу и статусу."""
+        canonical_project = resolve_project_id(project)
+        lookup_projects = project_lookup_ids(canonical_project)
         items: list[UnifiedArtifactRecord] = []
 
         # Преобразовать unified status в тип-специфичный
@@ -183,28 +197,36 @@ class UnifiedArtifactService:
 
         # Получить improvements
         if type_ is None or type_ == "improvement":
-            improvements = await self._improvements_store.list(
-                project=project,
-                status=improvement_status,
-                limit=limit,
-            )
+            improvements = []
+            for lookup_project in lookup_projects:
+                improvements.extend(
+                    await self._improvements_store.list(
+                        project=lookup_project,
+                        status=improvement_status,
+                        limit=limit,
+                    )
+                )
             for imp in improvements:
                 try:
-                    key = ArtifactKey(type="improvement", project=imp["project"], local_id=str(imp["id"]))
+                    key = ArtifactKey(type="improvement", project=canonical_project, local_id=str(imp["id"]))
                     items.append(await self._get_improvement(key))
                 except Exception as e:
                     logger.warning(f"Failed to convert improvement {imp['id']}: {e}")
 
         # Получить tasks
         if type_ is None or type_ == "task":
-            tasks = self._tasks_store.list_tasks(
-                project=project,
-                status=task_status,
-                limit=limit,
-            )
+            tasks = []
+            for lookup_project in lookup_projects:
+                tasks.extend(
+                    self._tasks_store.list_tasks(
+                        project=lookup_project,
+                        status=task_status,
+                        limit=limit,
+                    )
+                )
             for task in tasks:
                 try:
-                    key = ArtifactKey(type="task", project=task["project"], local_id=task["task_id"])
+                    key = ArtifactKey(type="task", project=canonical_project, local_id=task["task_id"])
                     items.append(await self._get_task(key))
                 except Exception as e:
                     logger.warning(f"Failed to convert task {task['task_id']}: {e}")

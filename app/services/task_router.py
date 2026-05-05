@@ -17,10 +17,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-import httpx
-
-from app.config import settings
 from app.services.capability_registry import get_registry
+from app.services.llm_gateway import get_cloud_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -82,16 +80,19 @@ class RoutingDecision:
 
 
 async def _llm_classify(task: str) -> str:
-    """Use local LLM to classify task type."""
-    async with httpx.AsyncClient(timeout=30.0) as c:
-        r = await c.post(
-            f"{settings.ollama_base_url}/api/generate",
-            json={"model": MANAGER_MODEL, "prompt": _CLASSIFY_PROMPT.format(task=task[:500]), "stream": False},
-        )
-        r.raise_for_status()
-        text = r.json()["response"].strip()
-        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-        return text.lower().split()[0] if text else "text_summarization"
+    """Use the configured LLM gateway to classify task type."""
+    text = await get_cloud_gateway().generate(
+        _CLASSIFY_PROMPT.format(task=task[:500]),
+        task_type="text_summarization",
+        mode="economy",
+        max_tokens=40,
+        temperature=0.0,
+        timeout=30.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    return text.lower().split()[0] if text else "text_summarization"
 
 
 def _heuristic_classify(task: str) -> str | None:

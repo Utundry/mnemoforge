@@ -1,7 +1,7 @@
 # Unified Project Knowledge Model
 
 Status: proposed  
-Project: `supermemory`  
+Project: `mnemoforge`  
 Priority: critical
 
 Related follow-on specs:
@@ -11,7 +11,7 @@ Related follow-on specs:
 
 ## Problem
 
-`supermemory` currently stores project understanding across multiple partially-overlapping layers:
+`mnemoforge` currently stores project understanding across multiple partially-overlapping layers:
 - `project_docs` for component summaries
 - file-backed living docs cache
 - project laws in governed memory
@@ -21,7 +21,7 @@ Related follow-on specs:
 
 These layers are individually useful, but together they fail the main architectural goal:
 
-`an agent should retrieve project understanding from SuperMemory before reading source code`
+`an agent should retrieve project understanding from MnemoForge before reading source code`
 
 Today the system has no single knowledge substrate that all of these layers project from or retrieve through.
 
@@ -349,7 +349,7 @@ Keep MCP usage compact by default:
 - prefer the canonical surface returned by `tool_recommend` before browsing individual tool families; it should keep the agent on a small set of universal entrypoints and only then fall back to deeper or specialized tools
 - at task start and every meaningful stage transition, the agent should record a compact task checkpoint so planning, blockers, interruptions, and handoff do not vanish if the session ends unexpectedly
 - if any MCP tool is marked `testing`, the agent should complete that tool's use-case with `tool_feedback` and include a compact evaluation envelope with scope, what_was_tested, expected_behavior, observed_behavior, friction, suggestion, and next_action when available; this is a phase-level rule, not a family-level exception. Testing tools are auto-seeded into lifecycle review and may later be promoted to `stable` or marked `deprecated` after enough time or feedback, with LLM review used only when the signal is ambiguous
-- after completing a task or implementation, the agent should report the outcome back to SuperMemory with the linked improvement/task id and any relevant stage/verdict evidence; completion should not live only in chat
+- after completing a task or implementation, the agent should report the outcome back to MnemoForge with the linked improvement/task id and any relevant stage/verdict evidence; completion should not live only in chat
 - pull deeper project knowledge only when the current bundle is missing a needed answer
 - use specialized or lower-level surfaces only when the unified surface cannot express the request
 - prefer short guidance in the default context and detailed retrieval on demand

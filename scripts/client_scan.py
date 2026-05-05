@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SuperMemory Client Scanner
+MnemoForge Client Scanner
 ==========================
 Scans local AI assistant directories and ingests their content
 into the shared vector memory server.
@@ -44,11 +44,11 @@ from typing import Optional
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-DEFAULT_SERVER = os.environ.get("SUPERMEMORY_SERVER_URL", "http://127.0.0.1:8000")
-DEFAULT_OLLAMA = os.environ.get("SUPERMEMORY_OLLAMA_URL", "http://127.0.0.1:11434")
+DEFAULT_SERVER = os.environ.get("MNEMOFORGE_SERVER_URL") or os.environ.get("SUPERMEMORY_SERVER_URL", "http://127.0.0.1:8000")
+DEFAULT_OLLAMA = os.environ.get("MNEMOFORGE_OLLAMA_URL") or os.environ.get("SUPERMEMORY_OLLAMA_URL", "http://127.0.0.1:11434")
 DEFAULT_MODEL  = "qwen3:1.7b"
-STATE_FILE     = Path.home() / ".supermemory_scan_state.json"
-LOG_FILE       = Path.home() / ".supermemory_scan.log"
+STATE_FILE     = Path.home() / ".mnemoforge_scan_state.json"
+LOG_FILE       = Path.home() / ".mnemoforge_scan.log"
 BATCH_SIZE     = 20       # memories per API call
 MAX_FILE_BYTES = 512_000  # skip files larger than this
 MAX_CHUNK_CHARS = 2000    # max chars per memory chunk
@@ -608,10 +608,10 @@ def scan(
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="SuperMemory client scanner")
+    parser = argparse.ArgumentParser(description="MnemoForge client scanner")
     parser.add_argument("--server", default=DEFAULT_SERVER)
     parser.add_argument("--ollama", default=DEFAULT_OLLAMA, help="Ollama URL (local or network)")
-    parser.add_argument("--api-key", default="", help="API key for authenticated SuperMemory server access")
+    parser.add_argument("--api-key", default="", help="API key for authenticated MnemoForge server access")
     parser.add_argument("--project", default="", help="Optional project_id to attach to stored memories")
     parser.add_argument("--agent", default=socket.gethostname().lower())
     parser.add_argument("--model", default=DEFAULT_MODEL)
@@ -659,7 +659,7 @@ def main() -> None:
     if not args.dry_run:
         llm_status = f"on ({args.ollama})" if ollama_available(args.ollama) else "off"
         print(
-            f"[supermemory] scan done — "
+            f"[mnemoforge] scan done — "
             f"files={stats.get('files_parsed', 0)}  "
             f"chunks={stats.get('chunks_total', 0)}  "
             f"stored={stats.get('stored', 0)}  "

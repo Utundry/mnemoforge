@@ -29,7 +29,7 @@ class CompletedCheckpointArtifactCandidate(BaseModel):
 
 
 class ArtifactLifecycleReconcileRequest(BaseModel):
-    project: str = Field("supermemory", min_length=1, max_length=128)
+    project: str = Field("mnemoforge", min_length=1, max_length=128)
     close: bool = Field(False, description="When true, close eligible artifacts; otherwise report only.")
     close_policy: Literal["strict", "checkpoint_done"] = "strict"
     acted_by: str = Field("system", min_length=1, max_length=256)
@@ -39,7 +39,7 @@ class ArtifactLifecycleReconcileRequest(BaseModel):
 
 
 class ArtifactLifecycleScopeReviewRequest(BaseModel):
-    project: str = Field("supermemory", min_length=1, max_length=128)
+    project: str = Field("mnemoforge", min_length=1, max_length=128)
     task_id: str = Field(..., min_length=1, max_length=256)
     checkpoint_change_id: str = Field("", max_length=128)
     next_step_scope: Literal["none", "follow_up_task", "same_artifact_remaining_work", "operator_review"] = "operator_review"
@@ -56,7 +56,7 @@ class ArtifactLifecycleScopeReviewDecision(BaseModel):
 
 
 class ArtifactLifecycleScopeReviewBatchRequest(BaseModel):
-    project: str = Field("supermemory", min_length=1, max_length=128)
+    project: str = Field("mnemoforge", min_length=1, max_length=128)
     decisions: list[ArtifactLifecycleScopeReviewDecision] = Field(..., min_length=1, max_length=50)
     default_reason: str = Field("Batch review completed checkpoint next_step scopes.", max_length=500)
     acted_by: str = Field("user", min_length=1, max_length=256)

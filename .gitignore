@@ -1,3 +1,9 @@
+# Dot-prefixed local state: ignore by default, then explicitly allow repo-owned dotfiles.
+.*
+!.dockerignore
+!.env.public.example
+!.gitignore
+
 # Environment variables
 .env
 .env.local
@@ -64,6 +70,7 @@ server.log
 .claude/
 .roo/
 .codex
+node_modules/
 
 # Database files
 *.db
@@ -78,6 +85,7 @@ server.log
 *.tmp
 *.bak
 *.cache
+pytest_temp_*/
 
 # OS specific
 Thumbs.db

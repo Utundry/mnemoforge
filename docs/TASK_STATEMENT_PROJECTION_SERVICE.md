@@ -1,7 +1,7 @@
 # Task Statement Projection Service
 
 Status: proposed  
-Project: `supermemory`  
+Project: `mnemoforge`  
 Priority: high
 
 ## Why This Service Exists
@@ -19,7 +19,7 @@ If this evolution lives only in chat or ad hoc notes, agents lose the current ta
 
 ## Goal
 
-Create a projection service that reconstructs the current task statement from stored task artifacts in `supermemory`.
+Create a projection service that reconstructs the current task statement from stored task artifacts in `mnemoforge`.
 
 This service should answer two different questions:
 

@@ -21,12 +21,12 @@ from collections import Counter
 from pathlib import Path
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.config import settings
 from app.dependencies import OllamaDep, QdrantDep
+from app.services.embedding_gateway import embed_text
+from app.services.llm_gateway import get_cloud_gateway
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/log", tags=["log-filter"])
@@ -127,15 +127,17 @@ def _stage2_dedup(
 # ── Stage 3: LLM refinement ───────────────────────────────────────────────────
 
 async def _llm_call(prompt: str) -> str:
-    async with httpx.AsyncClient(timeout=90.0) as c:
-        r = await c.post(
-            f"{settings.ollama_base_url}/api/generate",
-            json={"model": MANAGER_MODEL, "prompt": prompt, "stream": False},
-        )
-        r.raise_for_status()
-        text = r.json()["response"].strip()
-        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-        return text
+    text = await get_cloud_gateway().generate(
+        prompt,
+        task_type="log_filter",
+        mode="economy",
+        max_tokens=1200,
+        temperature=0.0,
+        timeout=90.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
 async def _stage3_llm(
@@ -349,7 +351,13 @@ async def log_feedback(body: FeedbackRequest, ollama: OllamaDep, qdrant: QdrantD
             source="user-feedback",
             tags=["noise", body.project_id or "unknown"],
         )
-        vector = await ollama.embed(mem.content)
+        vector, embedding_meta = await embed_text(
+            mem.content,
+            primary=ollama,
+            purpose="log_noise_feedback",
+            fallback_reason="log_noise_feedback_embedding_unavailable",
+        )
+        mem.meta.update(embedding_meta)
         await qdrant.insert(mem, vector)
         return {"status": "ok", "stored": normalized}
     except Exception as e:

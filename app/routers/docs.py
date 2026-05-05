@@ -55,7 +55,7 @@ async def rebuild_docs(body: DocsRebuildRequest, queue: JobQueueDep) -> dict:
 
 @router.post("/apply-candidate", response_model=DocsStatus)
 async def apply_candidate_docs(
-    project: str = Query(default="supermemory", min_length=1, max_length=128),
+    project: str = Query(default="mnemoforge", min_length=1, max_length=128),
     body: DocsCandidateReviewRequest | None = None,
     queue: JobQueueDep = None,
 ) -> DocsStatus:
@@ -77,7 +77,7 @@ async def apply_candidate_docs(
 
 @router.post("/discard-candidate", response_model=DocsStatus)
 async def discard_candidate_docs(
-    project: str = Query(default="supermemory", min_length=1, max_length=128),
+    project: str = Query(default="mnemoforge", min_length=1, max_length=128),
     body: DocsCandidateReviewRequest | None = None,
 ) -> DocsStatus:
     try:
@@ -95,7 +95,7 @@ async def discard_candidate_docs(
 
 @router.get("/status", response_model=DocsStatus)
 async def get_docs_status(
-    project: str = Query(default="supermemory", min_length=1, max_length=128),
+    project: str = Query(default="mnemoforge", min_length=1, max_length=128),
     view: str = Query(default="effective", pattern="^(effective|candidate)$"),
 ) -> DocsStatus:
     """Return cached JSON documentation. 404 if not yet built; call POST /docs/rebuild first."""
@@ -135,7 +135,7 @@ async def get_docs_html() -> HTMLResponse:
 
 @router.get("/status.md", response_class=PlainTextResponse)
 async def get_docs_markdown(
-    project: str = Query(default="supermemory", min_length=1, max_length=128),
+    project: str = Query(default="mnemoforge", min_length=1, max_length=128),
     view: str = Query(default="effective", pattern="^(effective|candidate)$"),
 ) -> PlainTextResponse:
     """Return documentation as Markdown."""
@@ -170,7 +170,7 @@ async def get_docs_markdown(
 @router.get("/section/{name}/translate")
 async def translate_section(
     name: str,
-    project: str = Query(default="supermemory", min_length=1, max_length=128),
+    project: str = Query(default="mnemoforge", min_length=1, max_length=128),
     view: str = Query(default="effective", pattern="^(effective|candidate)$"),
 ) -> dict:
     """Translate a documentation section on demand without changing cached docs."""
@@ -202,7 +202,7 @@ async def translate_section(
 @router.get("/section/{name}", response_model=DocsSection)
 async def get_section(
     name: str,
-    project: str = Query(default="supermemory", min_length=1, max_length=128),
+    project: str = Query(default="mnemoforge", min_length=1, max_length=128),
     view: str = Query(default="effective", pattern="^(effective|candidate)$"),
 ) -> DocsSection:
     """Return a single documentation section by name."""

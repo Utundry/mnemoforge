@@ -45,4 +45,3 @@ async def test_learning_candidates_vector_dedup_across_context(client):
     row = next((a for a in items if a.get("id") == cid), None)
     assert row is not None
     assert row["evidence_count"] == 2
-

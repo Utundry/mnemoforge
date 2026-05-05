@@ -35,6 +35,7 @@ from app.services.ai_dir_parser import (
     parse_python_hook,
     parse_jsonl_conversation,
 )
+from app.services.embedding_gateway import embed_text
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,13 @@ async def _store_chunk(chunk: ParsedChunk, agent_id: str) -> None:
         source=f"watcher:{chunk.source_path}",
         tags=chunk.tags + [chunk.file_hash] if chunk.file_hash else chunk.tags,
     )
-    vector = await _ollama_svc.embed(mem.content)
+    vector, embedding_meta = await embed_text(
+        mem.content,
+        primary=_ollama_svc,
+        purpose="watcher_chunk",
+        fallback_reason="watcher_chunk_embedding_unavailable",
+    )
+    mem.meta.update(embedding_meta)
     await _qdrant_svc.insert(mem, vector)
 
 

@@ -144,6 +144,41 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "list_project_aliases": {
+        "name": "list_project_aliases",
+        "description": (
+            "List active project identity aliases. Use this to see which historical project names "
+            "resolve to a canonical project id."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "type": "string",
+                    "description": "Optional project id or alias to scope the alias list.",
+                },
+            },
+        },
+    },
+    "rename_project": {
+        "name": "rename_project",
+        "description": (
+            "Rename a project identity as a normal lifecycle operation. Defaults to dry-run; "
+            "set apply=true to rewrite structured SQLite project references and create aliases."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["old_project_id", "new_project_id"],
+            "properties": {
+                "old_project_id": {"type": "string", "description": "Historical project id or working name."},
+                "new_project_id": {"type": "string", "description": "Canonical release/current project id."},
+                "apply": {"type": "boolean", "default": False, "description": "Apply changes. False returns a dry-run report."},
+                "include_text": {"type": "boolean", "default": False, "description": "Also rewrite free-text history fields."},
+                "ensure_alias": {"type": "boolean", "default": True, "description": "Create canonical and legacy alias rows."},
+                "reason": {"type": "string", "default": "", "description": "Reason stored with the alias/update report."},
+            },
+        },
+    },
     "normalize_mcp_intent": {
         "name": "normalize_mcp_intent",
         "description": (
@@ -178,7 +213,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "default": "task_completion",
                     "description": "Optional explicit workflow id. Defaults to the first supported project lifecycle workflow.",
                 },
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string", "description": "Optional task id when already known"},
                 "artifact_key": {"type": "string", "description": "Optional artifact key when already known"},
             },
@@ -295,7 +330,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "type": "object",
             "required": ["task", "state"],
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string", "description": "Optional project task identifier for traceability."},
                 "task": {"type": "string"},
                 "state": {
@@ -340,7 +375,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "type": "object",
             "required": ["task", "state", "action"],
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string"},
                 "task": {"type": "string"},
                 "state": {
@@ -746,8 +781,8 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "description": (
             "Get a unified artifact (improvement or task) by artifact_key. "
             "Artifact key format: {type}:{project}:{local_id} "
-            "Example: improvement:supermemory:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c "
-            "Example: task:supermemory:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c"
+            "Example: improvement:mnemoforge:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c "
+            "Example: task:mnemoforge:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c"
         ),
         "inputSchema": {
             "type": "object",
@@ -772,7 +807,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "status": {
                     "type": "string",
                     "description": "Filter by status (open, done, paused, archived)",
@@ -810,7 +845,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "close": {
                     "type": "boolean",
                     "default": False,
@@ -842,7 +877,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "type": "object",
             "required": ["task_id", "next_step_scope"],
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string", "description": "Task identifier from the reconciliation candidate"},
                 "checkpoint_change_id": {
                     "type": "string",
@@ -869,7 +904,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "type": "object",
             "required": ["decisions"],
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "decisions": {
                     "type": "array",
                     "minItems": 1,
@@ -904,7 +939,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "created_after": {
                     "type": "string",
                     "description": "ISO 8601 timestamp; include tasks with created_at >= this value",
@@ -1157,6 +1192,13 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "description": "Optional canonical task status for the checkpoint",
                 },
                 "reason": {"type": "string", "description": "Optional reason for this checkpoint"},
+                "scope_confirmation": {
+                    "type": "string",
+                    "description": (
+                        "Explicit human-reviewed override for checkpoint scope guard. "
+                        "Use exactly 'current checkpoint belongs to this task' only when the checkpoint intentionally belongs to task_id."
+                    ),
+                },
                 "acted_by": {"type": "string", "default": "user"},
                 "source": {"type": "string", "default": "mcp"},
             },
@@ -1236,6 +1278,13 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "description": "Optional canonical task status for the checkpoint",
                 },
                 "reason": {"type": "string", "description": "Optional reason for this checkpoint"},
+                "scope_confirmation": {
+                    "type": "string",
+                    "description": (
+                        "Explicit human-reviewed override for checkpoint scope guard. "
+                        "Use exactly 'current checkpoint belongs to this task' only when the checkpoint intentionally belongs to task_id."
+                    ),
+                },
                 "acted_by": {"type": "string", "default": "user"},
                 "source": {"type": "string", "default": "mcp"},
                 "to_agent": {
@@ -1265,7 +1314,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "type": "object",
             "required": ["raw_notes"],
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string", "description": "Task identifier when known"},
                 "task_title": {"type": "string", "description": "Optional task title for fallback summaries"},
                 "stage": {
@@ -1322,7 +1371,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "type": "object",
             "required": ["project", "task_id"],
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string"},
                 "agent_id": {"type": "string", "default": "codex"},
                 "session_id": {"type": "string"},
@@ -1391,7 +1440,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             "type": "object",
             "required": ["kind", "content"],
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string"},
                 "work_id": {"type": "string", "description": "Optional integrity check; must match active work when provided"},
                 "agent_id": {"type": "string", "default": "codex"},
@@ -1429,7 +1478,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string"},
                 "work_id": {"type": "string"},
                 "agent_id": {"type": "string", "default": "codex"},
@@ -1511,7 +1560,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     "continue_task": {
         "name": "continue_task",
         "description": (
-            "Resume a task from SuperMemory using MCP-accessible state. "
+            "Resume a task from MnemoForge using MCP-accessible state. "
             "Returns a compact layered resume response by default: latest checkpoint, replay/execution status, replay drill decision, available layer index, token-overhead estimate, and the next safe action. "
             "Use detail=full or include_replay_bundle=true to fetch full task history, linked improvement, handoff refs, and context refs. "
             "Use this when the user says to continue a task or when an old agent session is unavailable."
@@ -1519,7 +1568,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "default": "supermemory", "description": "Project name"},
+                "project": {"type": "string", "default": "mnemoforge", "description": "Project name"},
                 "task_id": {"type": "string", "description": "Optional task identifier. If omitted, uses the newest open task."},
                 "agent_id": {"type": "string", "default": "codex", "description": "Agent identity for handoff lookup"},
                 "include_handoffs": {"type": "boolean", "default": True, "description": "Include active/pending handoff packets for this task"},
@@ -1617,7 +1666,7 @@ def build_enrich_task_payload(args: dict[str, Any]) -> dict[str, Any]:
 
 def build_task_execution_context_payload(args: dict[str, Any]) -> dict[str, Any]:
     payload = {
-        "project": args.get("project", "supermemory"),
+        "project": args.get("project", "mnemoforge"),
         "task_id": args.get("task_id", ""),
         "task": args["task"],
         "state": args["state"],
@@ -1638,7 +1687,7 @@ def build_task_execution_context_payload(args: dict[str, Any]) -> dict[str, Any]
 def build_operational_tray_context_payload(args: dict[str, Any]) -> dict[str, Any]:
     payload = build_task_execution_context_payload(
         {
-            "project": args.get("project", "supermemory"),
+            "project": args.get("project", "mnemoforge"),
             "task_id": args.get("task_id", ""),
             "task": args["task"],
             "state": args["state"],
@@ -1763,7 +1812,7 @@ def build_list_learning_candidates_query(args: dict[str, Any]) -> str:
 
 def build_list_artifacts_query(args: dict[str, Any]) -> str:
     params: list[str] = [
-        f"project={quote(str(args.get('project', 'supermemory')), safe='')}",
+        f"project={quote(str(args.get('project', 'mnemoforge')), safe='')}",
         f"limit={int(args.get('limit', 50))}",
     ]
     if args.get("status"):
@@ -1783,7 +1832,7 @@ def build_list_artifacts_query(args: dict[str, Any]) -> str:
 
 def build_reconcile_completed_checkpoints_payload(args: dict[str, Any]) -> dict[str, Any]:
     return {
-        "project": str(args.get("project") or "supermemory").strip() or "supermemory",
+        "project": str(args.get("project") or "mnemoforge").strip() or "mnemoforge",
         "close": bool(args.get("close", False)),
         "close_policy": str(args.get("close_policy") or "strict").strip() or "strict",
         "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
@@ -1796,7 +1845,7 @@ def build_reconcile_completed_checkpoints_payload(args: dict[str, Any]) -> dict[
 
 def build_review_completed_checkpoint_scope_payload(args: dict[str, Any]) -> dict[str, Any]:
     return {
-        "project": str(args.get("project") or "supermemory").strip() or "supermemory",
+        "project": str(args.get("project") or "mnemoforge").strip() or "mnemoforge",
         "task_id": str(args["task_id"]).strip(),
         "checkpoint_change_id": str(args.get("checkpoint_change_id") or "").strip(),
         "next_step_scope": str(args["next_step_scope"]).strip(),
@@ -1823,7 +1872,7 @@ def build_review_completed_checkpoint_scopes_payload(args: dict[str, Any]) -> di
             }
         )
     return {
-        "project": str(args.get("project") or "supermemory").strip() or "supermemory",
+        "project": str(args.get("project") or "mnemoforge").strip() or "mnemoforge",
         "decisions": normalized,
         "default_reason": str(args.get("default_reason") or "Batch review completed checkpoint next_step scopes.").strip(),
         "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
@@ -1833,7 +1882,7 @@ def build_review_completed_checkpoint_scopes_payload(args: dict[str, Any]) -> di
 
 def build_list_open_tasks_query(args: dict[str, Any]) -> str:
     params: list[str] = [
-        f"project={quote(str(args.get('project', 'supermemory')), safe='')}",
+        f"project={quote(str(args.get('project', 'mnemoforge')), safe='')}",
         "status=open",
         "type=task",
         f"limit={int(args.get('limit', 50))}",
@@ -1995,7 +2044,7 @@ def _normalize_string_list(value: Any) -> list[str]:
 
 def build_project_workflow_payload(args: dict[str, Any]) -> dict[str, Any]:
     intent = str(args["intent"]).strip()
-    project = str(args.get("project") or args.get("project_id") or "supermemory").strip() or "supermemory"
+    project = str(args.get("project") or args.get("project_id") or "mnemoforge").strip() or "mnemoforge"
     task_id = str(args.get("task_id") or "").strip()
     artifact_key = str(args.get("artifact_key") or "").strip()
     workflow = str(args.get("workflow") or "task_completion").strip() or "task_completion"
@@ -2031,7 +2080,7 @@ def build_project_workflow_payload(args: dict[str, Any]) -> dict[str, Any]:
 def build_project_workflow_submit_payload(args: dict[str, Any]) -> dict[str, Any]:
     form = dict(args.get("form") or {})
     workflow = str(args.get("workflow") or form.get("workflow") or "").strip()
-    project = str(form.get("project") or args.get("project") or "supermemory").strip() or "supermemory"
+    project = str(form.get("project") or args.get("project") or "mnemoforge").strip() or "mnemoforge"
     task_id = str(form.get("task_id") or "").strip()
     artifact_key = str(form.get("artifact_key") or "").strip()
     if not task_id and artifact_key.startswith("task:"):
@@ -2540,7 +2589,7 @@ def build_supermemory_initialize_hint(agent_id: str) -> dict[str, Any]:
 
 def build_supermemory_onboarding_basics() -> str:
     return (
-        "SUPERMEMORY BASICS:\n"
+        "MNEMOFORGE BASICS:\n"
         "  - Call get_onboarding at session start or when you lose context.\n"
         "  - If onboarding warns that storage trust is degraded, call get_storage_trust_status before trusting affected retrieval or learning paths.\n"
         "  - If another agent may have contacted you, call pickup_coordination_messages with your agent_id and project.\n"

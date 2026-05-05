@@ -1,6 +1,6 @@
 # Cloud LLM providers
 
-`supermemory` supports configurable external LLM profiles with explicit API style selection.
+`mnemoforge` supports configurable external LLM profiles with explicit API style selection.
 
 ## Recommended config
 
@@ -29,8 +29,8 @@ GLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
 
 ## Selection rules
 
-- If `CLOUD_LLM_API_KEY` is set, `supermemory` uses `CLOUD_LLM_PROVIDER`, `CLOUD_LLM_MODEL`, and `CLOUD_LLM_BASE_URL`.
-- If `CLOUD_LLM_API_KEY` is empty, `supermemory` falls back to legacy `GLM_*`.
+- If `CLOUD_LLM_API_KEY` is set, `mnemoforge` uses `CLOUD_LLM_PROVIDER`, `CLOUD_LLM_MODEL`, and `CLOUD_LLM_BASE_URL`.
+- If `CLOUD_LLM_API_KEY` is empty, `mnemoforge` falls back to legacy `GLM_*`.
 - If `CLOUD_LLM_PROVIDER` is omitted, the provider label is inferred from model/base URL.
 
 ## Multi-provider failover

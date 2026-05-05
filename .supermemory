@@ -1,6 +1,6 @@
 {
-  "project_id": "supermemory",
+  "project_id": "mnemoforge",
   "workspace_id": "ws-main",
   "canonical": true,
-  "active_node": "supermemory"
+  "active_node": "mnemoforge"
 }

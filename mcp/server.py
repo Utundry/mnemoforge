@@ -14,6 +14,7 @@ DEFAULT_SERVER_URL = "http://127.0.0.1:8000"
 def _server_url() -> str:
     return (
         os.getenv("MEMORY_SERVER_URL")
+        or os.getenv("MNEMOFORGE_SERVER_URL")
         or os.getenv("SUPERMEMORY_SERVER_URL")
         or os.getenv("SUPER_MEMORY_URL")
         or DEFAULT_SERVER_URL
@@ -24,6 +25,7 @@ def _api_key() -> str:
     return (
         os.getenv("MEMORY_SERVER_API_KEY")
         or os.getenv("API_KEY")
+        or os.getenv("MNEMOFORGE_API_KEY")
         or os.getenv("SUPER_MEMORY_API_KEY")
         or os.getenv("SUPERMEMORY_API_KEY")
         or ""

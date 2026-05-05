@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="google" content="notranslate">
-  <title>Supermemory — Project Docs</title>
+  <title>MnemoForge - Project Docs</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -219,11 +219,11 @@
 <body>
 
 <header>
-  <div class="logo">supermemory <span>/ docs</span></div>
+  <div class="logo">MnemoForge <span>/ docs</span></div>
   <div class="header-right">
     <div class="project-selector">
       <label for="project-input">project:</label>
-      <input id="project-input" type="text" value="supermemory" placeholder="project id">
+      <input id="project-input" type="text" value="mnemoforge" placeholder="project id">
     </div>
     <div id="status-bar"><span class="dot"></span><span id="status-text">loading…</span></div>
     <button type="button" id="rebuild-btn" onclick="triggerRebuild()">Rebuild</button>
@@ -252,7 +252,7 @@ let currentSectionKey = null;
 const SECTION_ORDER = ['overview', 'architecture', 'features', 'pending', 'decisions', 'skills', 'performance'];
 
 function project() {
-  return document.getElementById('project-input').value.trim() || 'supermemory';
+  return document.getElementById('project-input').value.trim() || 'mnemoforge';
 }
 
 function setStatus(state, text) {

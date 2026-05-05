@@ -64,4 +64,3 @@ class CoordinationMessageRecord(BaseModel):
 class CoordinationListResponse(BaseModel):
     total: int
     items: list[CoordinationMessageRecord]
-

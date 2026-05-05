@@ -2,14 +2,14 @@
 OpenAI-compatible integration adapter — inspired by Mem0/OpenMemory.
 
 Provides an OpenAI-style API surface so agents that expect OpenAI memory APIs
-can use Supermemory without code changes.
+can use MnemoForge without code changes.
 
 POST /v1/memories         — add a memory (OpenAI-style)
 GET  /v1/memories         — list memories for a user
 DELETE /v1/memories/{id}  — delete a memory
 POST /v1/memories/search  — search memories (OpenAI-style)
 
-Maps to the native Supermemory API internally.
+Maps to the native MnemoForge API internally.
 Mounted at root (no /api/v1 prefix) for maximum compatibility.
 """
 from __future__ import annotations
@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from app.dependencies import OllamaDep, QdrantDep, ScorerDep
 from app.models.enums import MemoryType
 from app.models.memory import MemoryCreate
+from app.services.embedding_gateway import embed_query, embed_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/memories", tags=["openai-compat"])
@@ -113,7 +114,12 @@ async def oai_add_memory(body: OAIAddMemoryRequest, qdrant: QdrantDep, ollama: O
                 ollama,
             )
             for mem_data in extract_result.memories:
-                vector = await ollama.embed(mem_data.content)
+                vector, embedding_meta = await embed_text(
+                    mem_data.content,
+                    primary=ollama,
+                    purpose="openai_compat_inferred_memory",
+                    fallback_reason="openai_compat_inferred_memory_embedding_unavailable",
+                )
                 mem = MemoryCreate(
                     content=mem_data.content,
                     agent_id=agent_id,
@@ -121,6 +127,7 @@ async def oai_add_memory(body: OAIAddMemoryRequest, qdrant: QdrantDep, ollama: O
                     importance_score=mem_data.importance,
                     tags=mem_data.tags,
                     source="openai-compat",
+                    meta=embedding_meta,
                 )
                 mid = await qdrant.insert(mem, vector)
                 record = await qdrant.get(mid)
@@ -138,13 +145,19 @@ async def oai_add_memory(body: OAIAddMemoryRequest, qdrant: QdrantDep, ollama: O
 
     if not body.infer and not stored:
         # Direct store — no LLM extraction
-        vector = await ollama.embed(text)
+        vector, embedding_meta = await embed_text(
+            text,
+            primary=ollama,
+            purpose="openai_compat_memory",
+            fallback_reason="openai_compat_memory_embedding_unavailable",
+        )
         mem = MemoryCreate(
             content=text,
             agent_id=agent_id,
             memory_type=MemoryType.fact,
             importance_score=0.6,
             source="openai-compat",
+            meta=embedding_meta,
         )
         mid = await qdrant.insert(mem, vector)
         record = await qdrant.get(mid)
@@ -206,7 +219,11 @@ async def oai_search_memories(
 
     effective_agent = body.agent_id or body.user_id
 
-    vector = await ollama.embed(body.query)
+    vector, _embedding_meta = await embed_query(
+        body.query,
+        primary=ollama,
+        purpose="openai_compat_search",
+    )
     raw = await qdrant.search(
         vector=vector,
         agent_id=effective_agent,

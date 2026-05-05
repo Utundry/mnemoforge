@@ -21,7 +21,7 @@ _HIGH_REVIEW_STATUSES = {"review_legacy", "experimental", "review"}
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS functionality_review_hints (
-    scope        TEXT NOT NULL DEFAULT 'supermemory',
+    scope        TEXT NOT NULL DEFAULT 'mnemoforge',
     module       TEXT NOT NULL,
     status       TEXT NOT NULL,
     reason       TEXT NOT NULL,
@@ -53,7 +53,7 @@ _DEFAULT_REVIEW_HINTS: dict[str, dict[str, str]] = {
     "learning": {"status": "modernize", "reason": "Learning ledger is active, but needs alignment with hygiene/integrity constraints."},
     "knowledge_tree_api": {"status": "review_legacy", "reason": "Semantic tree-slice API overlaps with newer project context and should be justified explicitly."},
     "layout_fixer": {"status": "experimental", "reason": "Early-stage utility; verify whether it still belongs in the core product."},
-    "log_filter": {"status": "experimental", "reason": "Useful niche tool, but not obviously central to current SuperMemory positioning."},
+    "log_filter": {"status": "experimental", "reason": "Useful niche tool, but not obviously central to current MnemoForge positioning."},
     "watcher": {"status": "review_legacy", "reason": "Historically important, but its current product role vs client-scan/bootstrap needs explicit review."},
     "normalization": {"status": "review_legacy", "reason": "Semantic adaptation layer may still matter, but its place in the main workflow is unclear."},
     "router_api": {"status": "review_legacy", "reason": "Older routing surface should be checked for overlap with current APIs."},
@@ -75,7 +75,7 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
-def list_functionality_review_hints(*, scope: str = "supermemory") -> list[dict[str, Any]]:
+def list_functionality_review_hints(*, scope: str = "mnemoforge") -> list[dict[str, Any]]:
     with _connect() as conn:
         rows = conn.execute(
             """
@@ -94,7 +94,7 @@ def upsert_functionality_review_hint(
     module: str,
     status: str,
     reason: str,
-    scope: str = "supermemory",
+    scope: str = "mnemoforge",
 ) -> dict[str, Any]:
     now = time.time()
     with _connect() as conn:
@@ -121,7 +121,7 @@ def upsert_functionality_review_hint(
 
 def bootstrap_functionality_review_hints(
     *,
-    scope: str = "supermemory",
+    scope: str = "mnemoforge",
     overwrite: bool = False,
 ) -> dict[str, Any]:
     created = 0

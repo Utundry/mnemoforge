@@ -1,4 +1,19 @@
 from app.routers import models as models_router
+from app.dependencies import get_ollama, get_qdrant
+
+
+class _NoLocalEmbedding:
+    async def embed(self, text: str) -> list[float]:
+        return []
+
+    async def close(self) -> None:
+        return None
+
+
+class _CloudSignatureGateway:
+    async def generate(self, prompt: str, **kwargs) -> str:
+        assert kwargs["allow_local_fallback"] is False
+        return "coordination cloud fallback semantic signature"
 
 
 async def test_coordination_message_lifecycle(client):
@@ -121,3 +136,25 @@ async def test_coordination_alias_routes_match_models_routes(client):
     )
     assert closed.status_code == 200, closed.text
     assert closed.json()["status"] == "closed"
+
+
+async def test_coordination_message_uses_cloud_embedding_fallback_when_local_embeddings_are_down(client, monkeypatch):
+    get_ollama().embed.side_effect = RuntimeError("Cannot connect to Ollama")
+    monkeypatch.setattr("app.services.embedding_gateway.LMStudioService", _NoLocalEmbedding)
+    monkeypatch.setattr("app.services.embedding_gateway.get_cloud_gateway", lambda: _CloudSignatureGateway())
+
+    sent = await client.post(
+        "/api/v1/models/coordination/messages",
+        json={
+            "project": "alpha",
+            "from_agent": "codex",
+            "to_agent": "worker",
+            "message_type": "request_action",
+            "content": "Please inspect the provider-flexible embedding path.",
+        },
+    )
+    assert sent.status_code == 200, sent.text
+    memory_id = sent.json()["memory_id"]
+
+    record = await get_qdrant().get(memory_id)
+    assert record.meta["embedding_provider"] == "cloud_semantic_hash"

@@ -6,6 +6,7 @@ from typing import Any
 
 from qdrant_client.http import models as qmodels
 
+from app.services.embedding_gateway import embed_text
 from app.services.memory_store import get_memory_store
 from app.services.project_tasks_content import build_task_change_content, build_task_content
 from app.services.project_tasks_store import get_project_tasks_store
@@ -410,7 +411,13 @@ async def _upsert_rebuilt_points(
 
     for memory_id, embed_text, payload in points:
         try:
-            vector = await ollama.embed(embed_text)
+            vector, embedding_meta = await embed_text(
+                embed_text,
+                primary=ollama,
+                purpose="qdrant_rebuild",
+                fallback_reason="qdrant_rebuild_embedding_unavailable",
+            )
+            payload["meta"] = {**(payload.get("meta") or {}), **embedding_meta}
             batch.append(qmodels.PointStruct(id=memory_id, vector=vector, payload=payload))
             if len(batch) >= 32:
                 await qdrant._client.upsert(collection_name=qdrant._collection, points=batch)

@@ -1,7 +1,7 @@
 # Remote Snapshot Helper Spec
 
 Status: proposed  
-Project: `supermemory`  
+Project: `mnemoforge`  
 Priority: high
 
 Related specs:
@@ -43,7 +43,7 @@ For remote projects, the default boundary should be:
 - decides whether to rebuild or skip
 - treats raw source as optional input, not the primary stored artifact
 
-This keeps `supermemory` aligned with its main role:
+This keeps `mnemoforge` aligned with its main role:
 
 `store project knowledge and task memory, not a full duplicate repository unless explicitly requested`
 
@@ -73,7 +73,7 @@ It may be:
 
 It is not required to be a large standalone application.
 
-### Supermemory server
+### MnemoForge server
 
 The server should receive explicit snapshot input and turn it into:
 - component knowledge

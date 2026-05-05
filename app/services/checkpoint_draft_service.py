@@ -420,7 +420,7 @@ async def draft_checkpoint_from_spans(
     *,
     store: CheckpointDraftStore | None = None,
 ) -> CheckpointDraftRecord:
-    project = _clean_text(payload.get("project") or "supermemory", 128) or "supermemory"
+    project = _clean_text(payload.get("project") or "mnemoforge", 128) or "mnemoforge"
     task_id = _clean_text(payload.get("task_id"), 256)
     work_id = _clean_text(payload.get("work_id"), 128)
     agent_id = _clean_text(payload.get("agent_id") or "codex", 128) or "codex"

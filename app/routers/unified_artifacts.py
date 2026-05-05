@@ -128,7 +128,7 @@ async def _run_best_effort_improvement_post_resolve(
 
 @router.get("", response_model=UnifiedArtifactListResponse)
 async def list_artifacts(
-    project: str = Query("supermemory", description="Project name"),
+    project: str = Query("mnemoforge", description="Project name"),
     status: Optional[str] = Query(None, description="Filter by status (open, done, etc.)"),
     artifact_status: Optional[str] = Query(None, description="Deprecated alias for status"),
     type: Optional[str] = Query(None, description="Filter by type (improvement, task, or null for both)"),
@@ -141,7 +141,7 @@ async def list_artifacts(
     """List unified artifacts with optional filtering.
 
     Args:
-        project: Project name (default: supermemory)
+        project: Project name (default: mnemoforge)
         artifact_status: Filter by status (open, done, paused, archived)
         type: Filter by type (improvement, task, or null for both)
         limit: Maximum number of results (1-100)
@@ -307,8 +307,8 @@ async def get_artifact(artifact_key: str):
 
     Args:
         artifact_key: Artifact key in format: {type}:{project}:{local_id}
-            - Example: improvement:supermemory:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c
-            - Example: task:supermemory:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c
+            - Example: improvement:mnemoforge:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c
+            - Example: task:mnemoforge:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c
 
     Returns:
         UnifiedArtifactRecord with artifact details

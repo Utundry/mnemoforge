@@ -15,6 +15,8 @@ from app.dependencies import OllamaDep, QdrantDep
 from app.models.enums import MemoryType
 from app.models.memory import MemoryCreate
 from app.services.code_search_parser import parse_code_file, scan_code_directory
+from app.services.embedding_gateway import embed_query, embed_text
+from app.services.llm_gateway import get_cloud_gateway
 
 router = APIRouter(prefix="/code", tags=["code-search"])
 
@@ -197,12 +199,18 @@ async def index_codebase(body: CodeIndexRequest, qdrant: QdrantDep, ollama: Olla
             try:
                 timestamp = datetime.now(timezone.utc).isoformat()
                 imports_text = " ".join(chunk.imports[:20]) if chunk.imports else ""
-                embed_text = (
+                embedding_text = (
                     f"{chunk.language} {chunk.chunk_type} {chunk.symbol} {rel_path}"
                     + (f" imports:{imports_text}" if imports_text else "")
                     + f"\n{chunk.content[:1200]}"
                 )
-                vector = await ollama.embed(embed_text)
+                vector, embedding_meta = await embed_text(
+                    embedding_text,
+                    primary=ollama,
+                    purpose="code_index",
+                    fallback_reason="code_index_embedding_unavailable",
+                )
+                mem.meta.update(embedding_meta)
                 memory_id = await qdrant.insert(mem, vector)
                 payload_extra: dict = {
                     "code_path": rel_path,
@@ -263,9 +271,16 @@ async def search_code(body: CodeSearchRequest, qdrant: QdrantDep, ollama: Ollama
     effective_query = body.query
     query_expanded: str | None = None
     if body.expand_query:
-        expanded = await ollama.generate(
+        expanded = await get_cloud_gateway().generate(
             f"Expand this code search query with 3-5 related technical terms. "
-            f"Return only the expanded query on one line:\n{body.query}"
+            f"Return only the expanded query on one line:\n{body.query}",
+            task_type="query_expansion",
+            mode="economy",
+            max_tokens=120,
+            temperature=0.0,
+            timeout=30.0,
+            allow_local_fallback=True,
+            prefer_local=True,
         )
         if expanded:
             effective_query = expanded
@@ -281,7 +296,11 @@ async def search_code(body: CodeSearchRequest, qdrant: QdrantDep, ollama: Ollama
     query_filter = qmodels.Filter(must=must)
 
     # 3. Semantic retrieval
-    vector = await ollama.embed(effective_query)
+    vector, _embedding_meta = await embed_query(
+        effective_query,
+        primary=ollama,
+        purpose="code_search",
+    )
     semantic_points = await qdrant._client.search(
         collection_name=qdrant._collection,
         query_vector=vector,
@@ -428,7 +447,16 @@ async def _llm_rerank(
         f"Query: {query}\n\n"
         f"Snippets:\n{numbered}"
     )
-    response = await ollama.generate(prompt)
+    response = await get_cloud_gateway().generate(
+        prompt,
+        task_type="relevance_scoring",
+        mode="economy",
+        max_tokens=80,
+        temperature=0.0,
+        timeout=45.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
     if not response:
         return hits, False
 

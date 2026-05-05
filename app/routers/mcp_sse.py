@@ -3,7 +3,7 @@ MCP SSE Transport for FastAPI (spec 2024-11-05).
 
 Allows zero-config client connection — no Python needed on the client:
 
-    claude mcp add --transport sse -s user super-memory http://<SERVER_IP>:8000/mcp/sse
+    claude mcp add --transport sse -s user mnemoforge http://<SERVER_IP>:8000/mcp/sse
 
 Protocol:
   GET  /mcp/sse                      — open SSE stream, receive endpoint URL
@@ -165,7 +165,7 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
     "project_knowledge": {
         "title": "Project knowledge & artifact lifecycle",
         "description": "Unified discovery for tasks, improvements, readiness, canonical knowledge, lifecycle checkpoints, reopen/resume flows, and lifecycle changes.",
-        "entrypoints": ["operational_tray", "project_workflow", "continue_task", "get_task_execution_context", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement"],
+        "entrypoints": ["operational_tray", "project_workflow", "continue_task", "get_task_execution_context", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
         "keywords": [
             "task",
             "tasks",
@@ -211,6 +211,8 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
             "get_task_execution_context",
             "operational_tray",
             "review_improvement",
+            "list_project_aliases",
+            "rename_project",
             "get_work_session_state",
             "start_work_session",
             "park_work_session",
@@ -571,19 +573,21 @@ def _tools_list_payload(params: dict[str, Any] | None = None) -> dict[str, Any]:
         if schema_mode not in {"summary", "full", "raw", "debug"}:
             schema_mode = "summary"
         tools = _compact_tool_catalog(limit=limit, schema_mode=schema_mode)
+        catalog_meta = {
+            "catalog_mode": "compact",
+            "schema_mode": "full" if schema_mode in {"full", "raw", "debug"} else "summary",
+            "full_catalog_available": True,
+            "full_catalog_request": {"method": "tools/list", "params": {"mode": "full"}},
+            "full_schema_request": {"method": "tools/list", "params": {"mode": "compact", "schema_mode": "full"}},
+            "recommended_first_tool": "operational_tray",
+            "reason": "Compact mode exposes the state-aware facade and staged discovery tools before the full flat catalog.",
+            "total_tools_available": len(_tool_catalog()),
+            "returned_tools": len(tools),
+        }
         return {
             "tools": tools,
-            "_supermemory": {
-                "catalog_mode": "compact",
-                "schema_mode": "full" if schema_mode in {"full", "raw", "debug"} else "summary",
-                "full_catalog_available": True,
-                "full_catalog_request": {"method": "tools/list", "params": {"mode": "full"}},
-                "full_schema_request": {"method": "tools/list", "params": {"mode": "compact", "schema_mode": "full"}},
-                "recommended_first_tool": "operational_tray",
-                "reason": "Compact mode exposes the state-aware facade and staged discovery tools before the full flat catalog.",
-                "total_tools_available": len(_tool_catalog()),
-                "returned_tools": len(tools),
-            },
+            "_mnemoforge": catalog_meta,
+            "_supermemory": catalog_meta,
         }
     return {"tools": TOOLS}
 
@@ -606,8 +610,15 @@ def _normalize_context_hygiene_mode(value: Any) -> str:
     return ""
 
 
+def _mnemoforge_params(params: dict[str, Any]) -> dict[str, Any]:
+    mnemoforge = params.get("_mnemoforge") if isinstance(params.get("_mnemoforge"), dict) else {}
+    if mnemoforge:
+        return mnemoforge
+    return params.get("_supermemory") if isinstance(params.get("_supermemory"), dict) else {}
+
+
 def _extract_requested_tool_catalog_mode(params: dict[str, Any]) -> str:
-    supermemory = params.get("_supermemory") if isinstance(params.get("_supermemory"), dict) else {}
+    supermemory = _mnemoforge_params(params)
     tool_catalog = supermemory.get("tool_catalog") if isinstance(supermemory.get("tool_catalog"), dict) else {}
     candidates = [
         tool_catalog.get("preferred_mode"),
@@ -617,9 +628,19 @@ def _extract_requested_tool_catalog_mode(params: dict[str, Any]) -> str:
     ]
     capabilities = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
     experimental = capabilities.get("experimental") if isinstance(capabilities.get("experimental"), dict) else {}
-    capability_supermemory = capabilities.get("supermemory") if isinstance(capabilities.get("supermemory"), dict) else {}
+    capability_supermemory = (
+        capabilities.get("mnemoforge")
+        if isinstance(capabilities.get("mnemoforge"), dict)
+        else capabilities.get("supermemory")
+        if isinstance(capabilities.get("supermemory"), dict)
+        else {}
+    )
     experimental_supermemory = (
-        experimental.get("supermemory") if isinstance(experimental.get("supermemory"), dict) else {}
+        experimental.get("mnemoforge")
+        if isinstance(experimental.get("mnemoforge"), dict)
+        else experimental.get("supermemory")
+        if isinstance(experimental.get("supermemory"), dict)
+        else {}
     )
     candidates.extend(
         [
@@ -635,7 +656,7 @@ def _extract_requested_tool_catalog_mode(params: dict[str, Any]) -> str:
 
 
 def _extract_requested_context_hygiene_mode(params: dict[str, Any]) -> str:
-    supermemory = params.get("_supermemory") if isinstance(params.get("_supermemory"), dict) else {}
+    supermemory = _mnemoforge_params(params)
     context = supermemory.get("context") if isinstance(supermemory.get("context"), dict) else {}
     candidates = [
         context.get("hygiene_mode"),
@@ -648,9 +669,19 @@ def _extract_requested_context_hygiene_mode(params: dict[str, Any]) -> str:
     ]
     capabilities = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
     experimental = capabilities.get("experimental") if isinstance(capabilities.get("experimental"), dict) else {}
-    capability_supermemory = capabilities.get("supermemory") if isinstance(capabilities.get("supermemory"), dict) else {}
+    capability_supermemory = (
+        capabilities.get("mnemoforge")
+        if isinstance(capabilities.get("mnemoforge"), dict)
+        else capabilities.get("supermemory")
+        if isinstance(capabilities.get("supermemory"), dict)
+        else {}
+    )
     experimental_supermemory = (
-        experimental.get("supermemory") if isinstance(experimental.get("supermemory"), dict) else {}
+        experimental.get("mnemoforge")
+        if isinstance(experimental.get("mnemoforge"), dict)
+        else experimental.get("supermemory")
+        if isinstance(experimental.get("supermemory"), dict)
+        else {}
     )
     candidates.extend(
         [
@@ -685,15 +716,25 @@ def _casefold_nested(*values: Any) -> str:
 
 
 def _infer_small_context_modes(params: dict[str, Any]) -> dict[str, Any]:
-    supermemory = params.get("_supermemory") if isinstance(params.get("_supermemory"), dict) else {}
+    supermemory = _mnemoforge_params(params)
     context = supermemory.get("context") if isinstance(supermemory.get("context"), dict) else {}
     model = params.get("model") if isinstance(params.get("model"), dict) else {}
     model_info = params.get("modelInfo") if isinstance(params.get("modelInfo"), dict) else {}
     capabilities = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
     experimental = capabilities.get("experimental") if isinstance(capabilities.get("experimental"), dict) else {}
-    capability_supermemory = capabilities.get("supermemory") if isinstance(capabilities.get("supermemory"), dict) else {}
+    capability_supermemory = (
+        capabilities.get("mnemoforge")
+        if isinstance(capabilities.get("mnemoforge"), dict)
+        else capabilities.get("supermemory")
+        if isinstance(capabilities.get("supermemory"), dict)
+        else {}
+    )
     experimental_supermemory = (
-        experimental.get("supermemory") if isinstance(experimental.get("supermemory"), dict) else {}
+        experimental.get("mnemoforge")
+        if isinstance(experimental.get("mnemoforge"), dict)
+        else experimental.get("supermemory")
+        if isinstance(experimental.get("supermemory"), dict)
+        else {}
     )
     context_window = _int_from_nested(
         params.get("model_context_window"),
@@ -861,11 +902,12 @@ def _sanitize_tool_result_for_context(text: str, *, context_hygiene_mode: str = 
         for key in ("required_rules", "recommended_rules"):
             if key in compact:
                 compact[key] = _small_context_rule_refs(compact[key])
-        service_refs = compact.setdefault("_supermemory_refs", {})
+        service_refs = compact.setdefault("_mnemoforge_refs", {})
         if isinstance(service_refs, dict):
             service_refs.setdefault("omitted_service_fields", len(_SMALL_CONTEXT_SERVICE_KEYS))
             service_refs.setdefault("full_response", "Repeat the same call with context_hygiene_mode=full or response_mode=full.")
             service_refs.setdefault("mode", "small_context")
+            compact.setdefault("_supermemory_refs", service_refs)
     return json.dumps(compact, indent=2, ensure_ascii=False)
 
 
@@ -1105,11 +1147,11 @@ def _tool_example_payload(tool_name: str, *, intent: str, project_id: str = "") 
             payload["project"] = project_id
         return payload
     if name == "list_open_tasks":
-        payload = {"project": project_id or "supermemory", "limit": 50}
+        payload = {"project": project_id or "mnemoforge", "limit": 50}
         return payload
     if name == "report_task_checkpoint":
         return {
-            "project": project_id or "supermemory",
+            "project": project_id or "mnemoforge",
             "task_id": "<task_id>",
             "stage": "planning",
             "summary": intent[:160] or "Record task progress",
@@ -1119,10 +1161,10 @@ def _tool_example_payload(tool_name: str, *, intent: str, project_id: str = "") 
             "source": "mcp",
         }
     if name == "enrich_task_with_context":
-        return {"project_id": project_id or "supermemory", "task": intent[:240], "max_components": 3}
+        return {"project_id": project_id or "mnemoforge", "task": intent[:240], "max_components": 3}
     if name == "get_task_execution_context":
         return {
-            "project": project_id or "supermemory",
+            "project": project_id or "mnemoforge",
             "task": intent[:240] or "Verify a server-side change",
             "state": "verification",
             "intent": intent[:120],
@@ -1130,21 +1172,21 @@ def _tool_example_payload(tool_name: str, *, intent: str, project_id: str = "") 
         }
     if name == "operational_tray":
         return {
-            "project": project_id or "supermemory",
+            "project": project_id or "mnemoforge",
             "task": intent[:240] or "Inspect the current operation tray.",
             "state": "planning",
             "action": "inspect",
             "intent": intent[:120],
         }
     if name == "resolve_artifact":
-        return {"artifact_key": "task:supermemory:<local_id>", "acted_by": "user", "action_source": "normalize_mcp_intent", "reason": intent[:120]}
+        return {"artifact_key": "task:mnemoforge:<local_id>", "acted_by": "user", "action_source": "normalize_mcp_intent", "reason": intent[:120]}
     if name == "reopen_artifact":
-        return {"artifact_key": "task:supermemory:<local_id>", "project": project_id or "supermemory", "status": "active", "reason": "normalize_mcp_intent", "acted_by": "user", "source": "mcp"}
+        return {"artifact_key": "task:mnemoforge:<local_id>", "project": project_id or "mnemoforge", "status": "active", "reason": "normalize_mcp_intent", "acted_by": "user", "source": "mcp"}
     if name == "reconcile_completed_checkpoints":
-        return {"project": project_id or "supermemory", "close": False, "close_policy": "strict", "limit": 100}
+        return {"project": project_id or "mnemoforge", "close": False, "close_policy": "strict", "limit": 100}
     if name == "review_completed_checkpoint_scope":
         return {
-            "project": project_id or "supermemory",
+            "project": project_id or "mnemoforge",
             "task_id": "<task_id>",
             "checkpoint_change_id": "<checkpoint_change_id>",
             "next_step_scope": "follow_up_task",
@@ -1152,7 +1194,7 @@ def _tool_example_payload(tool_name: str, *, intent: str, project_id: str = "") 
         }
     if name == "review_completed_checkpoint_scopes":
         return {
-            "project": project_id or "supermemory",
+            "project": project_id or "mnemoforge",
             "decisions": [
                 {
                     "task_id": "<task_id>",
@@ -2445,7 +2487,7 @@ TOOLS = [
         "name": "report_issue",
         "description": (
             "Report a missing feature, incorrect behavior, or improvement idea encountered while working. "
-            "Use this when you hit a limitation or bug in supermemory or any project. "
+            "Use this when you hit a limitation or bug in MnemoForge or any project. "
             "Saved improvements are reviewed during future development sessions."
         ),
         "inputSchema": {
@@ -2454,7 +2496,7 @@ TOOLS = [
             "properties": {
                 "title": {"type": "string", "description": "Short title of the issue or improvement"},
                 "description": {"type": "string", "description": "Full description with context, steps to reproduce, expected behavior"},
-                "project": {"type": "string", "default": "supermemory", "description": "Which project this applies to"},
+                "project": {"type": "string", "default": "mnemoforge", "description": "Which project this applies to"},
                 "agent_id": {"type": "string", "default": "llm", "description": "Who is reporting"},
                 "importance_score": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.7},
                 "stage": {
@@ -2512,7 +2554,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "default": "supermemory"},
+                "project": {"type": "string", "default": "mnemoforge"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 2000, "default": 500},
             },
         },
@@ -2629,7 +2671,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "default": "supermemory", "description": "Project name to report on"},
+                "project": {"type": "string", "default": "mnemoforge", "description": "Project name to report on"},
             },
         },
     },
@@ -2753,7 +2795,7 @@ TOOLS = [
     {
         "name": "system_info",
         "description": (
-            "Get a full overview of the supermemory system: what components exist, what each does, "
+            "Get a full overview of the MnemoForge system: what components exist, what each does, "
             "live counters (memories, skills, layout terms), active models, and infrastructure status. "
             "Call this when you want to understand what the system can do or need to explain it to the user."
         ),
@@ -2852,7 +2894,7 @@ TOOLS = [
     {
         "name": "handoff_task",
         "description": (
-            "Package current task context in supermemory for pickup by another CLI tool. "
+            "Package current task context in MnemoForge for pickup by another CLI tool. "
             "Use when: (1) current model hit its limit, (2) you want to manually switch to another CLI. "
             "Stores context with status=pending. Returns memory_id and pickup instruction for the target CLI."
         ),
@@ -3252,7 +3294,7 @@ TOOLS = [
             "type": "object",
             "required": ["project_id", "query"],
             "properties": {
-                "project_id": {"type": "string", "description": "Project identifier, e.g. 'supermemory'"},
+                "project_id": {"type": "string", "description": "Project identifier, e.g. 'mnemoforge'"},
                 "query": {"type": "string", "description": "Natural language query, e.g. 'layout fixer', 'skill crystallization'"},
                 "limit": {"type": "integer", "default": 5, "minimum": 1, "maximum": 20},
             },
@@ -3316,6 +3358,8 @@ sync_tool_definitions(
     "sync_remote_snapshot",
     "get_storage_trust_status",
     "review_improvement",
+    "list_project_aliases",
+    "rename_project",
     "send_coordination_message",
     "pickup_coordination_messages",
     "list_coordination_messages",
@@ -3378,6 +3422,93 @@ async def _get(api_base: str, path: str) -> dict:
 
 
 _CHECKPOINT_HANDOFF_STAGES = {"blocked", "interrupted", "handoff", "completed"}
+_CHECKPOINT_SCOPE_CONFIRMATION = "current checkpoint belongs to this task"
+_CHECKPOINT_SCOPE_STOPWORDS = {
+    "a",
+    "about",
+    "across",
+    "add",
+    "added",
+    "agent",
+    "agents",
+    "all",
+    "also",
+    "an",
+    "and",
+    "any",
+    "api",
+    "are",
+    "artifact",
+    "artifacts",
+    "as",
+    "at",
+    "backed",
+    "be",
+    "because",
+    "by",
+    "can",
+    "checkpoint",
+    "checkpoints",
+    "code",
+    "condition",
+    "conditions",
+    "context",
+    "current",
+    "data",
+    "db",
+    "decision",
+    "decisions",
+    "doc",
+    "docs",
+    "documentation",
+    "done",
+    "for",
+    "from",
+    "generated",
+    "has",
+    "have",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "memory",
+    "mcp",
+    "must",
+    "new",
+    "not",
+    "of",
+    "on",
+    "or",
+    "path",
+    "project",
+    "projects",
+    "record",
+    "release",
+    "safe",
+    "server",
+    "should",
+    "source",
+    "state",
+    "status",
+    "step",
+    "mnemoforge",
+    "task",
+    "tasks",
+    "test",
+    "tests",
+    "that",
+    "the",
+    "this",
+    "to",
+    "tool",
+    "use",
+    "user",
+    "using",
+    "with",
+    "work",
+}
 
 
 def _checkpoint_handoff_label(args: dict[str, Any], stage: str) -> str:
@@ -3437,6 +3568,91 @@ def _checkpoint_handoff_payload(args: dict[str, Any], *, stage: str, status: str
         "handoff_label": _checkpoint_handoff_label(args, stage),
         "reason": "checkpoint",
         "agent_id": "handoff",
+    }
+
+
+def _checkpoint_scope_tokens(text: str) -> set[str]:
+    tokens = {
+        token
+        for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", str(text or "").lower())
+        if token not in _CHECKPOINT_SCOPE_STOPWORDS
+    }
+    expanded: set[str] = set(tokens)
+    for token in tokens:
+        expanded.update(part for part in re.split(r"[-_]+", token) if len(part) > 2 and part not in _CHECKPOINT_SCOPE_STOPWORDS)
+    return expanded
+
+
+def _checkpoint_scope_text(args: dict[str, Any]) -> str:
+    parts = [
+        args.get("summary"),
+        args.get("next_step"),
+        args.get("reason"),
+    ]
+    for key in ("blockers", "decisions", "changed_files", "verification", "remaining_risk", "stage_evidence_refs", "write_scope"):
+        value = args.get(key) or []
+        if isinstance(value, str):
+            parts.append(value)
+        else:
+            parts.extend(str(item) for item in value if str(item).strip())
+    return "\n".join(str(part) for part in parts if str(part or "").strip())
+
+
+def _checkpoint_scope_guard_decision(args: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
+    task_text = "\n".join(
+        str(part)
+        for part in (
+            task.get("title"),
+            task.get("description"),
+            " ".join(str(tag) for tag in (task.get("tags") or [])),
+        )
+        if str(part or "").strip()
+    )
+    checkpoint_text = _checkpoint_scope_text(args)
+    task_tokens = _checkpoint_scope_tokens(task_text)
+    title_tokens = _checkpoint_scope_tokens(str(task.get("title") or ""))
+    checkpoint_tokens = _checkpoint_scope_tokens(checkpoint_text)
+    overlap = sorted(task_tokens & checkpoint_tokens)
+    title_overlap = sorted(title_tokens & checkpoint_tokens)
+    blocked = bool(task_tokens and checkpoint_tokens and len(overlap) < 2 and not title_overlap)
+    return {
+        "blocked": blocked,
+        "overlap": overlap[:12],
+        "title_overlap": title_overlap[:8],
+        "task_token_count": len(task_tokens),
+        "checkpoint_token_count": len(checkpoint_tokens),
+    }
+
+
+async def _checkpoint_scope_guard(api_base: str, args: dict[str, Any]) -> dict[str, Any] | None:
+    confirmation = str(args.get("scope_confirmation") or "").strip().lower()
+    if confirmation == _CHECKPOINT_SCOPE_CONFIRMATION:
+        return None
+    project = str(args.get("project") or "").strip()
+    task_id = str(args.get("task_id") or "").strip()
+    if not project or not task_id:
+        return None
+    try:
+        task = await _get(api_base, f"/project/tasks/{quote(task_id, safe='')}?project={quote(project, safe='')}")
+    except Exception:
+        return None
+    decision = _checkpoint_scope_guard_decision(args, task)
+    if not decision["blocked"]:
+        return None
+    return {
+        "error": "checkpoint_scope_mismatch",
+        "task_checkpoint_recorded": False,
+        "project": project,
+        "task_id": task_id,
+        "task_title": task.get("title") or "",
+        "summary": str(args.get("summary") or "").strip(),
+        "scope_guard": decision,
+        "message": (
+            "Checkpoint text does not appear to belong to the selected task. "
+            "Use list_open_tasks/list_artifacts to choose the right task, create a new task for the shifted topic, "
+            f"or pass scope_confirmation='{_CHECKPOINT_SCOPE_CONFIRMATION}' only after human review."
+        ),
+        "recommended_next_tools": ["list_open_tasks", "list_artifacts", "reopen_task"],
     }
 
 
@@ -3649,7 +3865,7 @@ def _project_continue_task_response(full_payload: dict[str, Any], *, detail: str
 
 
 async def _build_continue_task_payload(api_base: str, args: dict[str, Any]) -> dict[str, Any]:
-    project = str(args.get("project") or "supermemory").strip() or "supermemory"
+    project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
     task_id = str(args.get("task_id") or "").strip()
     limit = int(args.get("limit", 10))
     detail = str(args.get("detail") or "compact").strip().lower()
@@ -3918,7 +4134,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         models = infra.get("ollama", {}).get("models", [])
 
         lines = [
-            f"supermemory — status: {data.get('status','?')} | uptime: {data.get('uptime_seconds',0)//60}m",
+            f"mnemoforge status: {data.get('status','?')} | uptime: {data.get('uptime_seconds',0)//60}m",
             f"Qdrant: {'✓' if infra.get('qdrant',{}).get('reachable') else '✗'}  "
             f"Ollama: {'✓' if infra.get('ollama',{}).get('reachable') else '✗'}  "
             f"embedding: {infra.get('embedding_model','?')} ({infra.get('embedding_dimensions','?')}d)",
@@ -3990,6 +4206,24 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         ]
         return "\n".join(lines)
 
+    elif name == "list_project_aliases":
+        project_id = str(args.get("project_id") or "").strip()
+        suffix = f"?project_id={quote(project_id, safe='')}" if project_id else ""
+        data = await _get(api_base, f"/project/identity/aliases{suffix}")
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    elif name == "rename_project":
+        payload = {
+            "old_project_id": args["old_project_id"],
+            "new_project_id": args["new_project_id"],
+            "apply": bool(args.get("apply", False)),
+            "include_text": bool(args.get("include_text", False)),
+            "ensure_alias": bool(args.get("ensure_alias", True)),
+            "reason": str(args.get("reason") or ""),
+        }
+        data = await _post(api_base, "/project/rename", payload)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
     elif name == "list_project_laws":
         params = [
             f"status={args.get('status', 'active')}",
@@ -4040,7 +4274,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
 
     elif name == "project_rule_candidates_from_stenography":
         payload = {
-            "project": args.get("project") or "supermemory",
+            "project": args.get("project") or "mnemoforge",
             "limit": int(args.get("limit") or 500),
         }
         data = await _post(api_base, "/laws/candidates/project-from-stenography", payload)
@@ -4158,7 +4392,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         return format_learning_candidate_transition(data, action="rejected")
 
     elif name == "improvements_report":
-        project = args.get("project", "supermemory")
+        project = args.get("project", "mnemoforge")
         data = await _get(api_base, f"/improvements/report?project={project}")
         s = data["stats"]
         lines = [
@@ -4863,7 +5097,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 data = store.get_state(agent_id=agent_id, session_id=protocol_session_id).model_dump(mode="json")
             elif name == "start_work_session":
                 data = store.start_work_session(
-                    project=str(args.get("project") or "supermemory"),
+                    project=str(args.get("project") or "mnemoforge"),
                     task_id=str(args["task_id"]),
                     agent_id=agent_id,
                     session_id=protocol_session_id,
@@ -4904,7 +5138,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 ).model_dump(mode="json")
             elif name == "record_stenographer_span":
                 data = store.record_span(
-                    project=str(args.get("project") or "supermemory"),
+                    project=str(args.get("project") or "mnemoforge"),
                     task_id=str(args.get("task_id") or ""),
                     work_id=str(args.get("work_id") or ""),
                     agent_id=agent_id,
@@ -5047,6 +5281,9 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 )
             except Exception:
                 pass
+        scope_guard_error = await _checkpoint_scope_guard(api_base, args)
+        if scope_guard_error:
+            return json.dumps(scope_guard_error, indent=2, ensure_ascii=False)
         data = await _post(api_base, f"/project/tasks/{quote(task_id, safe='')}/changes", payload)
         if data.get("id"):
             data["stage_evidence"] = f"checkpoint:{data['id']}"
@@ -5632,7 +5869,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             return json.dumps(data, indent=2, ensure_ascii=False)
 
         base_args = {
-            "project": args.get("project", "supermemory"),
+            "project": args.get("project", "mnemoforge"),
             "task_id": args.get("task_id", ""),
         }
         if tray_action == "record_stage_evidence":
@@ -5660,7 +5897,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         if tray_action == "draft_checkpoint":
             draft_args = {
                 **action_args,
-                "project": args.get("project", "supermemory"),
+                "project": args.get("project", "mnemoforge"),
                 "task_id": args.get("task_id", action_args.get("task_id", "")),
                 "task_title": action_args.get("task_title") or str(args.get("task") or "")[:160],
                 "raw_notes": action_args.get("raw_notes") or str(args.get("task") or ""),
@@ -5670,7 +5907,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             return await _execute_tool("draft_task_checkpoint", draft_args, api_base, session_id=session_id)
         if tray_action == "review_rule_candidates":
             review_args = {
-                "project": args.get("project", "supermemory"),
+                "project": args.get("project", "mnemoforge"),
                 "status": action_args.get("status", "candidate"),
                 "source_task_id": action_args.get("source_task_id") or args.get("task_id", ""),
                 "limit": action_args.get("limit", 100),
@@ -5679,7 +5916,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             return await _execute_tool("get_rule_candidate_review_packet", review_args, api_base, session_id=session_id)
         if tray_action == "list_rule_candidates":
             list_args = {
-                "project": args.get("project", "supermemory"),
+                "project": args.get("project", "mnemoforge"),
                 "status": action_args.get("status"),
                 "source_task_id": action_args.get("source_task_id") or args.get("task_id", ""),
                 "limit": action_args.get("limit", 100),
@@ -5884,26 +6121,27 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
         result: dict = {
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "super-memory", "version": "1.0.0"},
+            "serverInfo": {"name": "mnemoforge", "version": "1.0.0"},
         }
         if agent_id:
-            result["_supermemory"] = build_supermemory_initialize_hint(agent_id)
+            result["_mnemoforge"] = build_supermemory_initialize_hint(agent_id)
+            result["_supermemory"] = result["_mnemoforge"]
             if negotiated_tool_catalog_mode:
-                result["_supermemory"]["tool_catalog"]["negotiated_mode"] = negotiated_tool_catalog_mode
+                result["_mnemoforge"]["tool_catalog"]["negotiated_mode"] = negotiated_tool_catalog_mode
                 if inferred_context_mode and not requested_tool_catalog_mode:
-                    result["_supermemory"]["tool_catalog"]["inferred"] = True
-                    result["_supermemory"]["tool_catalog"]["inference_reason"] = inferred_modes.get("reason")
+                    result["_mnemoforge"]["tool_catalog"]["inferred"] = True
+                    result["_mnemoforge"]["tool_catalog"]["inference_reason"] = inferred_modes.get("reason")
             if negotiated_context_hygiene_mode:
-                result["_supermemory"]["context_hygiene"] = {
+                result["_mnemoforge"]["context_hygiene"] = {
                     "negotiated_mode": negotiated_context_hygiene_mode,
                     "small_context_behavior": "Tool call JSON responses omit service/debug budget keys from the main payload and expose refs for full/debug replay.",
                     "full_request": {"arguments": {"context_hygiene_mode": "full"}},
                 }
                 if inferred_context_mode and not requested_context_hygiene_mode:
-                    result["_supermemory"]["context_hygiene"]["inferred"] = True
-                    result["_supermemory"]["context_hygiene"]["inference_reason"] = inferred_modes.get("reason")
+                    result["_mnemoforge"]["context_hygiene"]["inferred"] = True
+                    result["_mnemoforge"]["context_hygiene"]["inference_reason"] = inferred_modes.get("reason")
                 if inferred_modes.get("model_context_window"):
-                    result["_supermemory"]["context_hygiene"]["model_context_window"] = inferred_modes.get("model_context_window")
+                    result["_mnemoforge"]["context_hygiene"]["model_context_window"] = inferred_modes.get("model_context_window")
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
     elif method in ("initialized", "notifications/initialized"):

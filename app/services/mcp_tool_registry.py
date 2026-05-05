@@ -7,6 +7,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Iterable
 
+from app.services.llm_gateway import get_cloud_gateway
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DB_PATH = _PROJECT_ROOT / "qdrant_data" / "mcp_tool_lifecycle.db"
@@ -471,9 +473,15 @@ async def _llm_review_tool(
             "Return JSON only with keys decision and reason. decision must be one of stable, deprecated, testing."
         ),
     }
-    raw = await ollama.generate(
+    raw = await get_cloud_gateway().generate(
         json.dumps(prompt, ensure_ascii=False, indent=2),
+        task_type="text_summarization",
+        mode="economy",
+        max_tokens=200,
+        temperature=0.0,
         timeout=45.0,
+        allow_local_fallback=True,
+        prefer_local=True,
     )
     if not raw:
         return "testing", "LLM unavailable"

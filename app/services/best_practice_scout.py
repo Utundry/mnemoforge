@@ -14,6 +14,8 @@ import re
 import time
 from dataclasses import dataclass, field
 
+from app.services.llm_gateway import get_cloud_gateway
+
 logger = logging.getLogger(__name__)
 
 _SUFFICIENCY_MIN_ARTIFACTS = int(os.getenv("SCOUT_MIN_ARTIFACTS", "3"))
@@ -192,7 +194,16 @@ async def fetch_best_practices(
         project=project or "unknown",
         domains=", ".join(domains) if domains else "general software engineering",
     )
-    raw = await ollama.generate(prompt, timeout=120.0)
+    raw = await get_cloud_gateway().generate(
+        prompt,
+        task_type="text_summarization",
+        mode="economy",
+        max_tokens=900,
+        temperature=0.2,
+        timeout=120.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
     if not raw:
         logger.warning("best_practice_scout: LLM returned empty response")
         return []

@@ -21,6 +21,8 @@ from app.models.project_task import (
 )
 from app.services.improvements_store import get_improvements_store
 from app.services.learning_store import get_learning_store
+from app.services.embedding_gateway import embed_text
+from app.services.project_identity_service import project_lookup_ids, resolve_project_id
 from app.services.project_tasks_content import build_task_content, build_task_change_content
 from app.services.task_capture_rules import compute_task_statement_incomplete
 from app.services.project_tasks_store import get_project_tasks_store
@@ -42,6 +44,15 @@ _LINKED_IMPROVEMENT_MAX = 64
 _TASK_MEMORY_CONTENT_MAX = 10000
 _UTCNOW_LOCK = Lock()
 _LAST_UTCNOW: datetime | None = None
+
+
+async def _task_embedding(ollama, text: str, *, fallback_reason: str) -> tuple[list[float], dict[str, str]]:
+    return await embed_text(
+        text,
+        primary=ollama,
+        purpose="project_task",
+        fallback_reason=fallback_reason,
+    )
 
 def _task_store():
     return get_project_tasks_store()
@@ -72,7 +83,8 @@ def _normalize_task_id(task_id: str, *, project: str | None = None) -> str:
     if kind != "task" or not local_id:
         return clean
     expected_project = str(project or "").strip()
-    if expected_project and key_project and key_project != expected_project:
+    expected_projects = set(project_lookup_ids(expected_project)) if expected_project else set()
+    if expected_project and key_project and key_project not in expected_projects:
         return clean
     return local_id
 
@@ -131,6 +143,54 @@ def _unique(values: list[str]) -> list[str]:
         seen.add(item)
         out.append(item)
     return out
+
+
+def _canonical_project(project: str) -> str:
+    return resolve_project_id(project)
+
+
+def _lookup_projects(project: str) -> list[str]:
+    return project_lookup_ids(project)
+
+
+def _canonicalize_project_tag(tags: list[str], project: str) -> list[str]:
+    canonical = _canonical_project(project)
+    aliases = set(_lookup_projects(project))
+    result: list[str] = []
+    for tag in tags:
+        text = str(tag or "").strip()
+        if not text:
+            continue
+        if text.startswith("project:") and text.split(":", 1)[1].strip() in aliases:
+            text = f"project:{canonical}"
+        if text not in result:
+            result.append(text)
+    return result
+
+
+def _canonicalize_task_record(task: ProjectTaskRecord, requested_project: str) -> ProjectTaskRecord:
+    canonical = _canonical_project(requested_project)
+    if task.project == canonical:
+        task.tags = _canonicalize_project_tag(task.tags, canonical)
+        return task
+    task.project = canonical
+    task.tags = _canonicalize_project_tag(task.tags, requested_project)
+    for change in task.changes:
+        if change.project in _lookup_projects(requested_project):
+            change.project = canonical
+            change.tags = _canonicalize_project_tag(change.tags, requested_project)
+    return task
+
+
+def _canonicalize_project_tag_change(
+    change: ProjectTaskChangeRecord,
+    requested_project: str,
+) -> ProjectTaskChangeRecord:
+    canonical = _canonical_project(requested_project)
+    if change.project in _lookup_projects(requested_project):
+        change.project = canonical
+        change.tags = _canonicalize_project_tag(change.tags, requested_project)
+    return change
 
 
 def _task_record_from_memory(record, *, changes: Optional[list[ProjectTaskChangeRecord]] = None) -> ProjectTaskRecord:
@@ -341,14 +401,17 @@ async def _find_task_memory_id_qdrant(qdrant, *, project: str, task_id: str) -> 
 
 async def _find_task_memory_id(qdrant, *, project: str, task_id: str) -> Optional[str]:
     task_id = _normalize_task_id(task_id, project=project)
-    stored = _task_store().get_task_by_task_id(project=project, task_id=task_id)
-    if stored:
-        return str(stored["id"])
-    memory_id = await _find_task_memory_id_qdrant(qdrant, project=project, task_id=task_id)
-    if memory_id:
-        record = await _qdrant_get(qdrant, memory_id)
-        await _persist_task_memory(record)
-    return memory_id
+    for lookup_project in _lookup_projects(project):
+        stored = _task_store().get_task_by_task_id(project=lookup_project, task_id=task_id)
+        if stored:
+            return str(stored["id"])
+    for lookup_project in _lookup_projects(project):
+        memory_id = await _find_task_memory_id_qdrant(qdrant, project=lookup_project, task_id=task_id)
+        if memory_id:
+            record = await _qdrant_get(qdrant, memory_id)
+            await _persist_task_memory(record)
+            return memory_id
+    return None
 
 
 async def _resolve_task_project(qdrant, *, task_id: str, project: str | None = None) -> str:
@@ -358,12 +421,14 @@ async def _resolve_task_project(qdrant, *, task_id: str, project: str | None = N
 
     clean_project = str(project or "").strip()
     if clean_project:
-        stored = _task_store().get_task_by_task_id(project=clean_project, task_id=clean_task_id)
-        if stored:
-            return clean_project
-        memory_id = await _find_task_memory_id(qdrant, project=clean_project, task_id=clean_task_id)
-        if memory_id:
-            return clean_project
+        for lookup_project in _lookup_projects(clean_project):
+            stored = _task_store().get_task_by_task_id(project=lookup_project, task_id=clean_task_id)
+            if stored:
+                return lookup_project
+        for lookup_project in _lookup_projects(clean_project):
+            memory_id = await _find_task_memory_id(qdrant, project=lookup_project, task_id=clean_task_id)
+            if memory_id:
+                return lookup_project
         raise ValueError("Task not found")
 
     stored_rows = _task_store().list_tasks(task_id=clean_task_id, limit=2)
@@ -430,6 +495,12 @@ async def create_or_update_project_task(qdrant, ollama, body: ProjectTaskCreate)
             + list(body.tags or [])
             + [TASK_ENTITY_TAG, _task_tag(task_id), f"task_status:{body.status}", f"project:{body.project}"]
         )
+        vector, embedding_meta = await _task_embedding(
+            ollama,
+            build_task_content(clean_title, clean_description),
+            fallback_reason="project_task_update_embedding_unavailable",
+        )
+        meta.update(embedding_meta)
         updated = await qdrant.update(
             current.id,
             MemoryUpdate(
@@ -444,7 +515,7 @@ async def create_or_update_project_task(qdrant, ollama, body: ProjectTaskCreate)
                 topic_path=body.topic_path,
                 scope="project",
             ),
-            new_vector=await ollama.embed(build_task_content(clean_title, clean_description)),
+            new_vector=vector,
         )
         await _persist_task_memory(updated)
         return _task_record_from_memory(updated)
@@ -471,7 +542,13 @@ async def create_or_update_project_task(qdrant, ollama, body: ProjectTaskCreate)
             "linked_improvement_id": body.linked_improvement_id,
         },
     )
-    task_memory_id = await qdrant.insert(memory, await ollama.embed(memory.content))
+    vector, embedding_meta = await _task_embedding(
+        ollama,
+        memory.content,
+        fallback_reason="project_task_create_embedding_unavailable",
+    )
+    memory.meta.update(embedding_meta)
+    task_memory_id = await qdrant.insert(memory, vector)
     created = await _qdrant_get(qdrant, task_memory_id)
     await _persist_task_memory(created)
     return _task_record_from_memory(created)
@@ -479,25 +556,28 @@ async def create_or_update_project_task(qdrant, ollama, body: ProjectTaskCreate)
 
 async def get_project_task(qdrant, *, project: str, task_id: str, include_changes: bool = False) -> ProjectTaskRecord:
     task_id = _normalize_task_id(task_id, project=project)
-    stored = _task_store().get_task_by_task_id(project=project, task_id=task_id)
-    if stored:
-        changes = await list_task_changes(qdrant, project=project, task_id=task_id)
+    for lookup_project in _lookup_projects(project):
+        stored = _task_store().get_task_by_task_id(project=lookup_project, task_id=task_id)
+        if not stored:
+            continue
+        changes = await list_task_changes(qdrant, project=lookup_project, task_id=task_id)
         task = _store_row_to_task(stored, changes=changes)
-        task = _apply_task_capture_summary(task, await _task_capture_summary_map(project, limit_hint=50))
+        task = _apply_task_capture_summary(task, await _task_capture_summary_map(lookup_project, limit_hint=50))
         if not include_changes:
             task.changes = []
-        return task
+        return _canonicalize_task_record(task, project)
     memory_id = await _find_task_memory_id(qdrant, project=project, task_id=task_id)
     if not memory_id:
         raise ValueError("Task not found")
     record = await _qdrant_get(qdrant, memory_id)
-    changes = await list_task_changes(qdrant, project=project, task_id=task_id)
+    record_project = record.project or project
+    changes = await list_task_changes(qdrant, project=record_project, task_id=task_id)
     await _persist_task_memory(record)
     task = _task_record_from_memory(record, changes=changes)
-    task = _apply_task_capture_summary(task, await _task_capture_summary_map(project, limit_hint=50))
+    task = _apply_task_capture_summary(task, await _task_capture_summary_map(record_project, limit_hint=50))
     if not include_changes:
         task.changes = []
-    return task
+    return _canonicalize_task_record(task, project)
 
 
 def _matches_time_filters(
@@ -530,20 +610,30 @@ async def list_project_tasks(
     updated_before: Optional[datetime] = None,
     limit: int = 50,
 ) -> list[ProjectTaskRecord]:
-    stored_rows = _task_store().list_tasks(
-        project=project,
-        status=status,
-        created_after=created_after.timestamp() if created_after else None,
-        created_before=created_before.timestamp() if created_before else None,
-        updated_after=updated_after.timestamp() if updated_after else None,
-        updated_before=updated_before.timestamp() if updated_before else None,
-        limit=limit,
-    )
+    stored_rows: list[dict] = []
+    for lookup_project in _lookup_projects(project):
+        stored_rows.extend(
+            _task_store().list_tasks(
+                project=lookup_project,
+                status=status,
+                created_after=created_after.timestamp() if created_after else None,
+                created_before=created_before.timestamp() if created_before else None,
+                updated_after=updated_after.timestamp() if updated_after else None,
+                updated_before=updated_before.timestamp() if updated_before else None,
+                limit=limit,
+            )
+        )
+    stored_rows.sort(key=lambda row: float(row.get("updated_at") or 0), reverse=True)
+    stored_rows = stored_rows[:limit]
     if stored_rows:
-        summary_map = await _task_capture_summary_map(project, limit_hint=limit)
+        summary_maps = {
+            lookup_project: await _task_capture_summary_map(lookup_project, limit_hint=limit)
+            for lookup_project in _lookup_projects(project)
+        }
         items: list[ProjectTaskRecord] = []
         for row in stored_rows:
-            changes = await list_task_changes(qdrant, project=project, task_id=str(row["task_id"]), limit=20)
+            row_project = str(row.get("project") or project)
+            changes = await list_task_changes(qdrant, project=row_project, task_id=str(row["task_id"]), limit=20)
             task = _store_row_to_task(row, changes=changes)
             if not _matches_time_filters(
                 task,
@@ -553,20 +643,26 @@ async def list_project_tasks(
                 updated_before=updated_before,
             ):
                 continue
-            task = _apply_task_capture_summary(task, summary_map)
+            task = _apply_task_capture_summary(task, summary_maps.get(row_project) or {})
             task.changes = []
-            items.append(task)
+            items.append(_canonicalize_task_record(task, project))
         return items
-    return await _list_project_tasks_qdrant(
-        qdrant,
-        project=project,
-        status=status,
-        created_after=created_after,
-        created_before=created_before,
-        updated_after=updated_after,
-        updated_before=updated_before,
-        limit=limit,
-    )
+    items: list[ProjectTaskRecord] = []
+    for lookup_project in _lookup_projects(project):
+        items.extend(
+            await _list_project_tasks_qdrant(
+                qdrant,
+                project=lookup_project,
+                status=status,
+                created_after=created_after,
+                created_before=created_before,
+                updated_after=updated_after,
+                updated_before=updated_before,
+                limit=limit,
+            )
+        )
+    items.sort(key=lambda item: item.updated_at, reverse=True)
+    return [_canonicalize_task_record(item, project) for item in items[:limit]]
 
 
 async def _list_project_tasks_qdrant(
@@ -663,7 +759,13 @@ async def add_task_change(qdrant, ollama, *, task_id: str, body: ProjectTaskChan
             "created_at": _utcnow().isoformat(),
         },
     )
-    memory_id = await qdrant.insert(memory, await ollama.embed(memory.content))
+    vector, embedding_meta = await _task_embedding(
+        ollama,
+        memory.content,
+        fallback_reason="project_task_change_embedding_unavailable",
+    )
+    memory.meta.update(embedding_meta)
+    memory_id = await qdrant.insert(memory, vector)
     record = await _qdrant_get(qdrant, memory_id)
     _persist_task_change(record)
     return _task_change_record_from_memory(record)
@@ -719,10 +821,21 @@ async def reopen_project_task(
 
 
 async def list_task_changes(qdrant, *, project: str, task_id: str, limit: int = 100) -> list[ProjectTaskChangeRecord]:
-    stored_rows = _task_store().list_changes(project=project, task_id=task_id, limit=limit)
+    stored_rows: list[dict] = []
+    for lookup_project in _lookup_projects(project):
+        stored_rows.extend(_task_store().list_changes(project=lookup_project, task_id=task_id, limit=limit))
+    stored_rows.sort(key=lambda row: float(row.get("created_at") or 0))
+    stored_rows = stored_rows[:limit]
     if stored_rows:
-        return [_store_row_to_change(row) for row in stored_rows]
-    return await _list_task_changes_qdrant(qdrant, project=project, task_id=task_id, limit=limit)
+        return [
+            _canonicalize_project_tag_change(_store_row_to_change(row), project)
+            for row in stored_rows
+        ]
+    items: list[ProjectTaskChangeRecord] = []
+    for lookup_project in _lookup_projects(project):
+        items.extend(await _list_task_changes_qdrant(qdrant, project=lookup_project, task_id=task_id, limit=limit))
+    items.sort(key=lambda item: item.timestamp)
+    return [_canonicalize_project_tag_change(item, project) for item in items[:limit]]
 
 
 async def _list_task_changes_qdrant(qdrant, *, project: str, task_id: str, limit: int) -> list[ProjectTaskChangeRecord]:

@@ -9,6 +9,7 @@ from qdrant_client.http import models as qmodels
 from app.models.coordination import CoordinationMessageCreate, CoordinationMessageRecord
 from app.models.enums import MemoryType
 from app.models.memory import MemoryCreate, MemoryUpdate
+from app.services.embedding_gateway import embed_text
 
 
 COORDINATION_CATEGORY = "coordination_message"
@@ -132,7 +133,14 @@ async def create_coordination_message(qdrant, ollama, body: CoordinationMessageC
         status="new",
         meta=meta,
     )
-    memory_id = await qdrant.insert(memory, await ollama.embed(memory.content))
+    vector, embedding_meta = await embed_text(
+        memory.content,
+        primary=ollama,
+        purpose="coordination_message",
+        fallback_reason="coordination_message_embedding_unavailable",
+    )
+    memory.meta.update(embedding_meta)
+    memory_id = await qdrant.insert(memory, vector)
     record = await _get_record(qdrant, str(memory_id))
     return _record_from_memory(record)
 
@@ -239,4 +247,3 @@ async def update_coordination_message_status(
         ),
     )
     return _record_from_memory(updated)
-

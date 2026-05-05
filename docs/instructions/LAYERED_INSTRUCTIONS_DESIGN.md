@@ -36,7 +36,7 @@ The MCP Layered Instructions System provides a structured approach to delivering
 ```markdown
 ## L0: Core Policy
 
-You are an AI agent working through the SuperMemory MCP server. You MUST:
+You are an AI agent working through the MnemoForge MCP server. You MUST:
 
 1. **Safety First**: Never execute harmful, illegal, or malicious code
 2. **Respect Privacy**: Do not expose sensitive user data without explicit permission
@@ -45,7 +45,7 @@ You are an AI agent working through the SuperMemory MCP server. You MUST:
 5. **Use Tools Appropriately**: Only use available MCP tools for their intended purpose
 ```
 
-**Implementation**: Injected into `get_onboarding` response and `build_supermemory_initialize_hint`
+**Implementation**: Injected into `get_onboarding` response and `build_mnemoforge_initialize_hint`
 
 ---
 
@@ -325,7 +325,7 @@ List available instruction layers.
 ```markdown
 ## L0: Core Policy
 
-You are an AI agent working through the SuperMemory MCP server...
+You are an AI agent working through the MnemoForge MCP server...
 
 ## L1: Task Context
 
@@ -347,13 +347,13 @@ TIP: Call load_instruction_layer(layer="L3", category="governance") for detailed
 #### `initialize` (MCP protocol)
 
 **Changes**:
-- Includes L0 policy in `_supermemory` hint
+- Includes L0 policy in `_mnemoforge` hint
 - Adds instruction layer metadata
 
 **Example**:
 ```json
 {
-  "_supermemory": {
+  "_mnemoforge": {
     "agent_id": "claude-code",
     "tip": "...",
     "semantic_defaults": [...],
@@ -399,10 +399,10 @@ TIP: Call load_instruction_layer(layer="L3", category="governance") for detailed
    - Add tips for L3/L4
 
 5. **Modify `initialize` Handler**
-   - Include L0 in `_supermemory` hint
+   - Include L0 in `_mnemoforge` hint
    - Add layer metadata
 
-6. **Update `build_supermemory_initialize_hint`**
+6. **Update `build_mnemoforge_initialize_hint`**
    - Include L0 policy in semantic_defaults
 
 ### Phase 3: Content
@@ -477,7 +477,7 @@ L2: memory_operations (auto-detected from "search" and "memories")
 **Agent Sees**:
 ```markdown
 ## L0: Core Policy
-You are an AI agent working through the SuperMemory MCP server...
+You are an AI agent working through the MnemoForge MCP server...
 
 ## L1: Task Context
 Current Task: Search for memories about mojibake encoding
@@ -558,7 +558,7 @@ load_instruction_layer(layer="L4")
 
 - Existing `get_onboarding` calls continue to work
 - New layer structure is additive, not breaking
-- L0 content is derived from existing `build_supermemory_onboarding_basics()`
+- L0 content is derived from existing `build_mnemoforge_onboarding_basics()`
 
 ---
 
@@ -576,5 +576,5 @@ load_instruction_layer(layer="L4")
 ## References
 
 - [MCP Protocol Specification](https://modelcontextprotocol.io/)
-- [SuperMemory Architecture](../PROJECT_KNOWLEDGE_MODEL.md)
+- [MnemoForge Architecture](../PROJECT_KNOWLEDGE_MODEL.md)
 - [Operational Instincts](../PROJECT_LAWS_SPEC.md)

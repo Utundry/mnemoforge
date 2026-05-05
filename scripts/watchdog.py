@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SuperMemory Watchdog — external supervisor for the memory server.
+MnemoForge Watchdog — external supervisor for the memory server.
 
 Strategy (escalating):
   1. Poll GET /health every POLL_SEC seconds
@@ -12,7 +12,7 @@ Usage:
   python scripts/watchdog.py
 
 Environment:
-  SUPERMEMORY_URL      default: http://localhost:8000
+  MNEMOFORGE_URL       default: http://localhost:8000
   WATCHDOG_POLL_SEC    default: 30
   WATCHDOG_SOFT_FAILS  default: 3   (failures before soft reload)
   WATCHDOG_HARD_FAILS  default: 5   (failures before hard restart)
@@ -120,12 +120,12 @@ def install_task_scheduler():
     script = Path(__file__).resolve()
     python = sys.executable
     cmd = (
-        f'schtasks /Create /TN "SuperMemoryWatchdog" /SC ONSTART /DELAY 0001:00 '
+        f'schtasks /Create /TN "MnemoForgeWatchdog" /SC ONSTART /DELAY 0001:00 '
         f'/TR "\\"{python}\\" \\"{script}\\"" /RU SYSTEM /F'
     )
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     if result.returncode == 0:
-        print("Watchdog registered in Task Scheduler as 'SuperMemoryWatchdog'.")
+        print("Watchdog registered in Task Scheduler as 'MnemoForgeWatchdog'.")
     else:
         print("Failed:", result.stderr)
         sys.exit(1)
@@ -136,13 +136,13 @@ def install_systemd():
     script = Path(__file__).resolve()
     repo = script.parent.parent.resolve()
     python = sys.executable
-    service_name = "supermemory-watchdog"
+    service_name = "mnemoforge-watchdog"
     service_dir = Path.home() / ".config" / "systemd" / "user"
     service_dir.mkdir(parents=True, exist_ok=True)
     service_file = service_dir / f"{service_name}.service"
 
     unit = f"""[Unit]
-Description=SuperMemory Watchdog
+Description=MnemoForge Watchdog
 After=network.target
 
 [Service]
@@ -151,7 +151,7 @@ WorkingDirectory={repo}
 ExecStart={python} {script}
 Restart=always
 RestartSec=10
-Environment=SUPERMEMORY_URL={BASE_URL}
+Environment=MNEMOFORGE_URL={BASE_URL}
 Environment=WATCHDOG_POLL_SEC={POLL_SEC}
 
 [Install]
@@ -224,7 +224,7 @@ def run():
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="SuperMemory watchdog")
+    parser = argparse.ArgumentParser(description="MnemoForge watchdog")
     parser.add_argument("--install", action="store_true",
                         help="Register as Windows Task Scheduler job")
     args = parser.parse_args()

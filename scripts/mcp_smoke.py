@@ -87,10 +87,10 @@ def _mcp_call(endpoint_url: str, event_queue: queue.Queue, method: str, params: 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Canonical SuperMemory HTTP+MCP smoke probe.")
+    parser = argparse.ArgumentParser(description="Canonical MnemoForge HTTP+MCP smoke probe.")
     parser.add_argument(
         "--server",
-        default=(os.getenv("SUPERMEMORY_SERVER_URL") or "http://127.0.0.1:8000").rstrip("/"),
+        default=(os.getenv("MNEMOFORGE_SERVER_URL") or os.getenv("SUPERMEMORY_SERVER_URL") or "http://127.0.0.1:8000").rstrip("/"),
         help="Server base URL, e.g. http://127.0.0.1:8000",
     )
     parser.add_argument(
@@ -98,6 +98,7 @@ def main() -> int:
         default=(
             os.getenv("MEMORY_SERVER_API_KEY")
             or os.getenv("API_KEY")
+            or os.getenv("MNEMOFORGE_API_KEY")
             or os.getenv("SUPER_MEMORY_API_KEY")
             or os.getenv("SUPERMEMORY_API_KEY")
             or ""

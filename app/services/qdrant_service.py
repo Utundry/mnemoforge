@@ -614,7 +614,7 @@ class QdrantService:
             return None
 
         payload = results[0].payload or {}
-        project = payload.get("project") or "supermemory"
+        project = payload.get("project") or "mnemoforge"
         await self._client.set_payload(
             collection_name=self._collection,
             payload={
@@ -1139,7 +1139,7 @@ def _point_to_improvement(point):
         id=UUID(str(point.id)),
         title=p.get("title", p.get("content", "")[:80]),
         description=p.get("description", p.get("content", "")),
-        project=p.get("project", "supermemory"),
+        project=p.get("project", "mnemoforge"),
         agent_id=p.get("agent_id", "unknown"),
         importance_score=p.get("importance_score", 0.5),
         timestamp=datetime.fromisoformat(p["timestamp"]),

@@ -1,4 +1,5 @@
 from app.dependencies import get_qdrant
+from app.dependencies import get_ollama
 from app.routers import models as models_router
 from app.services.data_integrity_service import HANDOFF_STATUS_FILTER_SLICE_ID, get_data_integrity_store
 from app.services.memory_store import get_memory_store
@@ -180,6 +181,44 @@ async def test_handoff_payload_keeps_full_packet_in_sqlite_and_link_in_qdrant(cl
     assert metadata.get("category") == "handoff"
     assert (metadata.get("meta") or {}).get("project_id") == "supermemory"
     assert (metadata.get("meta") or {}).get("task_description") == "Validate durable handoff metadata path"
+
+
+async def test_handoff_uses_cloud_embedding_fallback_when_local_embeddings_are_down(client, monkeypatch):
+    fake_registry = _FakeRegistry()
+    monkeypatch.setattr(models_router, "get_model_registry", lambda: fake_registry)
+
+    class FakeLMStudioService:
+        async def embed(self, text: str) -> list[float]:
+            return []
+
+        async def close(self) -> None:
+            return None
+
+    class FakeCloudGateway:
+        async def generate(self, prompt: str, **kwargs) -> str:
+            assert kwargs["allow_local_fallback"] is False
+            return "handoff cloud fallback semantic signature"
+
+    get_ollama().embed.side_effect = RuntimeError("Cannot connect to Ollama")
+    monkeypatch.setattr("app.services.embedding_gateway.LMStudioService", FakeLMStudioService)
+    monkeypatch.setattr("app.services.embedding_gateway.get_cloud_gateway", lambda: FakeCloudGateway())
+
+    create_resp = await client.post(
+        "/api/v1/models/handoff",
+        json={
+            "from_agent": "codex",
+            "to_agent": "claude-code",
+            "project_id": "mnemoforge",
+            "task_description": "Validate handoff cloud embedding fallback",
+            "reason": "manual",
+        },
+    )
+    assert create_resp.status_code == 200, create_resp.text
+    memory_id = create_resp.json()["memory_id"]
+
+    row = await get_memory_store().get(memory_id)
+    metadata = dict(row.get("metadata") or {})
+    assert (metadata.get("meta") or {}).get("embedding_provider") == "cloud_semantic_hash"
 
 
 async def test_handoff_list_falls_back_to_sqlite_when_qdrant_scroll_fails(client, monkeypatch):

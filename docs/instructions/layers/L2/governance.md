@@ -14,14 +14,14 @@ When working with project governance:
 ```python
 # Get active project laws
 laws = list_project_laws(
-    project="supermemory",
+    project="mnemoforge",
     status="active",
     limit=20
 )
 
 # Filter by scope if needed
 domain_laws = list_project_laws(
-    project="supermemory",
+    project="mnemoforge",
     status="active",
     scope="domain"
 )
@@ -33,7 +33,7 @@ domain_laws = list_project_laws(
 report_issue(
     title="Memory search returns irrelevant results",
     description="When searching for 'authentication', results include unrelated memories. Expected: only authentication-related memories.",
-    project="supermemory",
+    project="mnemoforge",
     importance_score=0.8,
     tags=["bug", "search", "relevance"]
 )
@@ -42,7 +42,7 @@ report_issue(
 **Resolving an Improvement**:
 ```python
 # Mark improvement as resolved after fixing
-artifact_key = "improvement:supermemory:improvement-uuid-here"
+artifact_key = "improvement:mnemoforge:improvement-uuid-here"
 resolve_artifact(
     artifact_key=artifact_key,
     acted_by="claude-code",

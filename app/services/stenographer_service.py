@@ -299,7 +299,7 @@ class StenographerStore:
         scope: Iterable[str] | None = None,
         summary: str = "",
     ) -> WorkSessionRecord:
-        project = _clean_text(project or "supermemory", 128) or "supermemory"
+        project = _clean_text(project or "mnemoforge", 128) or "mnemoforge"
         task_id = _clean_text(task_id, 256)
         agent_id = _clean_text(agent_id or "codex", 128) or "codex"
         session_id = _clean_text(session_id or agent_id, 256) or agent_id

@@ -18,7 +18,7 @@ TaskExecutionState = Literal[
 
 
 class TaskExecutionContextRequest(BaseModel):
-    project: str = Field("supermemory", min_length=1, max_length=128)
+    project: str = Field("mnemoforge", min_length=1, max_length=128)
     task_id: str = Field("", max_length=256)
     task: str = Field(..., min_length=1, max_length=4000)
     state: TaskExecutionState

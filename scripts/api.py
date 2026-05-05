@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.resolve()))
 from app.config import settings
 
 def main():
-    parser = argparse.ArgumentParser(description="SuperMemory API CLI (UTF-8 Safe)")
+    parser = argparse.ArgumentParser(description="MnemoForge API CLI (UTF-8 Safe)")
     parser.add_argument("method", choices=["GET", "POST", "DELETE", "PATCH"], help="HTTP Method")
     parser.add_argument("endpoint", help="API Endpoint (e.g., /knowledge-tree/slice)")
     parser.add_argument("-d", "--data", help="JSON data string", default=None)

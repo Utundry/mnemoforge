@@ -41,4 +41,3 @@ async def test_report_memories_build_auto_save_reflex(client):
     assert p is not None
     assert p["suggest_automation"] is True
     assert p["context_signature"] == "category:qa"
-

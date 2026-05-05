@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 from app.dependencies import JobQueueDep, OllamaDep, QdrantDep
 from app.config import settings
 from app.models.memory import ImprovementCreate, ImprovementRecord, ImprovementReviewRequest
+from app.services.project_identity_service import resolve_project_id
 
 router = APIRouter(prefix="/improvements", tags=["improvements"])
 
@@ -334,8 +335,9 @@ async def list_improvements(
     from app.services.improvements_store import get_improvements_store
 
     store = get_improvements_store()
+    canonical_project = resolve_project_id(project) if project else None
     status_filter = None if status == "all" else status
-    rows = await store.list(project=project, status=status_filter, limit=limit)
+    rows = await store.list(project=canonical_project, status=status_filter, limit=limit)
     return [_row_to_record(r) for r in rows]
 
 
@@ -346,9 +348,10 @@ async def improvements_report(
     """Return aggregated stats + GLM-generated narrative for all improvements."""
     from app.services.improvements_store import get_improvements_store
     store = get_improvements_store()
-    rows = await store.list(project=project, status=None, limit=500)
+    canonical_project = resolve_project_id(project) if project else None
+    rows = await store.list(project=canonical_project, status=None, limit=500)
     items = [_row_to_record(r) for r in rows]
-    return await _generate_report(items, project or "all")
+    return await _generate_report(items, canonical_project or "all")
 
 
 @router.get("/report/translate")
@@ -360,9 +363,10 @@ async def improvements_report_translate(
     from app.services.improvements_store import get_improvements_store
 
     store = get_improvements_store()
-    rows = await store.list(project=project, status=None, limit=1000)
+    canonical_project = resolve_project_id(project) if project else None
+    rows = await store.list(project=canonical_project, status=None, limit=1000)
     items = [_row_to_record(r) for r in rows]
-    report = await _generate_report(items, project or "all")
+    report = await _generate_report(items, canonical_project or "all")
     narrative = (report.get("narrative") or "").strip()
     if not narrative:
         raise HTTPException(status_code=404, detail="No narrative available to translate")
@@ -374,7 +378,7 @@ async def improvements_report_translate(
         status_code = 503 if "no cloud llm configured" in detail.lower() else 502
         raise HTTPException(status_code=status_code, detail=detail) from exc
     return {
-        "project": project or "all",
+        "project": canonical_project or "all",
         "language": settings.glm_response_language,
         "original": narrative,
         "translated": translated,

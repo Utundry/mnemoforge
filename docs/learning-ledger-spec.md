@@ -29,7 +29,7 @@ An "episode" is the unit of learning and evaluation, e.g. a session, a task, a P
 Fields:
 - episode_id: string (stable identifier across the episode)
 - agent_id: string (e.g. codex, claude-code)
-- project: string (e.g. supermemory)
+- project: string (e.g. mnemoforge)
 
 ### 2.2 LearningEvent (events)
 Append-only events collected from runtime:
@@ -119,7 +119,7 @@ key = "{action_type}::{normalize_trigger(trigger)}::{context_signature}"
 
 Example:
 ```
-auto_save_result::event(user_request).request_type=="save_to_supermemory"::category=code;phase=implement;project=supermemory
+auto_save_result::event(user_request).request_type=="save_to_mnemoforge"::category=code;phase=implement;project=mnemoforge
 ```
 
 Two candidates with the same key are considered duplicates. The one with higher evidence_count wins; the other is archived.
@@ -176,7 +176,7 @@ Recommended encoding:
 ## 6. Canonical request_type (MVP)
 
 Used in user_request.payload.request_type:
-- save_to_supermemory
+- save_to_mnemoforge
 - run_tests
 - create_improvement
 - rebuild_docs
@@ -215,7 +215,7 @@ Allowed TYPE: user_request, user_feedback, tool_call, tool_result, memory_write,
 Allowed fields are whitelisted per TYPE; no arbitrary JSON access in MVP.
 
 Example:
-- event(user_request).request_type == "save_to_supermemory" and not event(memory_write)
+- event(user_request).request_type == "save_to_mnemoforge" and not event(memory_write)
 
 ## 9. Learning Policies (MVP)
 
@@ -253,7 +253,7 @@ Each action_type has a minimum threshold (configurable; these are defaults):
 | action_type | counting event_type | min_evidence |
 |---|---|---|
 | auto_save_result | memory_write (source=auto) | 5 |
-| suggest_save_result | user_request(save_to_supermemory) without memory_write | 3 |
+| suggest_save_result | user_request(save_to_mnemoforge) without memory_write | 3 |
 | run_tests | tool_call(run_tests) after code change | 4 |
 | suggest_run_tests | episode_end without tool_call(run_tests) | 3 |
 | create_improvement | tool_call(report_issue) or artifact_suggested(improvement) | 3 |

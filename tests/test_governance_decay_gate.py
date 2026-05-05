@@ -87,4 +87,3 @@ async def test_decay_applies_when_project_active(client_and_qdrant):
     body = r.json()
     assert body["affected"] >= 1
     assert any(c["id"] == mem_id for c in body["candidates"])
-

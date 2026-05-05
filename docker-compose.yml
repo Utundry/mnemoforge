@@ -19,6 +19,8 @@ services:
       - qdrant
     env_file: .env
     environment:
+      MNEMOFORGE_RUNTIME_KIND: docker
+      MNEMOFORGE_DOCKER_SERVICE: memory-server
       QDRANT_HOST: qdrant
       OLLAMA_BASE_URL: http://host.docker.internal:11434
     extra_hosts:
@@ -33,6 +35,8 @@ services:
       - qdrant
     env_file: .env
     environment:
+      MNEMOFORGE_RUNTIME_KIND: docker
+      MNEMOFORGE_DOCKER_SERVICE: memory-server-dev
       QDRANT_HOST: qdrant
       OLLAMA_BASE_URL: http://host.docker.internal:11434
     extra_hosts:
@@ -63,7 +67,9 @@ services:
       - "8010:8000"
     environment:
       API_KEY: test-api-key
-      SELF_PROJECT_ID: supermemory-test
+      MNEMOFORGE_RUNTIME_KIND: docker-test
+      MNEMOFORGE_DOCKER_SERVICE: memory-server-test
+      SELF_PROJECT_ID: mnemoforge-test
       QDRANT_HOST: qdrant-test
       QDRANT_PORT: 6333
       QDRANT_COLLECTION_NAME: agent_memories_test
@@ -89,6 +95,7 @@ services:
       - ./mcp:/app/mcp
       - ./cli:/app/cli
       - ./scripts:/app/scripts
+      - ./docs:/app/docs
       - ./pytest.ini:/app/pytest.ini:ro
     tmpfs:
       - /app/qdrant_data
@@ -99,13 +106,14 @@ services:
     depends_on:
       - memory-server-test
     environment:
-      SUPERMEMORY_SERVER_URL: http://memory-server-test:8000
-      SUPERMEMORY_DB_TEST_TARGETS: http://memory-server-test:8000
-      SUPERMEMORY_LIVE_TARGETS: http://memory-server-dev:8000,http://memory-server:8000
+      MNEMOFORGE_SERVER_URL: http://memory-server-test:8000
+      MNEMOFORGE_DB_TEST_TARGETS: http://memory-server-test:8000
+      MNEMOFORGE_LIVE_TARGETS: http://memory-server-dev:8000,http://memory-server:8000
       API_KEY: test-api-key
     volumes:
       - ./app:/app/app
       - ./tests:/app/tests
       - ./scripts:/app/scripts
+      - ./docs:/app/docs
       - ./pytest.ini:/app/pytest.ini:ro
     command: ["python", "scripts/docker_remote_mcp_e2e.py"]

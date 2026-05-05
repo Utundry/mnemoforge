@@ -39,4 +39,3 @@ def check_path_allowed(p: Path) -> None:
     resolved = p.expanduser().resolve(strict=False)
     if not any(resolved == r or resolved.is_relative_to(r) for r in roots):
         raise ValueError(f"Path '{p}' is outside allowed roots: {[str(r) for r in roots]}")
-

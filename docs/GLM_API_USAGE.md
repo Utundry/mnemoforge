@@ -1,6 +1,6 @@
 # GLM/Zhipu AI API Integration
 
-Это руководство объясняет, как использовать API от z.ai (GLM/Zhipu AI) в проекте SuperMemory.
+Это руководство объясняет, как использовать API от z.ai (GLM/Zhipu AI) в проекте MnemoForge.
 
 ## Содержание
 

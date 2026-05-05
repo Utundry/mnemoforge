@@ -5,7 +5,7 @@ from api_helpers import get_json
 
 def main() -> None:
     params = {
-        "project": "supermemory",
+        "project": "mnemoforge",
         "status": "all",
         "limit": 200,
     }

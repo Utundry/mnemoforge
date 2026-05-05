@@ -22,6 +22,7 @@ from app.services.normalization_service import (
     CATEGORY,
     _norm_svc,
 )
+from app.services.embedding_gateway import embed_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/normalization", tags=["normalization"])
@@ -175,7 +176,12 @@ async def normalization_feedback(
         f"helpful={body.was_helpful}"
         + (f" corrected={body.corrected_expansion}" if body.corrected_expansion else "")
     )
-    fb_vector = await ollama.embed(feedback_content)
+    fb_vector, embedding_meta = await embed_text(
+        feedback_content,
+        primary=ollama,
+        purpose="normalization_feedback",
+        fallback_reason="normalization_feedback_embedding_unavailable",
+    )
     fb_mem = MemoryCreate(
         content=feedback_content,
         agent_id=body.agent_id,
@@ -188,6 +194,7 @@ async def normalization_feedback(
             f"term:{body.term.lower()}",
             f"helpful:{body.was_helpful}",
         ],
+        meta=embedding_meta,
     )
     await qdrant.insert(fb_mem, fb_vector)
 

@@ -28,6 +28,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qmodels
 
 from app.config import settings
+from app.services.embedding_gateway import embed_text
 from app.services.memory_store import get_memory_store
 
 logger = logging.getLogger(__name__)
@@ -277,7 +278,7 @@ async def generate_and_store_memoir(
     collection: str,
     ollama,
     agent_id: str = "claude",
-    project: str = "supermemory",
+    project: str = "mnemoforge",
 ) -> Optional[str]:
     """
     Generate memoir and store it with SQLite as canonical content storage and
@@ -337,7 +338,13 @@ async def generate_and_store_memoir(
             content=full_content,
             metadata=_store_metadata_from_payload(payload),
         )
-        vector = await ollama.embed(full_content[:500])
+        vector, embedding_meta = await embed_text(
+            full_content[:500],
+            primary=ollama,
+            purpose="task_memoir",
+            fallback_reason="task_memoir_embedding_unavailable",
+        )
+        payload["meta"] = {**(payload.get("meta") or {}), **embedding_meta}
         await qdrant_client.upsert(
             collection_name=collection,
             points=[qmodels.PointStruct(

@@ -9,10 +9,11 @@ COPY app/ app/
 COPY static/ static/
 COPY mcp/ mcp/
 COPY cli/ cli/
-COPY scripts/ scripts/
-COPY tests/ tests/
 COPY docs/ docs/
-COPY pytest.ini .
+COPY demo/ demo/
+COPY README.md SETUP.md CLIENT_SETUP.md STATUS.md .env.public.example ./
+
+RUN mkdir -p qdrant_data
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

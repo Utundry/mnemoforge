@@ -17,7 +17,7 @@ def _looks_like_project_root(path: Path) -> bool:
 
 
 def _resolve_project_root() -> Path:
-    env_override = str(os.getenv("SUPERMEMORY_PROJECT_ROOT", "")).strip()
+    env_override = str(os.getenv("MNEMOFORGE_PROJECT_ROOT") or os.getenv("SUPERMEMORY_PROJECT_ROOT", "")).strip()
     if env_override:
         candidate = Path(env_override).expanduser().resolve()
         if _looks_like_project_root(candidate):
@@ -38,12 +38,29 @@ def _resolve_project_root() -> Path:
 
 _PROJECT_ROOT = _resolve_project_root()
 _CRITICAL_IGNORE_RULES = [
+    ".git/",
+    ".*",
     ".env",
     ".venv/",
+    "node_modules/",
     "qdrant_data/",
     "logs/",
     "*.db",
+    "pytest_temp_*/",
     ".server.pid",
+]
+_CRITICAL_DOCKERIGNORE_RULES = [
+    ".git/",
+    ".*",
+    ".env",
+    ".venv/",
+    "node_modules/",
+    "qdrant_data/",
+    "logs/",
+    "*.db",
+    "pytest_temp_*/",
+    "tests/",
+    "pytest.ini",
 ]
 _ENV_REQUIRED_KEYS = [
     "SELF_PROJECT_ID",
@@ -56,7 +73,10 @@ _PUBLIC_DOC_FILES = {
     "client_setup": "CLIENT_SETUP.md",
     "architecture": "docs/PROJECT_KNOWLEDGE_MODEL.md",
     "roadmap": "docs/EXTERNAL_PROJECT_ROADMAP.md",
+    "usage_conditions": "docs/USAGE_CONDITIONS.md",
+    "public_release_checklist": "docs/PUBLIC_RELEASE_CHECKLIST.md",
     "status_doc": "STATUS.md",
+    "public_env_example": ".env.public.example",
 }
 _DEMO_FILES = {
     "demo_readme": "demo/README.md",
@@ -108,7 +128,9 @@ def _package_presence() -> dict[str, Any]:
         "readme": (_PROJECT_ROOT / "README.md").exists(),
         "setup": (_PROJECT_ROOT / "SETUP.md").exists(),
         "client_setup": (_PROJECT_ROOT / "CLIENT_SETUP.md").exists(),
+        "public_env_example": (_PROJECT_ROOT / ".env.public.example").exists(),
         "dockerfile": (_PROJECT_ROOT / "Dockerfile").exists(),
+        "dockerignore": (_PROJECT_ROOT / ".dockerignore").exists(),
         "docker_compose": (_PROJECT_ROOT / "docker-compose.yml").exists(),
         "env_example": (_PROJECT_ROOT / ".env.example").exists(),
     }
@@ -144,6 +166,39 @@ def _env_example_audit() -> dict[str, Any]:
         "keys_present": keys_present,
         "values": values,
         "missing_keys": missing_keys,
+    }
+
+
+def _public_env_audit() -> dict[str, Any]:
+    path = _PROJECT_ROOT / ".env.public.example"
+    if not path.exists():
+        return {
+            "present": False,
+            "missing_keys": ["SELF_PROJECT_ID", "DISABLED_MODULES", "API_KEY"],
+            "forbidden_keys": [],
+        }
+
+    text = _read_text(path)
+    keys_present = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _value = line.split("=", 1)
+        keys_present.append(key.strip())
+    keys_present = sorted(set(keys_present))
+    required_keys = ["SELF_PROJECT_ID", "DISABLED_MODULES", "API_KEY"]
+    forbidden_keys = [
+        key
+        for key in ("OPENAI_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "AGG1_API_KEY", "AGG2_API_KEY", "GLM_API_KEY")
+        if key in keys_present
+    ]
+    missing_keys = [key for key in required_keys if key not in keys_present]
+    return {
+        "present": True,
+        "keys_present": keys_present,
+        "missing_keys": missing_keys,
+        "forbidden_keys": forbidden_keys,
     }
 
 
@@ -220,12 +275,31 @@ def _sanitization_audit() -> dict[str, Any]:
     }
 
 
+def _dockerignore_audit() -> dict[str, Any]:
+    path = _PROJECT_ROOT / ".dockerignore"
+    if not path.exists():
+        return {
+            "present": False,
+            "critical_ignore_rules_present": [],
+            "missing_ignore_rules": list(_CRITICAL_DOCKERIGNORE_RULES),
+        }
+    text = _read_text(path)
+    missing = [rule for rule in _CRITICAL_DOCKERIGNORE_RULES if rule not in text]
+    return {
+        "present": True,
+        "critical_ignore_rules_present": [rule for rule in _CRITICAL_DOCKERIGNORE_RULES if rule not in missing],
+        "missing_ignore_rules": missing,
+    }
+
+
 def build_publish_readiness() -> dict[str, Any]:
     package_presence = _package_presence()
     public_docs = _public_docs_coverage()
     demo_dataset = _demo_dataset_presence()
     sanitization = _sanitization_audit()
+    dockerignore = _dockerignore_audit()
     env_example = _env_example_audit()
+    public_env_example = _public_env_audit()
     alpha_surface = build_functionality_alpha_config()
 
     blockers: list[str] = []
@@ -239,8 +313,16 @@ def build_publish_readiness() -> dict[str, Any]:
         blockers.append(f"Missing safe demo dataset assets: {', '.join(demo_dataset['missing'])}")
     if sanitization["missing_ignore_rules"]:
         blockers.append(f"Missing critical .gitignore rules: {', '.join(sanitization['missing_ignore_rules'])}")
+    if not package_presence["files"]["dockerignore"]:
+        blockers.append("Missing .dockerignore for safe Docker Hub builds")
+    if dockerignore["missing_ignore_rules"]:
+        blockers.append(f"Missing critical .dockerignore rules: {', '.join(dockerignore['missing_ignore_rules'])}")
     if env_example["missing_keys"]:
         blockers.append(f"Missing public-alpha env defaults: {', '.join(env_example['missing_keys'])}")
+    if public_env_example["missing_keys"]:
+        blockers.append(f"Missing public env defaults: {', '.join(public_env_example['missing_keys'])}")
+    if public_env_example["forbidden_keys"]:
+        blockers.append(f"Public env template must not expose internal provider keys: {', '.join(public_env_example['forbidden_keys'])}")
 
     issues = sanitization["issues"]
     if issues["mojibake_docs"]:
@@ -266,6 +348,14 @@ def build_publish_readiness() -> dict[str, Any]:
         next_actions.append("Publish GitHub alpha with the recommended disabled experimental modules baseline.")
     if demo_dataset["missing"]:
         next_actions.append("Prepare a safe demo dataset instead of shipping any live service data.")
+    if public_env_example["missing_keys"] or public_env_example["forbidden_keys"]:
+        next_actions.append("Generate a clean public-release env template with only public-safe defaults.")
+    if not public_docs["items"]["public_release_checklist"]["present"]:
+        next_actions.append("Add a concise public release checklist before GitHub or Docker Hub publication.")
+    if not package_presence["files"]["dockerignore"]:
+        next_actions.append("Add a .dockerignore that excludes secrets and local artifacts from Docker build context.")
+    if dockerignore["missing_ignore_rules"]:
+        next_actions.append("Harden .dockerignore with the same local-artifact exclusions used for public release checks.")
 
     return {
         "status": "warning" if blockers or warnings else "ok",
@@ -275,6 +365,8 @@ def build_publish_readiness() -> dict[str, Any]:
         "public_docs": public_docs,
         "demo_dataset": demo_dataset,
         "env_example": env_example,
+        "public_env_example": public_env_example,
+        "dockerignore": dockerignore,
         "sanitization": sanitization,
         "alpha_surface": alpha_surface,
         "blockers": blockers,

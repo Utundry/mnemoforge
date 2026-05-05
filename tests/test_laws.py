@@ -476,7 +476,7 @@ async def test_create_confirmed_law_uses_deterministic_vector_when_embedding_una
 
 
 @pytest.mark.asyncio
-async def test_create_unconfirmed_law_still_fails_when_embedding_unavailable(client):
+async def test_create_unconfirmed_law_uses_embedding_fallback_when_provider_unavailable(client):
     from app import dependencies
 
     dependencies.get_ollama().embed.side_effect = RuntimeError("embedding provider unavailable")
@@ -487,8 +487,9 @@ async def test_create_unconfirmed_law_still_fails_when_embedding_unavailable(cli
         "agent_id": "codex",
         "status": "proposed",
     })
-    assert created.status_code == 400
-    assert "embedding provider unavailable" in created.text
+    assert created.status_code == 201
+    data = created.json()
+    assert data["title"] == "Unconfirmed law"
 
 
 @pytest.mark.asyncio

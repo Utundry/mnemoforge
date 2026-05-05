@@ -18,6 +18,8 @@ import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from app.services.embedding_gateway import embed_text
+
 if TYPE_CHECKING:
     from app.services.ollama_service import OllamaService
     from app.services.qdrant_service import QdrantService
@@ -146,7 +148,12 @@ class NormalizationService:
 
         scope_agent = AGENT_ID_GLOBAL if global_scope else agent_id
         content = f"{term} → {expansion}"
-        vector = await ollama.embed(content)
+        vector, embedding_meta = await embed_text(
+            content,
+            primary=ollama,
+            purpose="normalization_term",
+            fallback_reason="normalization_term_embedding_unavailable",
+        )
 
         mem = MemoryCreate(
             content=content,
@@ -156,6 +163,7 @@ class NormalizationService:
             importance_score=0.8,
             source="normalization",
             tags=["glossary", f"term:{term.lower()}", f"expansion:{expansion}"],
+            meta=embedding_meta,
             decay_rate=0.0,  # vocabulary doesn't expire
         )
         memory_id = await qdrant.insert(mem, vector)

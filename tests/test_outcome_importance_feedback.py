@@ -79,4 +79,3 @@ async def test_outcome_failure_penalizes_used_memory_importance(client):
     m = await client.get(f"/api/v1/memories/{mid}")
     assert m.status_code == 200
     assert m.json()["importance_score"] < 0.6
-

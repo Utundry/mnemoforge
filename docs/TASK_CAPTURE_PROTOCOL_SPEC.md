@@ -5,7 +5,7 @@
 **ID задачи:** `48a6a84a-77a6-453d-83bf-9f51ffa18325`
 **ID улучшения:** `8a64be40-47dc-46e8-957a-4b511758d97b`
 **Статус:** in_progress
-**Проект:** supermemory
+**Проект:** mnemoforge
 
 ---
 
@@ -447,7 +447,7 @@ await _enqueue_task_capture_refresh(
 ## Связанные задачи
 
 1. **Add Task Statement Projection Service** — зависит от этой задачи
-2. **Drive SuperMemory to public GitHub alpha readiness** — эта задача часть пути к alpha
+2. **Drive MnemoForge to public GitHub alpha readiness** — эта задача часть пути к alpha
 3. **Redesign autodocumentation** — может использовать артефакты захвата
 
 ---

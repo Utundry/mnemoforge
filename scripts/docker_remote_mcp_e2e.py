@@ -13,7 +13,7 @@ from typing import Any
 from scripts.testing_guard import assert_db_backed_test_target
 
 
-SERVER = os.getenv("SUPERMEMORY_SERVER_URL", "http://memory-server-test:8000").rstrip("/")
+SERVER = (os.getenv("MNEMOFORGE_SERVER_URL") or os.getenv("SUPERMEMORY_SERVER_URL", "http://memory-server-test:8000")).rstrip("/")
 API_KEY = os.getenv("API_KEY", "test-api-key")
 
 
@@ -97,7 +97,7 @@ def main() -> int:
                 "description": "\n".join(
                     [
                         "Build an isolated Docker remote MCP replay fixture.",
-                        "Assumption: test storage is separate from working SuperMemory data.",
+                        "Assumption: test storage is separate from working MnemoForge data.",
                         "Constraint: client communicates over the Docker network.",
                         "Definition of done: replay drill executes its selected first tool.",
                     ]

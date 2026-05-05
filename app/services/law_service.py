@@ -5,10 +5,10 @@ from typing import Optional
 
 from qdrant_client.http import models as qmodels
 
-from app.config import settings
 from app.models.enums import MemoryType
 from app.models.law import ProjectLawCandidate, ProjectLawConfirmRequest, ProjectLawCreate, ProjectLawRecord, ProjectLawUpdate
 from app.models.memory import MemoryCreate, MemoryUpdate
+from app.services.embedding_gateway import embed_text
 from app.services.governed_artifact import apply_candidate_fields, build_candidate_revision
 from app.services.qdrant_service import _point_to_record
 
@@ -191,17 +191,17 @@ async def create_project_law(qdrant, ollama, body: ProjectLawCreate) -> ProjectL
         status=body.status,
         meta=meta,
     )
-    try:
-        vector = await ollama.embed(memory.content)
-    except Exception:
-        if body.status not in CONFIRMED_STATUSES:
-            raise
-        vector = [0.0] * settings.embedding_dimensions
-        memory.meta = {
-            **(memory.meta or {}),
-            "embedding_fallback": "zero_vector",
-            "embedding_fallback_reason": "confirmed_law_create_embedding_unavailable",
-        }
+    vector, embedding_meta = await embed_text(
+        memory.content,
+        primary=ollama,
+        purpose="project_law_create",
+        fallback_reason=(
+            "confirmed_law_create_embedding_unavailable"
+            if body.status in CONFIRMED_STATUSES
+            else "law_create_embedding_unavailable"
+        ),
+    )
+    memory.meta = {**(memory.meta or {}), **embedding_meta}
     memory_id = await qdrant.insert(memory, vector)
     record = await qdrant.get(memory_id)
     return _law_record_from_memory(record, requested_project=body.project)
@@ -279,6 +279,13 @@ async def update_project_law(qdrant, ollama, law_id: str, body: ProjectLawUpdate
         "supported_by": next_supported_by,
         "updated_at": _utcnow_iso(),
     })
+    new_vector, embedding_meta = await embed_text(
+        content,
+        primary=ollama,
+        purpose="project_law_update",
+        fallback_reason="law_update_embedding_unavailable",
+    )
+    meta.update(embedding_meta)
     updated = await qdrant.update(
         law_id,
         MemoryUpdate(
@@ -290,7 +297,7 @@ async def update_project_law(qdrant, ollama, law_id: str, body: ProjectLawUpdate
             status=next_status,
             meta=meta,
         ),
-        new_vector=await ollama.embed(content),
+        new_vector=new_vector,
     )
     return _law_record_from_memory(updated, requested_project=project)
 
@@ -374,6 +381,13 @@ async def confirm_project_law(qdrant, ollama, law_id: str, body: ProjectLawConfi
             project=project,
             extra_tags=list(record.tags or []),
         )
+        new_vector, embedding_meta = await embed_text(
+            content,
+            primary=ollama,
+            purpose="project_law_confirm",
+            fallback_reason="confirmed_law_update_embedding_unavailable",
+        )
+        meta.update(embedding_meta)
         updated = await qdrant.update(
             law_id,
             MemoryUpdate(
@@ -385,7 +399,7 @@ async def confirm_project_law(qdrant, ollama, law_id: str, body: ProjectLawConfi
                 meta=meta,
                 tags=tags,
             ),
-            new_vector=await ollama.embed(content),
+            new_vector=new_vector,
         )
         return _law_record_from_memory(updated, requested_project=project)
 

@@ -1,1 +1,1 @@
-"""Utility package marker for SuperMemory scripts."""
+"""Utility package marker for MnemoForge scripts."""

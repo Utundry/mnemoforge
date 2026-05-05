@@ -1,12 +1,12 @@
 # Task: Constitutional Kernel And First-Class Project Laws
 
 Status: proposed
-Project: `supermemory`
+Project: `mnemoforge`
 Priority: critical
 
 ## Problem
 
-`supermemory` is a general-purpose system for helping agents work on any project in any subject area.
+`mnemoforge` is a general-purpose system for helping agents work on any project in any subject area.
 It must accumulate, systematize, document, and safely reuse knowledge gathered during work.
 
 The current architectural gap is not only that project laws are weakly modeled.
@@ -23,7 +23,7 @@ Both are wrong.
 
 ## Goal
 
-Define and implement a small constitutional kernel for `supermemory`, then build first-class project laws on top of it as governed knowledge entities.
+Define and implement a small constitutional kernel for `mnemoforge`, then build first-class project laws on top of it as governed knowledge entities.
 
 The kernel may hardcode only fundamental organs and reflexes of the system.
 It must never hardcode subject-domain knowledge, project-specific conclusions, or operational content for a particular stack.
@@ -81,7 +81,7 @@ Model confidence, repetition, similarity, or clustering may justify review, but 
 Project-local knowledge may be promoted only through repeated independent evidence and governed review.
 
 8. RepRap follows the same rules.
-`supermemory` must consume the same project-law and governance mechanisms it provides to any other project.
+`mnemoforge` must consume the same project-law and governance mechanisms it provides to any other project.
 
 ## Truth And Candidate Model
 
@@ -174,7 +174,7 @@ The agent should receive this through one operational path, not by stitching rep
 1. Do not hardcode domain vocabularies or project-specific semantic rules into the kernel.
 2. Do not treat unreviewed LLM output as project truth.
 3. Do not use hidden prompt text as a substitute for governed laws.
-4. Do not create special-case law handling for `supermemory` that other projects cannot use.
+4. Do not create special-case law handling for `mnemoforge` that other projects cannot use.
 5. Do not auto-promote project knowledge to broader scopes from a single project or a single conversation.
 
 ## Acceptance Criteria
@@ -190,7 +190,7 @@ The agent should receive this through one operational path, not by stitching rep
    - user-confirmed active law
    - promoted broader-scope law
 7. Promotion requires evidence beyond a single project instance.
-8. `supermemory` itself can use the same mechanism in RepRap mode without privileged shortcuts.
+8. `mnemoforge` itself can use the same mechanism in RepRap mode without privileged shortcuts.
 
 ## Work Packages
 
@@ -227,7 +227,7 @@ Define evidence thresholds and review rules for raising knowledge from project t
 
 ### WP6. RepRap Validation
 
-Validate the whole path on `supermemory` itself without introducing special handling for this repo.
+Validate the whole path on `mnemoforge` itself without introducing special handling for this repo.
 
 ## Senior Engineering Constraint
 
@@ -238,7 +238,7 @@ Correct order:
 - define governed lifecycle and truth boundaries
 - define law and confirmation mechanics
 - integrate into MCP and project context
-- validate with `supermemory` as just another project
+- validate with `mnemoforge` as just another project
 
 Incorrect order:
 - patch current behavior for one repo

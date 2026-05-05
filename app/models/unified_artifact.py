@@ -12,8 +12,8 @@ class ArtifactKey:
 
     Формат: {type}:{project}:{local_id}
     Примеры:
-    - improvement:supermemory:dcde5e07-744a-4836-b08c-e18300eccf78
-    - task:supermemory:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c
+    - improvement:mnemoforge:dcde5e07-744a-4836-b08c-e18300eccf78
+    - task:mnemoforge:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c
     """
 
     type: Literal["improvement", "task"]
@@ -51,7 +51,7 @@ class ArtifactKey:
 class UnifiedArtifactRecord:
     """Унифицированная запись для improvements и tasks."""
 
-    artifact_key: str  # "improvement:supermemory:abc" or "task:supermemory:def"
+    artifact_key: str  # "improvement:mnemoforge:abc" or "task:mnemoforge:def"
     type: str  # "improvement" or "task"
     id: UUID  # локальный ID
     project: str
@@ -79,7 +79,7 @@ class UnifiedArtifactRecord:
     task_statement_incomplete: Optional[bool] = None
 
     # Связанные сущности
-    linked_artifact_key: Optional[str] = None  # "task:supermemory:def" или "improvement:supermemory:abc"
+    linked_artifact_key: Optional[str] = None  # "task:mnemoforge:def" или "improvement:mnemoforge:abc"
     linked_status: Optional[str] = None  # статус связанной сущности
 
 

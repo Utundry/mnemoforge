@@ -70,13 +70,43 @@ async def test_delete_memory(client):
 
 
 @pytest.mark.asyncio
-async def test_create_memory_dimension_mismatch_returns_422(mismatch_client):
+async def test_create_memory_dimension_mismatch_uses_embedding_fallback(mismatch_client):
     resp = await mismatch_client.post(f"{PREFIX}/memories", json={
         "content": "Dimension mismatch",
         "agent_id": "agent1",
     })
-    assert resp.status_code == 422
-    assert "Vector dimension mismatch" in resp.json()["detail"]
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["meta"]["embedding_provider"] in {"cloud_semantic_hash", "zero_vector"}
+
+
+@pytest.mark.asyncio
+async def test_memory_store_uses_cloud_semantic_fallback_when_local_embeddings_are_down(client, monkeypatch):
+    from app.dependencies import get_ollama
+
+    class FakeLMStudioService:
+        async def embed(self, text: str) -> list[float]:
+            return []
+
+        async def close(self) -> None:
+            return None
+
+    class FakeCloudGateway:
+        async def generate(self, prompt: str, **kwargs) -> str:
+            assert kwargs["allow_local_fallback"] is False
+            return "memory cloud fallback deepseek semantic signature"
+
+    get_ollama().embed.side_effect = RuntimeError("Cannot connect to Ollama")
+    monkeypatch.setattr("app.services.embedding_gateway.LMStudioService", FakeLMStudioService)
+    monkeypatch.setattr("app.services.embedding_gateway.get_cloud_gateway", lambda: FakeCloudGateway())
+
+    resp = await client.post(f"{PREFIX}/memories", json={
+        "content": "Store this memory without local embedding services",
+        "agent_id": "agent1",
+    })
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["meta"]["embedding_provider"] == "cloud_semantic_hash"
 
 
 @pytest.mark.asyncio

@@ -24,7 +24,7 @@ _LANE_VALUES = {"fast", "slow"}
 
 
 class MemoryScribeCompactRequest(BaseModel):
-    project: str = Field("supermemory", min_length=1, max_length=128)
+    project: str = Field("mnemoforge", min_length=1, max_length=128)
     task_id: str = Field("", max_length=256)
     task_title: str = Field("", max_length=500)
     stage: str = Field("in_progress", pattern="^(planning|in_progress|blocked|interrupted|handoff|completed)$")

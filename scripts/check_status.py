@@ -13,7 +13,7 @@ def check_stats() -> dict:
 
 def check_improvements() -> dict:
     params = {
-        "project": "supermemory",
+        "project": "mnemoforge",
         "status": "all",
         "limit": 200,
     }
@@ -27,7 +27,7 @@ def print_section(title: str) -> None:
 
 def main() -> None:
     print("============================================================")
-    print("SUPERMEMORY STATUS REPORT")
+    print("MNEMOFORGE STATUS REPORT")
     print("============================================================")
     print(f"Report time: {datetime.now():%Y-%m-%d %H:%M:%S}\n")
 

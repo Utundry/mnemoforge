@@ -1373,11 +1373,11 @@ class TestMcpToolExecution:
             session_id="sess-1",
         )
 
-        assert posted[0][0] == "/project/tasks/task-1/changes"
-        assert "[task_checkpoint]" in posted[0][1]["content"]
-        assert "Stage evidence refs: checkpoint:framing-source" in posted[0][1]["content"]
-        assert "task_checkpoint" in posted[0][1]["tags"]
-        assert "checkpoint_mode:lightweight" in posted[0][1]["tags"]
+        change_post = next(item for item in posted if item[0] == "/project/tasks/task-1/changes")
+        assert "[task_checkpoint]" in change_post[1]["content"]
+        assert "Stage evidence refs: checkpoint:framing-source" in change_post[1]["content"]
+        assert "task_checkpoint" in change_post[1]["tags"]
+        assert "checkpoint_mode:lightweight" in change_post[1]["tags"]
         assert fake_store.ctx["sess-1"]["task_checkpoint_recorded"] is True
         assert fake_store.ctx["sess-1"]["current_task_checkpoint"]["stage"] == "planning"
         assert fake_store.ctx["sess-1"]["stage_evidence"] == "checkpoint:change-1"
@@ -1415,14 +1415,91 @@ class TestMcpToolExecution:
             "http://test",
         )
 
-        assert posted[0][0] == "/project/tasks/task-1/changes"
-        assert "Decisions: Store all checkpoints as task_change." in posted[0][1]["content"]
-        assert "Changed files: app/routers/mcp_sse.py" in posted[0][1]["content"]
-        assert posted[1][0] == "/models/handoff"
-        assert posted[1][1]["phase"] == "blocked"
-        assert posted[1][1]["write_scope"] == ["app/routers/mcp_sse.py"]
+        change_post = next(item for item in posted if item[0] == "/project/tasks/task-1/changes")
+        handoff_post = next(item for item in posted if item[0] == "/models/handoff")
+        assert "Decisions: Store all checkpoints as task_change." in change_post[1]["content"]
+        assert "Changed files: app/routers/mcp_sse.py" in change_post[1]["content"]
+        assert handoff_post[1]["phase"] == "blocked"
+        assert handoff_post[1]["write_scope"] == ["app/routers/mcp_sse.py"]
         assert "handoff_packet_created" in result
         assert "handoff-1" in result
+
+    async def test_record_task_checkpoint_blocks_obvious_scope_mismatch(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_get(api_base: str, path: str):
+            assert path == "/project/tasks/reconstruct-projects?project=alpha"
+            return {
+                "task_id": "reconstruct-projects",
+                "title": "Reconstruct any project from governed memory",
+                "description": "Build source-loss reconstruction bundles from project tasks, laws, decisions, and component contracts.",
+                "tags": ["source-loss-reconstruction", "project-genome"],
+            }
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "unexpected"}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool(
+            "record_task_checkpoint",
+            {
+                "project": "alpha",
+                "task_id": "reconstruct-projects",
+                "stage": "in_progress",
+                "summary": "Added public usage conditions and Docker Hub publish readiness checks.",
+                "decisions": ["Treat public usage conditions as a release artifact."],
+                "changed_files": ["docs/USAGE_CONDITIONS.md", "scripts/publish_docker_image.py"],
+                "verification": ["Public release readiness tests passed."],
+                "next_step": "Prepare a public release checklist.",
+                "acted_by": "codex",
+            },
+            "http://test",
+        )
+        data = json.loads(result)
+
+        assert posted == []
+        assert data["error"] == "checkpoint_scope_mismatch"
+        assert data["task_checkpoint_recorded"] is False
+        assert data["recommended_next_tools"] == ["list_open_tasks", "list_artifacts", "reopen_task"]
+
+    async def test_record_task_checkpoint_allows_scope_confirmation_override(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_get(api_base: str, path: str):
+            return {
+                "task_id": "reconstruct-projects",
+                "title": "Reconstruct any project from governed memory",
+                "description": "Build source-loss reconstruction bundles from project tasks, laws, decisions, and component contracts.",
+                "tags": ["source-loss-reconstruction"],
+            }
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "change-1", "task_id": "reconstruct-projects", "stage": "in_progress", "status": "active"}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool(
+            "record_task_checkpoint",
+            {
+                "project": "alpha",
+                "task_id": "reconstruct-projects",
+                "stage": "in_progress",
+                "summary": "Added public usage conditions and Docker Hub publish readiness checks.",
+                "scope_confirmation": "current checkpoint belongs to this task",
+                "acted_by": "codex",
+            },
+            "http://test",
+        )
+
+        assert posted[0][0] == "/project/tasks/reconstruct-projects/changes"
+        assert "Checkpoint recorded for task reconstruct-projects" in result
 
     async def test_draft_task_checkpoint_returns_record_tool_args_without_writing(self, monkeypatch):
         posted: list[tuple[str, dict]] = []

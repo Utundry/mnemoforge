@@ -15,7 +15,7 @@ When working with agent coordination:
 # Check for incoming messages
 messages = pickup_coordination_messages(
     agent_id="claude-code",
-    project="supermemory",
+    project="mnemoforge",
     limit=10
 )
 
@@ -30,7 +30,7 @@ for msg in messages:
 ```python
 # Send a request to another agent
 send_coordination_message(
-    project="supermemory",
+    project="mnemoforge",
     from_agent="claude-code",
     to_agent="codex",
     content="Please review the changes in app/services/mcp_tool_contracts.py",
@@ -44,7 +44,7 @@ send_coordination_message(
 ```python
 # Reply to a specific message
 send_coordination_message(
-    project="supermemory",
+    project="mnemoforge",
     from_agent="claude-code",
     to_agent="codex",
     content="I've reviewed the changes and found no issues.",

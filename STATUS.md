@@ -1,10 +1,14 @@
-# SuperMemory Status
+# MnemoForge Status
 
 Current release target: `GitHub alpha`
 
 ## Positioning
 
-SuperMemory is a local-first knowledge and coordination substrate for coding agents.
+MnemoForge is a local-first knowledge and coordination substrate for coding agents.
+
+Release name note: `MnemoForge` is the public-facing name. `mnemoforge` remains
+the development project id in existing task history and some compatibility
+metadata.
 
 Current focus:
 - governed project knowledge
@@ -40,9 +44,11 @@ Current focus:
   - `openai_compat`
 - do not ship live service data
 - prefer a safe demo dataset for public examples
+- run the public release checklist before publishing
 
 ## Near-Term Priorities
 
 1. Finish public-doc cleanup for setup and client-facing guides.
 2. Continue data hygiene and integrity remediation maturity.
 3. Prepare a safe public demo path and GitHub quickstart.
+4. Publish and maintain clear public usage conditions for release artifacts.

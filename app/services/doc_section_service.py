@@ -8,6 +8,7 @@ from qdrant_client.http import models as qmodels
 from app.models.docs import DocsStatus
 from app.models.enums import MemoryType
 from app.models.memory import MemoryCreate
+from app.services.embedding_gateway import embed_text
 from app.services.memory_store import get_memory_store
 
 DOC_SECTION_CATEGORY = "doc_section"
@@ -17,7 +18,7 @@ _DOC_SECTION_PAYLOAD_CONTENT_PREFIX = "doc_section_ref:"
 
 
 def doc_section_memory_id(project: str, section_key: str) -> UUID:
-    return uuid5(NAMESPACE_URL, f"supermemory:doc_section:{project}:{section_key}")
+    return uuid5(NAMESPACE_URL, f"mnemoforge:doc_section:{project}:{section_key}")
 
 
 def _doc_section_payload_ref(memory_id: UUID | str) -> str:
@@ -124,7 +125,13 @@ async def sync_effective_doc_sections(qdrant, ollama, status: DocsStatus) -> lis
             content=memory.content,
             metadata=store_metadata,
         )
-        vector = await ollama.embed(memory.content)
+        vector, embedding_meta = await embed_text(
+            memory.content,
+            primary=ollama,
+            purpose="doc_section",
+            fallback_reason="doc_section_embedding_unavailable",
+        )
+        payload["meta"] = {**(payload.get("meta") or {}), **embedding_meta}
         await qdrant._client.upsert(
             collection_name=qdrant._collection,
             points=[

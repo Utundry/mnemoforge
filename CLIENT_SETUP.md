@@ -1,6 +1,6 @@
-# Super Memory — Подключение клиентской машины
+# MnemoForge — Подключение клиентской машины
 
-Эта инструкция для машины, которая **не запускает сервер** — только подключается к уже работающему super-memory серверу по сети.
+Эта инструкция для машины, которая **не запускает сервер** — только подключается к уже работающему mnemoforge серверу по сети.
 
 ---
 
@@ -42,13 +42,13 @@ mkdir <CLIENT_HOME>
 
 ```bash
 # Linux/macOS
-mkdir ~/supermemory-client
-scp user@<SERVER_IP>:/path/to/supermemory/mcp/server.py ~/supermemory-client/
+mkdir ~/mnemoforge-client
+scp user@<SERVER_IP>:/path/to/mnemoforge/mcp/server.py ~/mnemoforge-client/
 ```
 
 **Вариант B — клонировать репозиторий целиком** (если есть доступ):
 ```bash
-git clone <repo-url> supermemory-client
+git clone <repo-url> mnemoforge-client
 ```
 
 ---
@@ -91,7 +91,7 @@ which claude
 ```powershell
 claude mcp add -s user `
   -e "MEMORY_SERVER_URL=http://<SERVER_IP>:8000" `
-  super-memory `
+  mnemoforge `
   -- "<CLIENT_HOME>\.venv\Scripts\python.exe" "<CLIENT_HOME>\server.py"
 ```
 
@@ -99,14 +99,14 @@ claude mcp add -s user `
 ```bash
 claude mcp add -s user \
   -e "MEMORY_SERVER_URL=http://<SERVER_IP>:8000" \
-  super-memory \
-  -- ~/supermemory-client/.venv/bin/python ~/supermemory-client/server.py
+  mnemoforge \
+  -- ~/mnemoforge-client/.venv/bin/python ~/mnemoforge-client/server.py
 ```
 
 Проверить:
 ```bash
 claude mcp list
-# super-memory: ... - ✓ Connected
+# mnemoforge: ... - ✓ Connected
 ```
 
 ---

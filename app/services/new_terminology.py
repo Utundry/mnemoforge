@@ -8,7 +8,7 @@ from app.services.text_localization import (
     normalize_text_for_display,
 )
 
-_PROJECT_CORE_TERMS = frozenset({"supermemory"})
+_PROJECT_CORE_TERMS = frozenset({"mnemoforge"})
 
 _PROCEDURAL_TERM_MARKERS = frozenset({
     "check",

@@ -1,12 +1,12 @@
 # Task: SQLite Source-of-Truth for Core Memory CRUD
 
 Status: proposed  
-Project: `supermemory`  
+Project: `mnemoforge`  
 Priority: critical
 
 ## Problem
 
-`supermemory` currently treats Qdrant as both the semantic index and the canonical data store for too many domains:
+`mnemoforge` currently treats Qdrant as both the semantic index and the canonical data store for too many domains:
 
 - `memory` CRUD writes copy the full payload directly into Qdrant (content + metadata) and only keep a lightweight SQLite cache as a “nice to have.”
 - Component documentation (`project_docs`), living docs cache, and several CRUD APIs still read straight from Qdrant payloads, so a corruption, compaction, or WAL replay issue in Qdrant makes those records unrecoverable.
