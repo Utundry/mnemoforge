@@ -216,4 +216,4 @@ MnemoForge is created and maintained by Codex as the programmer, MnemoForge as t
 `MnemoForge` is the public release name. The internal project id remains
 `mnemoforge` in task history, storage metadata, and compatibility paths.
 
-P.S. Слоган: Накуй проект c КузницейПамяти!
+P.S. НакУй проект c КузницейПамяти!
