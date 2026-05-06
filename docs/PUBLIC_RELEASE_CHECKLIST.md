@@ -16,6 +16,7 @@ Use this checklist before publishing a GitHub alpha or Docker Hub image.
 6. Do not include live service data, private notes, database files, backups, logs, or local temp files.
 7. Confirm README contact details are current: Nikolay Laptev, `caveboy@yandex.ru`.
 8. Keep public-facing documentation English-first; see `docs/I18N_POLICY.md`.
+9. Keep the first-user path on `docker-compose.user.yml`, not the contributor dev stack.
 
 ## Readiness Checks
 
@@ -23,6 +24,12 @@ Run the public bootstrap check:
 
 ```bash
 python scripts/bootstrap_public_release.py --check
+```
+
+Run the first-user configurator smoke check:
+
+```bash
+python scripts/configure_public.py --non-interactive --output .env.user.preview --force
 ```
 
 Run the release artifact audit:

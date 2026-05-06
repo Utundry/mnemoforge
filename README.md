@@ -56,24 +56,30 @@ MnemoForge FastAPI server
 
 ## Quick Start
 
-### Option 1: Docker Hub Image
+### Option 1: First-User Docker Compose
 
-The current public image is published as:
-
-```bash
-docker pull caveboy/mnemoforge:latest
-```
-
-Immutable commit tags are published alongside `latest`:
+Generate a local `.env` file and start the non-dev Compose stack:
 
 ```bash
-docker pull caveboy/mnemoforge:<git-sha>
+python scripts/configure_public.py --non-interactive
+docker compose --env-file .env.user -f docker-compose.user.yml up -d
 ```
 
-Run it with a Qdrant container or use the repository `docker-compose.yml` for a
-development stack.
+This path uses the published Docker Hub image and a named Qdrant volume. It does
+not mount the source tree into the container, and it keeps user runtime settings
+in `.env.user` instead of the contributor `.env`.
 
-### Option 2: Docker Compose From Source
+Health check:
+
+```bash
+curl http://localhost:8000/api/v1/health
+```
+
+The current public image is published as `caveboy/mnemoforge:latest`.
+Immutable commit tags are published alongside `latest` as
+`caveboy/mnemoforge:<git-sha>`.
+
+### Option 2: Docker Compose For Contributors
 
 ```bash
 git clone https://github.com/Utundry/mnemoforge.git
@@ -81,7 +87,10 @@ cd mnemoforge
 docker compose up -d
 ```
 
-Default local ports:
+The contributor stack builds from source and also starts a dev container with
+live mounts.
+
+Default contributor ports:
 
 - API dev container: `http://localhost:8000`
 - API baked container: `http://localhost:8001`
@@ -137,6 +146,8 @@ state while continuing through configured fallbacks where possible. See
 
 For public or shared deployments:
 
+- prefer `docker-compose.user.yml` for a simple non-dev runtime;
+- generate `.env.user` with `python scripts/configure_public.py`;
 - set `API_KEY` when the server is reachable outside localhost;
 - do not publish live `qdrant_data`;
 - start from `.env.public.example`;
