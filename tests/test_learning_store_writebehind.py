@@ -40,3 +40,26 @@ async def test_learning_store_write_event_batches(tmp_path):
         assert any(sz > 1 for sz in batch_sizes)
     finally:
         await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_learning_store_write_event_recovers_from_leaked_transaction(tmp_path):
+    store = LearningStore(db_path=tmp_path / "learning.db")
+    try:
+        with store._lock:
+            store._conn.execute("BEGIN")
+
+        row_id = await store.write_event(
+            event_type="session_outcome",
+            agent_id="test",
+            project="mnemoforge",
+            transport="pytest",
+            context_signature="project=mnemoforge;task_type=test;phase=unit;category=learning;transport=pytest",
+            payload={"ok": True},
+        )
+
+        assert isinstance(row_id, int)
+        events = await store.list_events(event_type="session_outcome", limit=5)
+        assert [event["id"] for event in events] == [row_id]
+    finally:
+        await store.aclose()

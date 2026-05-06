@@ -332,7 +332,7 @@ class LearningStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="learningdb")
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._conn = sqlite3.connect(str(db_path), check_same_thread=False, isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             try:
@@ -642,6 +642,9 @@ class LearningStore:
         ids: list[int] = []
         with self._lock:
             cur = self._conn.cursor()
+            if self._conn.in_transaction:
+                logger.warning("LearningStore writer found leaked SQLite transaction; rolling back before batch flush")
+                self._conn.rollback()
             cur.execute("BEGIN")
             try:
                 for cmd in batch:

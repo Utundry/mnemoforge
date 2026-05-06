@@ -29,10 +29,10 @@ class OllamaService:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            logger.error("Ollama HTTP error: %s", e)
+            logger.warning("Ollama HTTP error: %s", e)
             raise EmbeddingServiceError(f"Ollama returned {e.response.status_code}")
         except httpx.RequestError as e:
-            logger.error("Ollama connection error: %s", e)
+            logger.warning("Ollama connection error: %s", e)
             raise EmbeddingServiceError("Cannot connect to Ollama")
 
         data = response.json()
