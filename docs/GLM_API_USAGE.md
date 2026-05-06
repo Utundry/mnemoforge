@@ -1,239 +1,127 @@
 # GLM/Zhipu AI API Integration
 
-Это руководство объясняет, как использовать API от z.ai (GLM/Zhipu AI) в проекте MnemoForge.
+This guide explains how to configure GLM/Zhipu AI as an optional cloud LLM provider for MnemoForge.
 
-## Содержание
+GLM is no longer treated as a single hard-coded fallback path. Prefer the provider-profile configuration described in [CLOUD_LLM_PROVIDERS.md](CLOUD_LLM_PROVIDERS.md) when you need multi-provider failover.
 
-- [Получение API ключа](#получение-api-ключа)
-- [Настройка](#настройка)
-- [Использование в коде](#использование-в-коде)
-- [Доступные модели](#доступные-модели)
-- [Примеры](#примеры)
-- [Тестирование](#тестирование)
-- [Устранение проблем](#устранение-проблем)
+## Get An API Key
 
-## Получение API ключа
+1. Open the official console: <https://open.bigmodel.cn/>
+2. Sign in or create an account.
+3. Create an API key in the API Keys section.
+4. Store the key outside git, for example in your local `.env` file or secret manager.
 
-1. Перейдите на официальный сайт: https://open.bigmodel.cn/
-2. Зарегистрируйтесь или войдите в аккаунт
-3. Создайте новый API ключ в разделе API Keys
-4. Сохраните ключ — он понадобится для настройки
+## Basic Configuration
 
-## Настройка
+Set GLM-specific variables only in a private `.env` file:
 
-### Шаг 1: Отредактируйте файл `.env`
-
-Добавьте следующие переменные в ваш `.env` файл:
-
-```bash
-# Cloud LLM - GLM (Zhipu AI / z.ai)
-GLM_API_KEY=ваш_ключ_здесь
+```env
+GLM_API_KEY=<your-key>
 GLM_MODEL=glm-4.5-air
 GLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
 ```
 
-### Шаг 2: Проверьте конфигурацию
+For the generic cloud gateway, use an OpenAI-compatible profile when available:
 
-```python
-from app.services.cloud_llm import cloud_available
-
-if cloud_available():
-    print("✅ GLM API настроен и готов к работе!")
-else:
-    print("❌ GLM API не настроен. Проверьте GLM_API_KEY в .env")
+```env
+CLOUD_LLM_MODEL_PROFILES={"glm-4.5-air":{"provider":"glm","api_style":"openai-chat","api_key_env":"GLM_API_KEY","base_url":"https://open.bigmodel.cn/api/paas/v4","model":"glm-4.5-air","enabled":true}}
+BALANCED_CLOUD_LLMS=glm-4.5-air
 ```
 
-## Использование в коде
+Keep JSON values on a single line in dotenv files.
 
-### Базовое использование
+## Usage In Code
 
 ```python
-from app.services.cloud_llm import cloud_complete, cloud_available
+from app.services.cloud_llm import cloud_available, cloud_complete
 
-async def example_usage():
+
+async def example_usage() -> str:
     if not cloud_available():
-        # Fallback на локальный Ollama
-        return "Используем локальную модель"
-    
-    result = await cloud_complete(
-        prompt="Ваш запрос здесь",
-        system="Вы полезный AI-ассистент",
+        return "No cloud LLM is configured."
+
+    return await cloud_complete(
+        prompt="Summarize the current task status.",
+        system="You are a concise engineering assistant.",
         max_tokens=2048,
-        temperature=0.3
+        temperature=0.3,
     )
-    return result
 ```
 
-### Параметры функции `cloud_complete`
+## Function Parameters
 
-| Параметр | Тип | По умолчанию | Описание |
-|----------|-----|--------------|----------|
-| `prompt` | str | **обязательно** | Основной запрос к модели |
-| `system` | str | "You are a helpful assistant." | Системный промпт |
-| `max_tokens` | int | 2048 | Максимальное количество токенов в ответе |
-| `temperature` | float | 0.3 | Креативность (0.0 - 1.0) |
-| `timeout` | float | 60.0 | Тайм-аут запроса в секундах |
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `prompt` | `str` | required | User or task prompt sent to the model. |
+| `system` | `str` | `"You are a helpful assistant."` | System prompt. |
+| `max_tokens` | `int` | `2048` | Maximum generated tokens. |
+| `temperature` | `float` | `0.3` | Sampling temperature. |
+| `timeout` | `float` | `60.0` | Request timeout in seconds. |
 
-## Доступные модели
+## Model Notes
 
-GLM предлагает несколько моделей с разными характеристиками:
+Common GLM/Zhipu model choices include:
 
-| Модель | Описание | Скорость | Стоимость | Лучше подходит для |
-|--------|----------|----------|-----------|---------------------|
-| `glm-4.5-air` | Быстрая и экономичная | ⚡⚡⚡ | 💰 | Общие задачи, чат-боты |
-| `glm-4.5-flash` | Самая быстрая | ⚡⚡⚡⚡ | 💰💰 | Быстрые ответы |
-| `glm-4-plus` | Максимальная мощность | ⚡⚡ | 💰💰💰 | Сложные задачи, анализ |
+| Model | Typical Use |
+| --- | --- |
+| `glm-4.5-air` | Balanced default for general tasks. |
+| `glm-4.5-flash` | Lower-latency responses. |
+| `glm-4-plus` | Heavier reasoning and analysis tasks. |
 
-**Рекомендация:** Используйте `glm-4.5-air` по умолчанию — отличный баланс скорости и качества.
+Check the provider documentation for the current model list, pricing, and limits before relying on a model in production.
 
-## Примеры
+## Smoke Test
 
-### Пример 1: Генерация навыка
-
-```python
-from app.services.cloud_llm import cloud_complete
-
-async def create_skill_description():
-    skill_prompt = """
-    Создай описание навыка "анализ кода":
-    1. Назначение
-    2. Основные шаги
-    3. Рекомендации
-    """
-    
-    description = await cloud_complete(
-        prompt=skill_prompt,
-        system="Ты эксперт по созданию AI-навыков.",
-        max_tokens=500,
-        temperature=0.5
-    )
-    
-    return description
-```
-
-### Пример 2: Краткое содержание
-
-```python
-async def summarize_text(text: str) -> str:
-    summary = await cloud_complete(
-        prompt=f"Сделай краткое содержание этого текста:\n\n{text}",
-        system="Ты профессиональный редактор.",
-        max_tokens=300,
-        temperature=0.3
-    )
-    return summary
-```
-
-### Пример 3: Кодогенерация
-
-```python
-async def generate_code(task: str) -> str:
-    code = await cloud_complete(
-        prompt=f"Напиши код на Python для: {task}",
-        system="Ты опытный программист на Python. Пиши только код, без комментариев.",
-        max_tokens=1000,
-        temperature=0.1  # Низкая температура для более детерминированного кода
-    )
-    return code
-```
-
-### Пример 4: Многоязычный перевод
-
-```python
-async def translate_text(text: str, target_lang: str) -> str:
-    translation = await cloud_complete(
-        prompt=f"Переведи этот текст на {target_lang}:\n{text}",
-        system="Ты профессиональный переводчик.",
-        max_tokens=500,
-        temperature=0.2
-    )
-    return translation
-```
-
-## Тестирование
-
-Проект включает тестовый скрипт для проверки подключения:
+If a local test script is available in your checkout, run:
 
 ```bash
 python scripts/test_glm_api.py
 ```
 
-Этот скрипт проверяет:
-1. Доступность API
-2. Базовый запрос
-3. Генерацию навыка
-4. Различные параметры (температура)
+The smoke test should verify:
 
-## Устранение проблем
+- API reachability;
+- one basic completion request;
+- timeout and error handling;
+- fallback behavior when the provider is unavailable.
 
-### Проблема: "No cloud LLM configured"
+## Troubleshooting
 
-**Причина:** Не задан `GLM_API_KEY` в `.env` файле.
+### "No cloud LLM configured"
 
-**Решение:**
-```bash
-# Добавьте в .env
-GLM_API_KEY=ваш_ключ
-```
+Check that the API key variable referenced by the active profile is set in your runtime environment.
 
-### Проблема: Timeout или медленные ответы
+### Timeout Or Slow Responses
 
-**Причины:**
-1. Медленное интернет-соединение
-2. Высокая нагрузка на API
-3. Большой `max_tokens`
+- Lower `max_tokens`.
+- Increase the timeout for long tasks.
+- Check provider status, account limits, and network connectivity.
 
-**Решения:**
-- Уменьшите `max_tokens` (например, до 1024)
-- Увеличьте `timeout` (например, до 120.0)
-- Проверьте интернет-соединение
+### Low-Quality Responses
 
-### Проблема: Некачественные ответы
+- Lower `temperature` for deterministic technical work.
+- Improve the system prompt and include constraints.
+- Try a stronger model for consolidation or conflict-resolution tasks.
 
-**Причины:**
-1. Неоптимальный `temperature`
-2. Плохой системный промпт
-3. Не подходящая модель
+### API Key Does Not Work
 
-**Решения:**
-- Для точных ответов используйте `temperature=0.1-0.3`
-- Для креативных задач используйте `temperature=0.7-1.0`
-- Улучшите системный промпт с примерами
-- Попробуйте другую модель (например, `glm-4-plus`)
+- Confirm the key was copied completely.
+- Create a new key if the old one was revoked.
+- Check account balance, quotas, and regional availability.
 
-### Проблема: API ключ не работает
+## Integration Points
 
-**Причины:**
-1. Неправильный ключ
-2. Ключ был отозван
-3. Превышен лимит запросов
+When configured, cloud LLM providers may be used by:
 
-**Решения:**
-- Проверьте, что ключ скопирован полностью
-- Создайте новый ключ на https://open.bigmodel.cn/
-- Проверьте баланс и лимиты на сайте
+- `app/services/ai_dir_parser.py`
+- `app/services/skill_crystallizer.py`
+- `app/services/task_router.py`
+- `app/services/normalization_service.py`
 
-## Интеграция с существующими модулями
+Provider failures should be handled as degraded provider state, not as a full server failure when another configured LLM path is available.
 
-GLM API автоматически используется в следующих модулях (если настроен):
+## Resources
 
-1. **`app/services/ai_dir_parser.py`** — парсинг директорий
-2. **`app/services/skill_crystallizer.py`** — кристаллизация навыков
-3. **`app/services/task_router.py`** — маршрутизация задач
-4. **`app/services/normalization_service.py`** — нормализация данных
-
-Эти модули используют fallback-механизм: если GLM недоступен, они переключаются на локальный Ollama.
-
-## Дополнительные ресурсы
-
-- [Официальная документация GLM](https://open.bigmodel.cn/dev/api)
-- [Список доступных моделей](https://open.bigmodel.cn/dev/api#models)
-- [Цены и лимиты](https://open.bigmodel.cn/pricing)
-
-## Поддержка
-
-Если у вас возникли проблемы:
-1. Проверьте логи в `server.log`
-2. Запустите тестовый скрипт: `python scripts/test_glm_api.py`
-3. Проверьте настройки в `.env`
-4. Обратитесь к официальной документации GLM
+- Official GLM/Zhipu API documentation: <https://open.bigmodel.cn/dev/api>
+- Model list: <https://open.bigmodel.cn/dev/api#models>
+- Pricing and limits: <https://open.bigmodel.cn/pricing>

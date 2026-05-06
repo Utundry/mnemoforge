@@ -172,6 +172,7 @@ do not pollute live `qdrant_data`.
 - [CLIENT_SETUP.md](CLIENT_SETUP.md): client-only MCP setup
 - [STATUS.md](STATUS.md): current alpha status and known rough edges
 - [docs/CLOUD_LLM_PROVIDERS.md](docs/CLOUD_LLM_PROVIDERS.md): cloud LLM setup
+- [docs/I18N_POLICY.md](docs/I18N_POLICY.md): documentation language policy
 - [docs/EXTERNAL_PROJECT_ROADMAP.md](docs/EXTERNAL_PROJECT_ROADMAP.md):
   roadmap for non-self projects
 - [docs/USAGE_CONDITIONS.md](docs/USAGE_CONDITIONS.md): intended use and limits
@@ -193,7 +194,7 @@ boundary.
 
 ## Author And Contact
 
-MnemoForge is created and maintained by Nikolai Laptev.
+MnemoForge is created and maintained by Codex as the programmer, MnemoForge as the taskmaster, and Nikolay Laptev as the questioner.
 
 - Email: `caveboy@yandex.ru`
 - Docker Hub: `caveboy/mnemoforge`
@@ -203,3 +204,5 @@ MnemoForge is created and maintained by Nikolai Laptev.
 
 `MnemoForge` is the public release name. The internal project id remains
 `mnemoforge` in task history, storage metadata, and compatibility paths.
+
+P.S. Слоган: Накуй проект c КузницейПамяти!

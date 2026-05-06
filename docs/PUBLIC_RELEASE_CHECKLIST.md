@@ -14,7 +14,8 @@ Use this checklist before publishing a GitHub alpha or Docker Hub image.
    `auto_memory,code_search,layout_fixer,log_filter,openai_compat`.
 5. Confirm public examples use the synthetic demo dataset in `demo/`.
 6. Do not include live service data, private notes, database files, backups, logs, or local temp files.
-7. Confirm README contact details are current: Nikolai Laptev, `caveboy@yandex.ru`.
+7. Confirm README contact details are current: Nikolay Laptev, `caveboy@yandex.ru`.
+8. Keep public-facing documentation English-first; see `docs/I18N_POLICY.md`.
 
 ## Readiness Checks
 
