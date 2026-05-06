@@ -44,7 +44,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps
 4. Publish under Docker Hub namespace `caveboy/mnemoforge`.
 
 ```bash
-python scripts/publish_docker_image.py --repository caveboy/mnemoforge --tag latest --push
+python scripts/publish_docker_image.py --repository caveboy/mnemoforge --tag latest --push --tag-current-git-sha
 ```
 
 ## Public FAQ

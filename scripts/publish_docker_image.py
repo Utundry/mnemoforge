@@ -58,6 +58,23 @@ def _resolve_tag(value: str | None) -> str:
     return tag
 
 
+def _resolve_current_git_sha(project_root: Path) -> str:
+    completed = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        check=False,
+        cwd=str(project_root),
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "git rev-parse failed").strip()
+        raise RuntimeError(f"Cannot resolve current git SHA: {message}")
+    sha = completed.stdout.strip()
+    if not sha:
+        raise RuntimeError("Cannot resolve current git SHA: empty output")
+    return sha
+
+
 def _run(cmd: list[str], *, dry_run: bool) -> int:
     print("$ " + " ".join(cmd))
     if dry_run:
@@ -73,6 +90,11 @@ def main() -> int:
     parser.add_argument("--context", default=".", help="Build context directory.")
     parser.add_argument("--dockerfile", default="Dockerfile", help="Path to Dockerfile.")
     parser.add_argument("--push", action="store_true", help="Push the image after a successful build.")
+    parser.add_argument(
+        "--tag-current-git-sha",
+        action="store_true",
+        help="Also tag the built image as repository:<current-git-sha> and push it when --push is set.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print commands without running them.")
     parser.add_argument("--check", action="store_true", help="Validate release files and exit without building.")
     parser.add_argument("--template", default=".env.public.example", help="Public env template to validate.")
@@ -123,7 +145,27 @@ def main() -> int:
         if rc != 0:
             return rc
 
+    immutable_ref = ""
+    if args.tag_current_git_sha:
+        try:
+            git_sha = _resolve_current_git_sha(project_root)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        immutable_ref = f"{repository}:{git_sha}"
+        tag_cmd = ["docker", "tag", image_ref, immutable_ref]
+        rc = _run(tag_cmd, dry_run=args.dry_run)
+        if rc != 0:
+            return rc
+        if args.push:
+            push_cmd = ["docker", "push", immutable_ref]
+            rc = _run(push_cmd, dry_run=args.dry_run)
+            if rc != 0:
+                return rc
+
     print(f"Ready: {image_ref}")
+    if immutable_ref:
+        print(f"Immutable: {immutable_ref}")
     return 0
 
 
