@@ -64,10 +64,10 @@ The current public image is published as:
 docker pull caveboy/mnemoforge:latest
 ```
 
-Immutable tag for the current published build:
+Immutable commit tags are published alongside `latest`:
 
 ```bash
-docker pull caveboy/mnemoforge:513e632
+docker pull caveboy/mnemoforge:<git-sha>
 ```
 
 Run it with a Qdrant container or use the repository `docker-compose.yml` for a
