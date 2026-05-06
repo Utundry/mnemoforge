@@ -1,11 +1,8 @@
 {
   "mcpServers": {
-    "super-memory": {
+    "mnemoforge": {
       "type": "sse",
-      "url": "http://localhost:8000/mcp/sse",
-      "headers": {
-        "X-Api-Key": "supermemory-local"
-      }
+      "url": "http://localhost:8000/mcp/sse"
     }
   }
 }

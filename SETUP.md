@@ -1,310 +1,136 @@
-# MnemoForge — Инструкция по установке на новую машину
+# Mnemoforge Setup
 
-Локальный сервер семантической памяти для ИИ-агентов.
-Стек: **FastAPI + Qdrant (Docker) + Ollama (хост) + nomic-embed-text**
+This guide describes the public alpha setup path for running Mnemoforge from a fresh clone.
 
----
+## Requirements
 
-## Требования к железу
+- Docker Desktop with Docker Compose
+- Git
+- Optional: Python 3.13 for local scripts and tests
+- Optional: local LLM services such as Ollama or LM Studio
+- Optional: cloud LLM credentials for OpenAI-compatible providers
 
-| Компонент | Минимум | Рекомендуется |
-|-----------|---------|---------------|
-| RAM | 8 GB | 16+ GB |
-| VRAM | — | 4 GB (для embedding GPU) |
-| Диск | 5 GB свободно | 10+ GB |
-| ОС | Windows 10/11, Linux, macOS | — |
+## Quick Start
 
----
+Clone the repository and start the default Compose stack:
 
-## 1. Установить зависимости
-
-### 1.1 Docker Desktop
-- Windows/macOS: скачать с [docker.com](https://docker.com/products/docker-desktop)
-- Linux: `sudo apt install docker.io docker-compose-plugin`
-
-Убедиться что Docker запущен: `docker --version`
-
-### 1.2 Ollama
-
-**Windows:**
 ```powershell
-winget install Ollama.Ollama
-```
-или скачать установщик с [ollama.com](https://ollama.com)
-
-**Linux:**
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-**macOS:**
-```bash
-brew install ollama
-```
-
-Запустить сервис (если не запустился автоматически):
-```bash
-ollama serve   # Linux/macOS
-# Windows: Ollama запускается как системный сервис автоматически
-```
-
-### 1.3 Загрузить embedding-модель
-```bash
-ollama pull nomic-embed-text
-```
-
-Проверить:
-```bash
-curl http://localhost:11434/api/embed -d '{"model":"nomic-embed-text","input":"test"}'
-```
-Ожидаемый ответ: JSON с массивом `embeddings`.
-
-### 1.4 Python 3.11+
-- Windows: `winget install Python.Python.3.11`
-- Linux: `sudo apt install python3.11 python3.11-venv`
-- macOS: `brew install python@3.11`
-
----
-
-## 2. Получить код проекта
-
-```bash
-git clone <repo-url> <MNEMOFORGE_HOME>
-cd <MNEMOFORGE_HOME>
-```
-
-> Если git-репозитория нет — скопировать папку проекта на новую машину.
-
----
-
-## 3. Создать виртуальное окружение
-
-**Windows:**
-```powershell
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-**Linux/macOS:**
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
----
-
-## 4. Настроить конфигурацию
-
-Создать файл `.env` в корне проекта:
-
-```env
-# Qdrant
-QDRANT_HOST=localhost
-QDRANT_PORT=6333
-QDRANT_IN_MEMORY=false
-QDRANT_COLLECTION_NAME=agent_memories
-
-# Ollama
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_EMBEDDING_MODEL=nomic-embed-text
-EMBEDDING_DIMENSIONS=768
-
-# Сервер
-SERVER_HOST=0.0.0.0
-SERVER_PORT=8000
-LOG_LEVEL=INFO
-API_PREFIX=/api/v1
-
-# Бизнес-логика
-MAX_SEARCH_RESULTS=20
-CLEANUP_MIN_IMPORTANCE=0.2
-CLEANUP_MAX_AGE_DAYS=30
-```
-
-> **Важно:** `EMBEDDING_DIMENSIONS=768` — реальная размерность nomic-embed-text.
-> Не менять без пересоздания Qdrant-коллекции.
-
----
-
-## 5. Запустить сервисы
-
-### Вариант A: Docker Compose (рекомендуется для продакшена)
-
-```bash
+git clone https://github.com/Utundry/mnemoforge.git
+cd mnemoforge
+Copy-Item .env.public.example .env
 docker compose up -d
 ```
 
-Это поднимет:
-- **Qdrant** на порту 6333/6334
-- **memory-server** на порту 8000
+On Linux or macOS, use `cp .env.public.example .env` instead of `Copy-Item`.
 
-Проверить логи:
-```bash
-docker compose logs -f memory-server
-```
+Default local endpoints:
 
-### Вариант B: Только Qdrant в Docker + сервер локально (для разработки)
+- API and MCP development service: `http://localhost:8000`
+- API baked image service: `http://localhost:8001`
+- Qdrant HTTP API: `http://localhost:6333`
+- Qdrant gRPC API: `http://localhost:6334`
 
-```bash
-# Терминал 1 — Qdrant
-docker compose up qdrant -d
+After restarting Docker Desktop or recreating the stack, allow up to 120 seconds before judging health or logs. Qdrant and background services can need a short warmup window.
 
-# Терминал 2 — FastAPI сервер
-source .venv/bin/activate  # или .venv\Scripts\activate на Windows
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
+## Docker Hub Image
 
-Windows (PowerShell) — быстрый перезапуск сервера (с PID + логами):
+The published image is available as:
 
 ```powershell
-.\scripts\restart_server.ps1 -Reload
+docker pull caveboy/mnemoforge:latest
 ```
 
----
+For now, the source Compose stack is the recommended public setup because it also defines Qdrant and local development ports. A packaged production Compose example can be added later.
 
-## 6. Проверить работоспособность
+## Configuration
 
-```bash
-# Health check
-curl http://localhost:8000/api/v1/health
+Start with `.env.public.example` for public/local use. It keeps optional and experimental modules disabled by default and does not include private credentials.
 
-# Ожидаемый ответ:
-# {"status":"healthy","qdrant":{"reachable":true},"ollama":{"reachable":true}}
+Important settings:
+
+- `API_KEY`: set this before exposing the service outside localhost.
+- `QDRANT_HOST` and `QDRANT_PORT`: point to your Qdrant instance.
+- `CLOUD_LLM_PROVIDER`, `CLOUD_LLM_API_KEY`, `CLOUD_LLM_MODEL`, `CLOUD_LLM_BASE_URL`: configure a generic cloud provider.
+- `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`: provider-specific keys used by optional profiles.
+- `LLM_GATEWAY_ENABLE_LOCAL_FALLBACK`: keep local LLM fallback enabled when local services are available.
+
+Do not commit a populated `.env` file.
+
+## MCP Clients
+
+SSE endpoint:
+
+```text
+http://localhost:8000/mcp/sse
 ```
 
-```bash
-# Сохранить воспоминание
-curl -X POST http://localhost:8000/api/v1/memories \
-  -H "Content-Type: application/json" \
-  -d '{"content":"Test memory","agent_id":"test","memory_type":"fact","importance_score":0.5}'
+The checked-in `.mcp.json` is a localhost example without secrets:
 
-# Поиск
-curl -X POST http://localhost:8000/api/v1/memories/search \
-  -H "Content-Type: application/json" \
-  -d '{"query":"test","agent_id":"test","limit":3}'
+```json
+{
+  "mcpServers": {
+    "mnemoforge": {
+      "type": "sse",
+      "url": "http://localhost:8000/mcp/sse"
+    }
+  }
+}
 ```
 
----
+If you set `API_KEY`, configure your MCP client to send:
 
-## 7. Подключить к Claude Code (MCP)
+```text
+X-Api-Key: <your key>
+```
 
-### Найти путь к `claude.exe`
+## Health Checks
 
-**Windows:**
+Check the API:
+
 ```powershell
-# Обычно находится здесь:
-%LOCALAPPDATA%\Programs\Claude\claude.exe
-# или в расширении VSCode:
-%USERPROFILE%\.vscode\extensions\anthropic.claude-code-*\resources\native-binary\claude.exe
-```
-
-**Linux/macOS:**
-```bash
-which claude
-```
-
-### Зарегистрировать MCP-сервер
-
-**Windows** (заменить `<MNEMOFORGE_HOME>` на путь к локальному репозиторию):
-```powershell
-claude mcp add -s user `
-  -e "MEMORY_SERVER_URL=http://localhost:8000" `
-  mnemoforge `
-  -- "<MNEMOFORGE_HOME>\.venv\Scripts\python.exe" "<MNEMOFORGE_HOME>\mcp\server.py"
-```
-
-**Linux/macOS:**
-```bash
-claude mcp add -s user \
-  -e "MEMORY_SERVER_URL=http://localhost:8000" \
-  mnemoforge \
-  -- /path/to/mnemoforge/.venv/bin/python /path/to/mnemoforge/mcp/server.py
-```
-
-Проверить:
-```bash
-claude mcp list
-# mnemoforge: ... - ✓ Connected
-```
-
----
-
-## 8. Установить скилы `/remember` и `/recall`
-
-```bash
-# Windows
-mkdir "%USERPROFILE%\.claude\skills\remember"
-mkdir "%USERPROFILE%\.claude\skills\recall"
-# Скопировать SKILL.md из папки проекта:
-copy skills\remember\SKILL.md "%USERPROFILE%\.claude\skills\remember\SKILL.md"
-copy skills\recall\SKILL.md "%USERPROFILE%\.claude\skills\recall\SKILL.md"
-
-# Linux/macOS
-mkdir -p ~/.claude/skills/remember ~/.claude/skills/recall
-cp skills/remember/SKILL.md ~/.claude/skills/remember/
-cp skills/recall/SKILL.md ~/.claude/skills/recall/
-```
-
-> **Перезапустить VSCode** после установки скилов и MCP.
-
----
-
-## 9. Использование
-
-```
-/remember User prefers dark mode in all tools
-/remember --type task --importance 0.8 Review PR #42 before Friday
-/remember --agent project1 --type context Docker runs on port 5433
-
-/recall user preferences
-/recall --type task pending work
-/recall what does the user prefer for code style
-```
-
-Claude также автоматически вызывает скилы при словах:
-*"запомни"*, *"вспомни"*, *"remember that"*, *"do you know about"*
-
----
-
-## Устранение проблем
-
-### `ollama: command not found`
-Ollama не в PATH. Перезапустить терминал после установки или добавить в PATH вручную.
-
-### `connection refused` на порту 8000
-```bash
-docker compose ps        # проверить статус контейнеров
-docker compose logs memory-server  # посмотреть ошибки
-```
-
-### `connection refused` на порту 11434
-Ollama не запущен:
-```bash
-ollama serve   # Linux/macOS
-# Windows: запустить Ollama из меню пуск
-```
-
-### MCP статус `✗ Failed` вместо `✓ Connected`
-```bash
-# Проверить путь к Python
-"<MNEMOFORGE_HOME>\.venv\Scripts\python.exe" -c "import httpx; print('OK')"
-
-# Проверить что сервер доступен
 curl http://localhost:8000/api/v1/health
 ```
 
-### Другие embedding-модели (если нужно)
+Run an MCP smoke check:
 
-| Модель | VRAM | Размерность | Команда |
-|--------|------|-------------|---------|
-| nomic-embed-text | ~274 MB | 768 | `ollama pull nomic-embed-text` |
-| mxbai-embed-large | ~669 MB | 1024 | `ollama pull mxbai-embed-large` |
-| all-minilm | ~46 MB | 384 | `ollama pull all-minilm` |
-
-При смене модели: обновить `.env` (`EMBEDDING_DIMENSIONS`) и **удалить Qdrant-коллекцию**:
-```bash
-curl -X DELETE http://localhost:6333/collections/agent_memories
-# После этого коллекция пересоздастся автоматически при следующем запросе
+```powershell
+python scripts/mcp_smoke.py --server http://localhost:8000
 ```
+
+Inspect service logs:
+
+```powershell
+docker compose logs memory-server-dev --tail 120
+docker compose logs qdrant --tail 120
+```
+
+Provider connection failures are expected as warnings when optional LLM services are disabled. The server should remain healthy when at least one configured LLM path is available, and health output should show the available providers.
+
+## Tests
+
+Run focused Docker-based tests:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps1 tests/test_learning_store_writebehind.py -q
+```
+
+Run release artifact checks before publishing:
+
+```powershell
+python scripts/audit_release_artifacts.py
+python -m scripts.publish_docker_image --repository caveboy/mnemoforge --tag latest --check
+```
+
+## Troubleshooting
+
+- If the service looks unhealthy immediately after a Docker restart, wait up to 120 seconds and retry.
+- If MCP calls return unauthorized responses, check `API_KEY` and the `X-Api-Key` client header.
+- If Qdrant fails to start, inspect the `qdrant_data` volume or recreate it for a clean local environment.
+- If cloud LLM calls fail, verify the provider base URL, model name, and API key environment variable.
+- If local LLM calls fail, confirm Ollama or LM Studio is running and that the configured model is available.
+
+## Security Notes
+
+- Do not expose the service publicly without an `API_KEY`.
+- Do not commit `.env`, local databases, logs, or `qdrant_data`.
+- Treat memory contents as potentially sensitive user data.
