@@ -5,11 +5,11 @@ from app.services import publish_readiness_service as service
 
 def test_publish_readiness_reports_missing_status_doc_and_doc_sanitization_issues(tmp_path: Path, monkeypatch):
     (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "README.md").write_text("# Supermemory\n\n## Quick start\n", encoding="utf-8")
-    (tmp_path / "SETUP.md").write_text("Broken Ð setup with D:\\work\\supermemory and 192.168.1.10", encoding="utf-8")
-    (tmp_path / "CLIENT_SETUP.md").write_text("Client doc with /home/user/supermemory", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# MnemoForge\n\n## Quick start\n", encoding="utf-8")
+    (tmp_path / "SETUP.md").write_text("Broken Ð setup with D:\\work\\mnemoforge and 192.168.1.10", encoding="utf-8")
+    (tmp_path / "CLIENT_SETUP.md").write_text("Client doc with /home/user/mnemoforge", encoding="utf-8")
     (tmp_path / ".env.public.example").write_text(
-        "SELF_PROJECT_ID=supermemory\nDISABLED_MODULES=layout_fixer,openai_compat\nAPI_KEY=\n",
+        "SELF_PROJECT_ID=mnemoforge\nDISABLED_MODULES=layout_fixer,openai_compat\nAPI_KEY=\n",
         encoding="utf-8",
     )
     (tmp_path / ".dockerignore").write_text(
@@ -58,12 +58,12 @@ def test_publish_readiness_reports_missing_status_doc_and_doc_sanitization_issue
 def test_publish_readiness_can_report_clean_ok_state(tmp_path: Path, monkeypatch):
     (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
     (tmp_path / "demo").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "README.md").write_text("# Supermemory\n\n## Quick start\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# MnemoForge\n\n## Quick start\n", encoding="utf-8")
     (tmp_path / "SETUP.md").write_text("Setup guide\n", encoding="utf-8")
     (tmp_path / "CLIENT_SETUP.md").write_text("Client guide\n", encoding="utf-8")
     (tmp_path / "STATUS.md").write_text("# Alpha Status\n", encoding="utf-8")
     (tmp_path / ".env.public.example").write_text(
-        "SELF_PROJECT_ID=supermemory\nDISABLED_MODULES=layout_fixer\nAPI_KEY=\n",
+        "SELF_PROJECT_ID=mnemoforge\nDISABLED_MODULES=layout_fixer\nAPI_KEY=\n",
         encoding="utf-8",
     )
     (tmp_path / ".dockerignore").write_text(
@@ -75,7 +75,7 @@ def test_publish_readiness_can_report_clean_ok_state(tmp_path: Path, monkeypatch
     (tmp_path / "Dockerfile").write_text("FROM python:3.11", encoding="utf-8")
     (tmp_path / "docker-compose.yml").write_text("services: {}", encoding="utf-8")
     (tmp_path / ".env.example").write_text(
-        "SELF_PROJECT_ID=supermemory\nDISABLED_MODULES=layout_fixer\nAPI_KEY=\n",
+        "SELF_PROJECT_ID=mnemoforge\nDISABLED_MODULES=layout_fixer\nAPI_KEY=\n",
         encoding="utf-8",
     )
     (tmp_path / ".gitignore").write_text(".*\n!.dockerignore\n!.env.public.example\n!.gitignore\n.git/\n.env\n.venv/\nnode_modules/\nqdrant_data/\nlogs/\n*.db\npytest_temp_*/\n.server.pid\n", encoding="utf-8")

@@ -186,7 +186,7 @@ async def test_enrich_task_includes_promoted_canonicals_when_local_knowledge_is_
                 "content": "Prefer unified retrieval over scattered endpoint-specific lookup.",
                 "confidence": 0.94,
                 "canonical_status": "active",
-                "project": "supermemory",
+                "project": "mnemoforge",
                 "timestamp": "2026-04-16T00:00:00+00:00",
             }
         ]
@@ -209,7 +209,7 @@ async def test_enrich_task_includes_promoted_canonicals_when_local_knowledge_is_
             "content": "Prefer unified retrieval over scattered endpoint-specific lookup.",
             "confidence": 0.94,
             "canonical_status": "active",
-            "project": "supermemory",
+            "project": "mnemoforge",
             "timestamp": "2026-04-16T00:00:00+00:00",
         }
     ]
@@ -733,10 +733,10 @@ async def test_enrich_task_filters_demo_and_weak_legacy_runtime_hints(client, mo
         scope="runtime_hint",
         status="active",
         workflow_action="demo-hint",
-        content="Use this only in supermemory-demo environment.",
+        content="Use this only in mnemoforge-demo environment.",
         confidence=0.95,
         evidence_count=3,
-        tags=["project:alpha", "project:supermemory-demo", "demo"],
+        tags=["project:alpha", "project:mnemoforge-demo", "demo"],
         context_signature=make_context_signature(project="alpha", task_type="architecture"),
     )
     await get_learning_store().insert_artifact(
@@ -761,7 +761,7 @@ async def test_enrich_task_filters_demo_and_weak_legacy_runtime_hints(client, mo
     data = resp.json()
     assert len(data["runtime_hints"]) == 1
     assert data["runtime_hints"][0]["content"].startswith("Use project context snapshot")
-    assert "supermemory-demo" not in data["context"].lower()
+    assert "mnemoforge-demo" not in data["context"].lower()
     assert "Legacy fallback." not in data["context"]
 
 

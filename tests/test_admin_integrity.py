@@ -750,7 +750,7 @@ async def test_admin_discover_integrity_findings_for_task_memoir_slice(client):
             "category": "task_memoir",
             "agent_id": "codex",
             "memory_type": "experience",
-            "tags": ["project:supermemory"],
+            "tags": ["project:mnemoforge"],
             "meta": {},
         },
     )

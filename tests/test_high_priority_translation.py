@@ -17,19 +17,19 @@ async def test_docs_section_translate_endpoint_uses_existing_translate_flow(clie
     docs_service._CACHE_DIR = tmp_path / "docs_cache"
     try:
         status = DocsStatus(
-            project="supermemory",
+            project="mnemoforge",
             generated_at=datetime.now(timezone.utc),
             sections={
                 "overview": DocsSection(name="Overview", content="Original overview in English."),
             },
         )
-        docs_service._save_docs_cache("supermemory", status)
+        docs_service._save_docs_cache("mnemoforge", status)
 
         with patch(
             "app.services.project_tree_doc.translate_doc",
             new=AsyncMock(return_value="Переведённый overview."),
         ):
-            response = await client.get("/api/v1/docs/section/overview/translate?project=supermemory")
+            response = await client.get("/api/v1/docs/section/overview/translate?project=mnemoforge")
 
         assert response.status_code == 200
         body = response.json()
@@ -45,7 +45,7 @@ async def test_improvements_report_translate_endpoint_returns_original_and_trans
     create = await client.post("/api/v1/improvements", json={
         "title": "Need better retry policy",
         "description": "Retries should be configurable per component.",
-        "project": "supermemory",
+        "project": "mnemoforge",
         "agent_id": "test",
         "importance_score": 0.8,
         "tags": ["reliability"],
@@ -62,11 +62,11 @@ async def test_improvements_report_translate_endpoint_returns_original_and_trans
         "app.services.project_tree_doc.translate_doc",
         new=AsyncMock(return_value="Краткая сводка на русском.\n\n- Приоритет один"),
     ):
-        response = await client.get("/api/v1/improvements/report/translate?project=supermemory")
+        response = await client.get("/api/v1/improvements/report/translate?project=mnemoforge")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["project"] == "supermemory"
+    assert body["project"] == "mnemoforge"
     assert body["original"].startswith("Executive summary in English.")
     assert body["translated"].startswith("Краткая сводка на русском.")
 
@@ -79,19 +79,19 @@ async def test_docs_section_translate_endpoint_returns_readable_error_detail(cli
     docs_service._CACHE_DIR = tmp_path / "docs_cache"
     try:
         status = DocsStatus(
-            project="supermemory",
+            project="mnemoforge",
             generated_at=datetime.now(timezone.utc),
             sections={
                 "overview": DocsSection(name="Overview", content="Original overview in English."),
             },
         )
-        docs_service._save_docs_cache("supermemory", status)
+        docs_service._save_docs_cache("mnemoforge", status)
 
         with patch(
             "app.services.project_tree_doc.translate_doc",
             new=AsyncMock(side_effect=RuntimeError("Cloud LLM request timed out")),
         ):
-            response = await client.get("/api/v1/docs/section/overview/translate?project=supermemory")
+            response = await client.get("/api/v1/docs/section/overview/translate?project=mnemoforge")
 
         assert response.status_code == 502
         assert response.json()["detail"] == "Cloud LLM request timed out"

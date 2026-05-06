@@ -66,7 +66,7 @@ class TestTriggerDsl:
         assert validate_trigger('event(user_request)') == []
 
     def test_valid_field_eq(self):
-        assert validate_trigger('event(user_request).request_type == "save_to_supermemory"') == []
+        assert validate_trigger('event(user_request).request_type == "save_to_mnemoforge"') == []
 
     def test_valid_field_in(self):
         assert validate_trigger('event(tool_call).tool_name in ["run_tests", "pytest"]') == []
@@ -76,7 +76,7 @@ class TestTriggerDsl:
 
     def test_valid_compound_and(self):
         errs = validate_trigger(
-            'event(user_request).request_type == "save_to_supermemory" and not event(memory_write)'
+            'event(user_request).request_type == "save_to_mnemoforge" and not event(memory_write)'
         )
         assert errs == []
 
@@ -92,7 +92,7 @@ class TestTriggerDsl:
         assert any("not allowed" in e for e in errs)
 
     def test_invalid_op_value_not_quoted(self):
-        errs = validate_trigger('event(user_request).request_type == save_to_supermemory')
+        errs = validate_trigger('event(user_request).request_type == save_to_mnemoforge')
         assert errs  # unquoted string
 
     def test_in_requires_json_list(self):
@@ -105,7 +105,7 @@ class TestTriggerDsl:
 
     def test_validate_if_then_rule_valid(self):
         errs = validate_if_then_rule(
-            'event(user_request).request_type == "save_to_supermemory"',
+            'event(user_request).request_type == "save_to_mnemoforge"',
             "suggest_save_result",
         )
         assert errs == []
@@ -225,11 +225,11 @@ class TestLearningStoreEvents:
     @pytest.mark.asyncio
     async def test_event_payload_stored(self, store):
         await store.write_event(event_type="user_request",
-                                 payload={"request_type": "save_to_supermemory"})
+                                 payload={"request_type": "save_to_mnemoforge"})
         events = await store.list_events(event_type="user_request")
         import json
         p = json.loads(events[0]["payload_json"])
-        assert p["request_type"] == "save_to_supermemory"
+        assert p["request_type"] == "save_to_mnemoforge"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -624,7 +624,7 @@ class TestGlmMirror:
         for _ in range(_MIN_PATTERN_FREQ):
             await store.write_event(
                 event_type="memory_write",
-                context_signature="project=supermemory;category=qa",
+                context_signature="project=mnemoforge;category=qa",
             )
         ollama = AsyncMock()
         result = await mirror.run(ollama, store)
@@ -870,12 +870,12 @@ class TestGlmMirror:
         for _ in range(_MIN_PATTERN_FREQ):
             await store.write_event(
                 event_type="tool_call",
-                context_signature="category=memory_context;project=supermemory",
+                context_signature="category=memory_context;project=mnemoforge",
                 payload={"tool_name": "memory_context"},
             )
             await store.write_event(
                 event_type="dialogue_signal",
-                context_signature="category=dialogue_signal;project=supermemory",
+                context_signature="category=dialogue_signal;project=mnemoforge",
                 payload={
                     "missing_skill": ["nginx"],
                     "successful_pattern": ["use concise reverse proxy checklist"],
@@ -901,8 +901,8 @@ class TestGlmMirror:
             await store.write_event(
                 event_type="dialogue_signal",
                 agent_id="pytest-agent",
-                project="supermemory",
-                context_signature="project=supermemory;category=dialogue_signal",
+                project="mnemoforge",
+                context_signature="project=mnemoforge;category=dialogue_signal",
                 payload={
                     "missing_skill": ["nginx"],
                     "excerpt": "USER: help with nginx reverse proxy and SSL",

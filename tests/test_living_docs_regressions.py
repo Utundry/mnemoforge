@@ -148,7 +148,7 @@ async def test_resolve_improvement_rebuilds_docs_for_correct_project(
 async def test_startup_docs_refresh_queues_slow_lane_job() -> None:
     fake_queue = _FakeQueue()
 
-    job_id, queued = await _enqueue_startup_docs_refresh(fake_queue, "supermemory", force=False)
+    job_id, queued = await _enqueue_startup_docs_refresh(fake_queue, "mnemoforge", force=False)
 
     assert queued is True
     assert job_id == "job-test"
@@ -156,7 +156,7 @@ async def test_startup_docs_refresh_queues_slow_lane_job() -> None:
         (
             "docs_rebuild",
             {
-                "project": "supermemory",
+                "project": "mnemoforge",
                 "force": False,
                 "_queue_lane": "slow",
             },
@@ -172,11 +172,11 @@ async def test_startup_docs_refresh_reuses_existing_pending_job() -> None:
             "id": "job-existing",
             "job_type": "docs_rebuild",
             "status": "queued",
-            "payload": {"project": "supermemory", "force": False},
+            "payload": {"project": "mnemoforge", "force": False},
         }
     )
 
-    job_id, queued = await _enqueue_startup_docs_refresh(fake_queue, "supermemory", force=False)
+    job_id, queued = await _enqueue_startup_docs_refresh(fake_queue, "mnemoforge", force=False)
 
     assert queued is False
     assert job_id == "job-existing"
@@ -187,15 +187,15 @@ async def test_startup_docs_refresh_reuses_existing_pending_job() -> None:
 async def test_startup_docs_refresh_skips_when_cache_is_recent() -> None:
     fake_queue = _FakeQueue()
     recent_status = DocsStatus(
-        project="supermemory",
+        project="mnemoforge",
         generated_at=datetime.now(timezone.utc) - timedelta(minutes=5),
         sections={"overview": DocsSection(name="Overview", content="Fresh docs")},
     )
-    get_docs_cache_store().upsert("supermemory", recent_status.model_dump_json())
+    get_docs_cache_store().upsert("mnemoforge", recent_status.model_dump_json())
 
     job_id, queued = await _enqueue_startup_docs_refresh(
         fake_queue,
-        "supermemory",
+        "mnemoforge",
         force=False,
         min_age_seconds=3600,
     )

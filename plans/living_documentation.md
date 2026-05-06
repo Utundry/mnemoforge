@@ -2,7 +2,7 @@
 
 ## Обзор
 
-Система автоматической генерации и актуализации документации проекта supermemory на основе данных из Qdrant.
+Система автоматической генерации и актуализации документации проекта mnemoforge на основе данных из Qdrant.
 
 ### Цель
 
@@ -87,7 +87,7 @@ class DocsSection(BaseModel):
 
 class DocsRebuildRequest(BaseModel):
     """Запрос на пересборку документации"""
-    project: str = Field(default="supermemory")
+    project: str = Field(default="mnemoforge")
     force: bool = Field(default=False)  # игнорировать кэш
 ```
 
@@ -158,7 +158,7 @@ async def rebuild_docs(
 
 @router.get("/status")
 async def get_docs_status(
-    project: str = Query(default="supermemory"),
+    project: str = Query(default="mnemoforge"),
     docs_svc: DocsServiceDep
 ) -> DocsStatus:
     """Получить JSON документацию"""
@@ -170,7 +170,7 @@ async def get_docs_html() -> FileResponse:
 
 @router.get("/status.md")
 async def get_docs_markdown(
-    project: str = Query(default="supermemory"),
+    project: str = Query(default="mnemoforge"),
     docs_svc: DocsServiceDep
 ) -> PlainTextResponse:
     """Получить Markdown документацию"""
@@ -178,7 +178,7 @@ async def get_docs_markdown(
 @router.get("/section/{name}")
 async def get_section(
     name: str,
-    project: str = Query(default="supermemory"),
+    project: str = Query(default="mnemoforge"),
     docs_svc: DocsServiceDep
 ) -> DocsSection:
     """Получить отдельную секцию"""
@@ -202,7 +202,7 @@ job_queue.register("docs_rebuild", _docs_rebuild_handler)
 ```python
 async def _docs_rebuild_handler(payload: dict) -> dict:
     """Handler для фонового пересборки документации"""
-    project = payload.get("project", "supermemory")
+    project = payload.get("project", "mnemoforge")
     force = payload.get("force", False)
 
     docs_svc = get_docs_service()

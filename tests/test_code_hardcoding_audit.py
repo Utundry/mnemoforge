@@ -13,7 +13,7 @@ def test_code_hardcoding_audit_detects_private_urls_keys_and_scope_ids(tmp_path:
         "\n".join(
             [
                 'DEFAULT_SERVER = "http://192.168.1.138:8000"',
-                'DEFAULT_KEY = "supermemory-local"',
+                'DEFAULT_KEY = "mnemoforge-local"',
                 'slice_id = "qdrant.skill_domain_tags_filter"',
                 r'WINDOWS_PATH = "C:\\Users\\User\\secret.txt"',
             ]

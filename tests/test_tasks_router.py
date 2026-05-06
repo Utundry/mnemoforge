@@ -23,7 +23,7 @@ class _FakeQueue:
                 "job_type": "docs_rebuild",
                 "lane": "slow",
                 "status": "running",
-                "payload": {"project": "supermemory"},
+                "payload": {"project": "mnemoforge"},
             },
         ]
 

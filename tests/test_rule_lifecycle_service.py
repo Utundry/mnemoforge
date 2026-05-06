@@ -13,7 +13,7 @@ from app.services.stenographer_service import StenographerStore
 
 def _start_work(stenographer: StenographerStore) -> None:
     stenographer.start_work_session(
-        project="supermemory",
+        project="mnemoforge",
         task_id="task-rule-1",
         agent_id="codex",
         session_id="sess-rule",
@@ -27,14 +27,14 @@ def test_rule_marker_span_projects_to_reviewable_candidate():
     try:
         _start_work(stenographer)
         span = stenographer.record_span(
-            project="supermemory",
+            project="mnemoforge",
             task_id="task-rule-1",
             agent_id="codex",
             session_id="sess-rule",
             kind="rule_project_candidate",
             source="reasoning_marker",
             content=json.dumps({
-                "statement": "SuperMemory pytest must run through the Docker test runner.",
+                "statement": "MnemoForge pytest must run through the Docker test runner.",
                 "rationale": "This avoids Windows ACL failures and live database contamination.",
                 "topic_path": "testing/contour",
                 "evidence_refs": ["task:task-rule-1"],
@@ -56,7 +56,7 @@ def test_rule_marker_span_projects_to_reviewable_candidate():
         assert candidate.scope == "project"
         assert candidate.status == "candidate"
         assert candidate.topic_path == "testing/contour"
-        assert candidate.statement == "SuperMemory pytest must run through the Docker test runner."
+        assert candidate.statement == "MnemoForge pytest must run through the Docker test runner."
         assert candidate.evidence_refs == ["task:task-rule-1"]
         assert candidate.confidence == 0.9
     finally:
@@ -70,7 +70,7 @@ def test_rule_marker_projection_is_incremental_and_idempotent():
     try:
         _start_work(stenographer)
         stenographer.record_span(
-            project="supermemory",
+            project="mnemoforge",
             task_id="task-rule-1",
             agent_id="codex",
             session_id="sess-rule",
@@ -90,7 +90,7 @@ def test_rule_marker_projection_is_incremental_and_idempotent():
         assert first.created_candidates == 1
         assert first.candidates[0].scope == "canonical_candidate"
         assert second.scanned_spans == 0
-        assert lifecycle.list_candidates(project="supermemory")[0].statement.startswith("Agents must respect")
+        assert lifecycle.list_candidates(project="mnemoforge")[0].statement.startswith("Agents must respect")
     finally:
         stenographer.close()
         lifecycle.close()
@@ -102,7 +102,7 @@ def test_invalid_rule_marker_is_skipped_without_candidate():
     try:
         _start_work(stenographer)
         stenographer.record_span(
-            project="supermemory",
+            project="mnemoforge",
             task_id="task-rule-1",
             agent_id="codex",
             session_id="sess-rule",
@@ -117,7 +117,7 @@ def test_invalid_rule_marker_is_skipped_without_candidate():
         assert report.created_candidates == 0
         assert report.skipped_spans == 1
         assert "rationale is required" in report.errors[0]["error"]
-        assert lifecycle.list_candidates(project="supermemory") == []
+        assert lifecycle.list_candidates(project="mnemoforge") == []
     finally:
         stenographer.close()
         lifecycle.close()
@@ -129,7 +129,7 @@ def test_rule_candidate_review_actions_update_status_and_audit_fields():
     try:
         _start_work(stenographer)
         stenographer.record_span(
-            project="supermemory",
+            project="mnemoforge",
             task_id="task-rule-1",
             agent_id="codex",
             session_id="sess-rule",
@@ -159,7 +159,7 @@ def test_rule_candidate_review_actions_update_status_and_audit_fields():
         assert rejected.candidate.last_review_acted_by == "codex"
         assert rejected.candidate.last_review_source == "test"
         assert rejected.candidate.last_review_at is not None
-        assert lifecycle.list_candidates(project="supermemory", status="candidate") == []
+        assert lifecycle.list_candidates(project="mnemoforge", status="candidate") == []
 
         reopened = lifecycle.review_candidate(
             candidate_id,
@@ -170,7 +170,7 @@ def test_rule_candidate_review_actions_update_status_and_audit_fields():
         )
         assert reopened.previous_status == "rejected"
         assert reopened.new_status == "candidate"
-        assert lifecycle.list_candidates(project="supermemory", status="candidate")[0].candidate_id == candidate_id
+        assert lifecycle.list_candidates(project="mnemoforge", status="candidate")[0].candidate_id == candidate_id
     finally:
         stenographer.close()
         lifecycle.close()
@@ -179,9 +179,9 @@ def test_rule_candidate_review_actions_update_status_and_audit_fields():
 @pytest.mark.asyncio
 async def test_rule_candidate_review_packet_flags_existing_law_overlap(client):
     created = await client.post("/api/v1/laws", json={
-        "project": "supermemory",
+        "project": "mnemoforge",
         "title": "Docker Test Contour",
-        "statement": "SuperMemory pytest must run through the Docker test runner.",
+        "statement": "MnemoForge pytest must run through the Docker test runner.",
         "rationale": "This avoids Windows ACL failures and live database contamination.",
         "agent_id": "codex",
         "scope": "project",
@@ -196,14 +196,14 @@ async def test_rule_candidate_review_packet_flags_existing_law_overlap(client):
     try:
         _start_work(stenographer)
         stenographer.record_span(
-            project="supermemory",
+            project="mnemoforge",
             task_id="task-rule-1",
             agent_id="codex",
             session_id="sess-rule",
             kind="rule_project_candidate",
             source="reasoning_marker",
             content=json.dumps({
-                "statement": "SuperMemory pytest must run through the Docker test runner.",
+                "statement": "MnemoForge pytest must run through the Docker test runner.",
                 "rationale": "This avoids Windows ACL failures and live database contamination.",
                 "topic_path": "testing/contour",
                 "confidence": 0.9,
@@ -220,7 +220,7 @@ async def test_rule_candidate_review_packet_flags_existing_law_overlap(client):
         try:
             packet = await build_rule_candidate_review_packet(
                 get_qdrant(),
-                RuleCandidateReviewRequest(project="supermemory"),
+                RuleCandidateReviewRequest(project="mnemoforge"),
             )
         finally:
             service._STORE = original_store

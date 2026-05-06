@@ -331,13 +331,13 @@ async def test_admin_operational_instincts_endpoints(client, monkeypatch):
 async def test_admin_functionality_review_hints_endpoints(client, monkeypatch):
     from app.routers import admin as admin_router
 
-    def fake_list(*, scope: str = "supermemory"):
+    def fake_list(*, scope: str = "mnemoforge"):
         return [{"scope": scope, "module": "watcher", "status": "review_legacy", "reason": "legacy"}]
 
     def fake_upsert(*, scope: str, module: str, status: str, reason: str):
         return {"scope": scope, "module": module, "status": status, "reason": reason}
 
-    def fake_bootstrap(*, scope: str = "supermemory", overwrite: bool = False):
+    def fake_bootstrap(*, scope: str = "mnemoforge", overwrite: bool = False):
         return {"scope": scope, "created": 10, "updated": 0, "skipped": 0, "total_seeded": 10}
 
     monkeypatch.setattr(admin_router, "list_functionality_review_hints", fake_list)
@@ -376,8 +376,8 @@ async def test_data_hygiene_audit_finds_synthetic_memory_and_telemetry_event(cli
     await get_learning_store().write_event(
         event_type="tool_call",
         agent_id="test-agent",
-        project="supermemory",
-        context_signature="project=supermemory;category=memory_search",
+        project="mnemoforge",
+        context_signature="project=mnemoforge;category=memory_search",
         payload={"tool_name": "memory_search"},
     )
 
@@ -402,7 +402,7 @@ def test_classify_memory_payload_keeps_evolutionary_project_records():
         {
             "category": "task_change",
             "source": "automation",
-            "tags": ["entity:task_change", "project:supermemory"],
+            "tags": ["entity:task_change", "project:mnemoforge"],
             "content": "Task status moved from planning to done with rationale.",
         }
     )
@@ -993,8 +993,8 @@ async def test_reviewed_delete_removes_quarantined_learning_events_only(client):
     event_id = await learning_store.write_event(
         event_type="tool_call",
         agent_id="pytest-agent",
-        project="supermemory",
-        context_signature="project=supermemory;category=memory_search",
+        project="mnemoforge",
+        context_signature="project=mnemoforge;category=memory_search",
         payload={"tool_name": "memory_search"},
     )
     store.upsert_finding(
@@ -1037,8 +1037,8 @@ async def test_reviewed_delete_skips_when_finding_is_not_quarantine_candidate(cl
     event_id = await learning_store.write_event(
         event_type="tool_call",
         agent_id="pytest-agent",
-        project="supermemory",
-        context_signature="project=supermemory;category=memory_search",
+        project="mnemoforge",
+        context_signature="project=mnemoforge;category=memory_search",
         payload={"tool_name": "memory_search"},
     )
     store.upsert_finding(

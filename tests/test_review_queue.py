@@ -197,7 +197,7 @@ class TestAutoImprovements:
                 "agent_id": "test",
             })
 
-        r = await client.get("/api/v1/artifacts?project=supermemory&type=improvement&artifact_status=open&limit=50")
+        r = await client.get("/api/v1/artifacts?project=mnemoforge&type=improvement&artifact_status=open&limit=50")
         assert r.status_code == 200
         data = r.json()
         items = data.get("items", [])
@@ -211,7 +211,7 @@ class TestAutoImprovements:
                 "agent_id": "test",
             })
 
-        r = await client.get("/api/v1/artifacts?project=supermemory&type=improvement&artifact_status=open&limit=50")
+        r = await client.get("/api/v1/artifacts?project=mnemoforge&type=improvement&artifact_status=open&limit=50")
         assert r.status_code == 200
         data = r.json()
         items = data.get("items", [])
@@ -226,7 +226,7 @@ class TestAutoImprovements:
             "user_preference": [],
             "successful_pattern": [],
         })
-        r_before = await client.get("/api/v1/artifacts?project=supermemory&type=improvement&artifact_status=open&limit=50")
+        r_before = await client.get("/api/v1/artifacts?project=mnemoforge&type=improvement&artifact_status=open&limit=50")
         count_before = len(r_before.json().get("items", []))
 
         with patch("app.routers.skills._llm", new=AsyncMock(return_value=empty_signal)):
@@ -235,5 +235,5 @@ class TestAutoImprovements:
                 "agent_id": "test",
             })
 
-        r_after = await client.get("/api/v1/artifacts?project=supermemory&type=improvement&artifact_status=open&limit=50")
+        r_after = await client.get("/api/v1/artifacts?project=mnemoforge&type=improvement&artifact_status=open&limit=50")
         assert len(r_after.json().get("items", [])) == count_before

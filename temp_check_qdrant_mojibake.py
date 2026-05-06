@@ -15,7 +15,7 @@ async def check_qdrant():
             collection_name=collection,
             scroll_filter=qmodels.Filter(must=[
                 qmodels.FieldCondition(key="category", match=qmodels.MatchValue(value="task_memoir")),
-                qmodels.FieldCondition(key="tags", match=qmodels.MatchValue(value="project:supermemory")),
+                qmodels.FieldCondition(key="tags", match=qmodels.MatchValue(value="project:mnemoforge")),
             ]),
             limit=100,
             with_payload=True,

@@ -69,8 +69,8 @@ async def test_artifact_translation_endpoint_matches_tree_style_contract(client,
     async def fake_cloud_complete(prompt: str, **kwargs):
         if "Translate these artifact fields" in prompt:
             return json.dumps({
-                "content": "Новый термин замечен: 'supermemory'. Стоит оформить как improvement.",
-                "observation": "Анализ диалога выявил новый термин 'supermemory'. Фрагмент: Возможные причины: сервер не запущен",
+                "content": "Новый термин замечен: 'mnemoforge'. Стоит оформить как improvement.",
+                "observation": "Анализ диалога выявил новый термин 'mnemoforge'. Фрагмент: Возможные причины: сервер не запущен",
                 "why_it_matters": "Фиксация терминологии уменьшает неоднозначность и ускоряет review.",
             }, ensure_ascii=False)
         raise AssertionError(f"Unexpected cloud prompt: {prompt[:120]}")

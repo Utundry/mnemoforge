@@ -400,7 +400,7 @@ class TestRstChunking:
         f = tmp_path / "docs.rst"
         f.write_text(
             "Overview\n========\n\nThis is the overview section.\n\n"
-            "Installation\n============\n\nRun pip install supermemory.\n\n"
+            "Installation\n============\n\nRun pip install mnemoforge.\n\n"
             "Usage\n-----\n\nImport and call the API.\n",
             encoding="utf-8",
         )

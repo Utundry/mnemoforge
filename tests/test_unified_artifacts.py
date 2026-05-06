@@ -21,9 +21,9 @@ from app.services.unified_artifact_service import UnifiedArtifactService, get_un
 @pytest.mark.asyncio
 async def test_artifact_key_parse_valid() -> None:
     """Test parsing valid artifact keys."""
-    key = ArtifactKey.parse("improvement:supermemory:123e4567-e89b-12d3-a456-426614174000")
+    key = ArtifactKey.parse("improvement:mnemoforge:123e4567-e89b-12d3-a456-426614174000")
     assert key.type == "improvement"
-    assert key.project == "supermemory"
+    assert key.project == "mnemoforge"
     assert key.local_id == "123e4567-e89b-12d3-a456-426614174000"
 
     key = ArtifactKey.parse("task:myproject:987f6543-e21b-43d3-b456-426614174999")
@@ -39,7 +39,7 @@ async def test_artifact_key_parse_invalid_format() -> None:
         ArtifactKey.parse("invalid")
 
     with pytest.raises(ValueError, match="Invalid artifact_key format"):
-        ArtifactKey.parse("improvement:supermemory")
+        ArtifactKey.parse("improvement:mnemoforge")
 
     # Note: split(":", 2) allows extra parts, so this doesn't raise an error
     # The key will be parsed with local_id = "123:extra"
@@ -49,13 +49,13 @@ async def test_artifact_key_parse_invalid_format() -> None:
 async def test_artifact_key_parse_invalid_type() -> None:
     """Test parsing artifact key with invalid type."""
     with pytest.raises(ValueError, match="Invalid artifact type"):
-        ArtifactKey.parse("invalid:supermemory:123e4567-e89b-12d3-a456-426614174000")
+        ArtifactKey.parse("invalid:mnemoforge:123e4567-e89b-12d3-a456-426614174000")
 
 
 @pytest.mark.asyncio
 async def test_artifact_key_to_uuid() -> None:
     """Test converting local_id to UUID."""
-    key = ArtifactKey(type="improvement", project="supermemory", local_id="123e4567-e89b-12d3-a456-426614174000")
+    key = ArtifactKey(type="improvement", project="mnemoforge", local_id="123e4567-e89b-12d3-a456-426614174000")
     uuid = key.to_uuid()
     assert isinstance(uuid, UUID)
     assert str(uuid) == "123e4567-e89b-12d3-a456-426614174000"

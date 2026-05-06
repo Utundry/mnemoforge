@@ -84,7 +84,7 @@ def test_project_rename_apply_updates_structured_refs_and_aliases(tmp_path: Path
         "SELECT alias, project_id, reason FROM project_identity_aliases ORDER BY alias"
     ).fetchall()
     alias_conn.close()
-    assert ("mnemoforge", "mnemoforge", "canonical project id") in aliases
+    assert ("supermemory", "mnemoforge", "canonical project id") in aliases
     assert ("supermemory", "mnemoforge", "release rename") in aliases
 
 

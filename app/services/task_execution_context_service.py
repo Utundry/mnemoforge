@@ -154,8 +154,8 @@ _STATE_POLICIES: dict[str, StatePolicy] = {
         tool_suggestions=(
             TaskExecutionToolSuggestion(
                 family="project_knowledge",
-                tools=["record_task_checkpoint", "report_task_checkpoint", "draft_checkpoint_from_spans"],
-                reason="Persist completed work, verification, risks, and next step scope.",
+                tools=["clerk_draft_report", "draft_checkpoint_from_spans", "record_task_checkpoint", "report_task_checkpoint"],
+                reason="Use the clerk/scribe path to structure stenographer spans or raw notes before persisting completed work, verification, risks, and next step scope.",
             ),
             TaskExecutionToolSuggestion(
                 family="project_knowledge",
@@ -163,7 +163,7 @@ _STATE_POLICIES: dict[str, StatePolicy] = {
                 reason="Capture explicit rule markers and project them into reviewable candidates after closeout.",
             ),
         ),
-        assistant_tools=("draft_checkpoint_from_spans", "record_stenographer_span"),
+        assistant_tools=("clerk_draft_report", "draft_checkpoint_from_spans", "record_stenographer_span"),
         diagnostic_tools=("list_rule_candidates",),
         required_terms=_COMMON_REQUIRED_TERMS + ("checkpoint", "next_step", "next_step_scope", "self-improving project laws"),
         recommended_terms=("stenographer", "clerk", "handoff", "rule", "candidate"),
@@ -179,11 +179,11 @@ _STATE_POLICIES: dict[str, StatePolicy] = {
         tool_suggestions=(
             TaskExecutionToolSuggestion(
                 family="project_knowledge",
-                tools=["record_task_checkpoint", "resume_handoff", "expand_handoff_refs"],
-                reason="Create or consume compact handoff packets without replaying the full history.",
+                tools=["clerk_draft_report", "record_task_checkpoint", "resume_handoff", "expand_handoff_refs"],
+                reason="Draft a grounded closeout from stenographer spans before creating or consuming compact handoff packets.",
             ),
         ),
-        assistant_tools=("record_task_checkpoint",),
+        assistant_tools=("clerk_draft_report", "record_task_checkpoint"),
         diagnostic_tools=("resume_handoff", "expand_handoff_refs"),
         required_terms=_COMMON_REQUIRED_TERMS + ("handoff", "resume"),
         recommended_terms=("checkpoint", "context"),
@@ -362,8 +362,9 @@ def _build_operation_tray(
 
     if not readiness.ready_to_enter:
         primary_tools = ["record_task_checkpoint"]
-        assistant_tools = ["draft_task_checkpoint", *assistant_tools]
+        assistant_tools = ["clerk_draft_report", "draft_task_checkpoint", *assistant_tools]
         reasons["record_task_checkpoint"] = "Readiness gate requires durable project-memory evidence before entering this state."
+        reasons["clerk_draft_report"] = "Use the clerk/scribe path to prepare a review-only draft from stenographer spans or raw notes before memory mutation."
         reasons["draft_task_checkpoint"] = "Use the clerk/scribe path to prepare the missing stage record from raw notes."
 
     required_records_by_state = {

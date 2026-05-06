@@ -122,10 +122,11 @@ async def test_task_execution_context_checkpointing_surfaces_rule_candidate_work
     assert "project_rule_candidates_from_stenography" in tool_names
     assert "list_rule_candidates" in tool_names
     assert data["operation_tray"]["primary_tools"][:3] == [
-        "record_task_checkpoint",
-        "report_task_checkpoint",
+        "clerk_draft_report",
         "draft_checkpoint_from_spans",
+        "record_task_checkpoint",
     ]
+    assert "clerk_draft_report" in data["operation_tray"]["assistant_tools"]
     assert any("rule marker" in item for item in data["risk_controls"])
     assert any(item["title"] == "Self-Improving Project Laws Are A Core Goal" for item in data["required_rules"])
 

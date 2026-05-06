@@ -8,13 +8,13 @@ import json
 async def test_enrich_task():
     url = "http://localhost:8000/api/v1/project/enrich-task"
     payload = {
-        "project_id": "supermemory",
+        "project_id": "mnemoforge",
         "task": "Fix mojibake in project context and documentation projections for legacy Russian content",
         "context_profile": "default",
         "max_components": 3
     }
 
-    headers = {"X-Api-Key": "supermemory-local"}
+    headers = {"X-Api-Key": "mnemoforge-local"}
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(url, json=payload, headers=headers, timeout=30)

@@ -48,8 +48,8 @@
 ```python
 # Формат: {type}:{project}:{local_id}
 # Примеры:
-# - improvement:supermemory:dcde5e07-744a-4836-b08c-e18300eccf78
-# - task:supermemory:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c
+# - improvement:mnemoforge:dcde5e07-744a-4836-b08c-e18300eccf78
+# - task:mnemoforge:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c
 
 @dataclass
 class ArtifactKey:
@@ -298,7 +298,7 @@ sequenceDiagram
     participant IS as ImprovementsStore
     participant TS as TasksStore
 
-    Agent->>UAS: resolve_artifact(improvement:supermemory:abc)
+    Agent->>UAS: resolve_artifact(improvement:mnemoforge:abc)
     UAS->>IS: get(abc)
     IS-->>UAS: improvement record
     UAS->>IS: resolve(abc)
@@ -319,7 +319,7 @@ sequenceDiagram
 ```python
 @dataclass
 class UnifiedArtifactRecord:
-    artifact_key: str  # "improvement:supermemory:abc" or "task:supermemory:def"
+    artifact_key: str  # "improvement:mnemoforge:abc" or "task:mnemoforge:def"
     type: str  # "improvement" or "task"
     id: UUID  # локальный ID
     project: str
@@ -345,7 +345,7 @@ class UnifiedArtifactRecord:
     task_statement_incomplete: bool | None = None
 
     # Связанные сущности
-    linked_artifact_key: str | None = None  # "task:supermemory:def" или "improvement:supermemory:abc"
+    linked_artifact_key: str | None = None  # "task:mnemoforge:def" или "improvement:mnemoforge:abc"
     linked_status: str | None = None  # статус связанной сущности
 ```
 

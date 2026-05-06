@@ -57,14 +57,14 @@ async def test_improvements_store_dedups_skill_gap_alias_titles(tmp_path: Path):
         first_id, first_created = await store.upsert_by_title(
             title="Skill gap detected: api_config",
             description="first",
-            project="supermemory",
+            project="mnemoforge",
             agent_id="test",
             tags=["skill-gap"],
         )
         second_id, second_created = await store.upsert_by_title(
             title="Skill gap detected: API setup",
             description="second",
-            project="supermemory",
+            project="mnemoforge",
             agent_id="test",
             tags=["skill-gap", "auto-detected"],
         )
@@ -73,7 +73,7 @@ async def test_improvements_store_dedups_skill_gap_alias_titles(tmp_path: Path):
         assert second_created is False
         assert second_id == first_id
 
-        rows = await store.list(project="supermemory", status="open", limit=10)
+        rows = await store.list(project="mnemoforge", status="open", limit=10)
         matching = [row for row in rows if row["title"].lower().startswith("skill gap detected:")]
         assert len(matching) == 1
         assert matching[0]["norm_title"] == "skill gap detected api configuration"

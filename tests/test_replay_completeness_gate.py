@@ -54,7 +54,7 @@ async def test_replay_completeness_v1_release_gate_reconstructs_fixture_project_
             "title": "Release gate fixture project replay",
             "description": "\n".join(
                 [
-                    "Build a named release gate for SuperMemory replay completeness.",
+                    "Build a named release gate for MnemoForge replay completeness.",
                     "Assumption: durable MCP state is enough to resume the task.",
                     "Constraint: the replay path must not depend on old chat access.",
                     "Definition of done: replay_completeness_v1 is complete.",

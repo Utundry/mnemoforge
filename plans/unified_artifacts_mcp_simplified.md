@@ -2,7 +2,7 @@
 
 ## Контекст
 
-В SuperMemory основными пользователями являются AI агенты через MCP tools. Это значительно упрощает roll-out стратегию:
+В MnemoForge основными пользователями являются AI агенты через MCP tools. Это значительно упрощает roll-out стратегию:
 - ✅ Агенты автоматически используют новые tools
 - ✅ Нет необходимости в canary/gradual rollout
 - ✅ Legacy endpoints можно удалить сразу после добавления новых tools
@@ -24,7 +24,7 @@
         "properties": {
             "artifact_key": {
                 "type": "string",
-                "description": "Artifact key in format: improvement:supermemory:abc or task:supermemory:def"
+                "description": "Artifact key in format: improvement:mnemoforge:abc or task:mnemoforge:def"
             }
         },
         "required": ["artifact_key"]
@@ -39,7 +39,7 @@
         "properties": {
             "project": {
                 "type": "string",
-                "description": "Project name (default: supermemory)"
+                "description": "Project name (default: mnemoforge)"
             },
             "status": {
                 "type": "string",
@@ -66,15 +66,15 @@ def get_started_message():
     return """
     **Action Required:** If you're starting a new session, run these commands now:
 
-    1. List open tasks: `list_artifacts(project="supermemory", status="open", type=None)`
+    1. List open tasks: `list_artifacts(project="mnemoforge", status="open", type=None)`
     2. Search project knowledge: Search memories for 'architecture', 'docs', or 'components'
 
     **Unified Artifact API:**
     - Use `get_artifact(artifact_key)` to get any artifact by key
     - Use `list_artifacts(...)` to list artifacts with filtering
     - Artifact key format: `{type}:{project}:{local_id}`
-      - Example: `improvement:supermemory:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c`
-      - Example: `task:supermemory:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c`
+      - Example: `improvement:mnemoforge:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c`
+      - Example: `task:mnemoforge:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c`
     """
 ```
 
@@ -122,7 +122,7 @@ def get_started_message():
 @pytest.mark.asyncio
 async def test_get_artifact_improvement():
     """Получить improvement через unified API."""
-    artifact_key = "improvement:supermemory:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c"
+    artifact_key = "improvement:mnemoforge:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c"
     result = await unified_artifact_service.get_artifact(artifact_key)
     assert result.type == "improvement"
     assert result.status == "open"
@@ -130,7 +130,7 @@ async def test_get_artifact_improvement():
 @pytest.mark.asyncio
 async def test_get_artifact_task():
     """Получить task через unified API."""
-    artifact_key = "task:supermemory:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c"
+    artifact_key = "task:mnemoforge:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c"
     result = await unified_artifact_service.get_artifact(artifact_key)
     assert result.type == "task"
     assert result.status == "active"
@@ -139,7 +139,7 @@ async def test_get_artifact_task():
 async def test_list_artifacts_mixed():
     """Получить смешанный список improvements и tasks."""
     results = await unified_artifact_service.list_artifacts(
-        project="supermemory",
+        project="mnemoforge",
         status="open",
         type=None,
         limit=50,
@@ -157,7 +157,7 @@ async def test_list_artifacts_mixed():
 async def test_mcp_get_artifact():
     """Тест MCP tool get_artifact."""
     result = execute_tool("get_artifact", {
-        "artifact_key": "improvement:supermemory:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c"
+        "artifact_key": "improvement:mnemoforge:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c"
     })
     assert result["type"] == "improvement"
     assert "artifact_key" in result
@@ -166,7 +166,7 @@ async def test_mcp_get_artifact():
 async def test_mcp_list_artifacts():
     """Тест MCP tool list_artifacts."""
     result = execute_tool("list_artifacts", {
-        "project": "supermemory",
+        "project": "mnemoforge",
         "status": "open",
         "limit": 10
     })
@@ -252,7 +252,7 @@ git checkout HEAD~1 -- mcp/server.py
 git checkout HEAD~1 -- app/routers/improvements.py app/routers/project_tasks.py
 
 # 3. Перезапустить сервис
-systemctl restart supermemory-api
+systemctl restart mnemoforge-api
 
 # 4. Верифицировать
 curl -X GET /improvements  # Должен работать
@@ -292,27 +292,27 @@ Use these tools to work with improvements and tasks:
 
 ### List artifacts
 ```
-list_artifacts(project="supermemory", status="open", type=None, limit=50)
+list_artifacts(project="mnemoforge", status="open", type=None, limit=50)
 ```
 
 ### Get artifact
 ```
-get_artifact(artifact_key="improvement:supermemory:abc")
+get_artifact(artifact_key="improvement:mnemoforge:abc")
 ```
 
 ### Resolve artifact
 ```
-resolve_artifact(artifact_key="improvement:supermemory:abc", acted_by="agent", reason="Completed")
+resolve_artifact(artifact_key="improvement:mnemoforge:abc", acted_by="agent", reason="Completed")
 ```
 
 ### Reopen artifact
 ```
-reopen_artifact(artifact_key="task:supermemory:def", acted_by="agent", reason="More work needed")
+reopen_artifact(artifact_key="task:mnemoforge:def", acted_by="agent", reason="More work needed")
 ```
 
 **Artifact key format:** `{type}:{project}:{local_id}`
-- `improvement:supermemory:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c`
-- `task:supermemory:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c`
+- `improvement:mnemoforge:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c`
+- `task:mnemoforge:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c`
 ```
 
 ### Для разработчиков (README)

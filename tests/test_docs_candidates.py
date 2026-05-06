@@ -26,7 +26,7 @@ async def test_rebuild_docs_preserves_effective_and_stages_candidate(monkeypatch
 
         async def fake_snapshot(*args, **kwargs):
             return {
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "components": [],
                 "laws": [],
                 "improvements": [],
@@ -53,17 +53,17 @@ async def test_rebuild_docs_preserves_effective_and_stages_candidate(monkeypatch
         monkeypatch.setattr(docs_service, "_gen_skills", lambda skills: "Skills")
         monkeypatch.setattr(docs_service, "_gen_performance", lambda project: "Performance")
 
-        first = await docs_service.rebuild_docs("supermemory", object(), "ignored")
+        first = await docs_service.rebuild_docs("mnemoforge", object(), "ignored")
         assert first.sections["overview"].content == "Overview v1"
         assert first.candidate_sections == {}
 
         state["overview"] = "Overview v2"
         state["architecture"] = "Architecture v2"
-        second = await docs_service.rebuild_docs("supermemory", object(), "ignored")
+        second = await docs_service.rebuild_docs("mnemoforge", object(), "ignored")
         assert second.sections["overview"].content == "Overview v1"
         assert second.candidate_sections["overview"].content == "Overview v2"
         assert second.candidate_generated_at is not None
-        loaded = docs_service.load_docs_cache("supermemory")
+        loaded = docs_service.load_docs_cache("mnemoforge")
         assert loaded is not None
         assert loaded.sections["overview"].content == "Overview v1"
     finally:
@@ -84,13 +84,13 @@ async def test_rebuild_docs_skips_when_snapshot_commit_is_unchanged(monkeypatch)
 
         async def fake_snapshot(*args, **kwargs):
             return {
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "components": [{
                     "name": "Context",
                     "component_id": "context",
                     "snapshot": {
                         "source_mode": "git_snapshot",
-                        "repo": "https://github.com/example/supermemory",
+                        "repo": "https://github.com/example/mnemoforge",
                         "branch": "main",
                         "commit_sha": "abc123def456",
                         "dirty_workspace": False,
@@ -123,8 +123,8 @@ async def test_rebuild_docs_skips_when_snapshot_commit_is_unchanged(monkeypatch)
         monkeypatch.setattr(docs_service, "_gen_skills", lambda skills: "Skills")
         monkeypatch.setattr(docs_service, "_gen_performance", lambda project: "Performance")
 
-        first = await docs_service.rebuild_docs("supermemory", object(), "ignored", force=True)
-        second = await docs_service.rebuild_docs("supermemory", object(), "ignored", force=False)
+        first = await docs_service.rebuild_docs("mnemoforge", object(), "ignored", force=True)
+        second = await docs_service.rebuild_docs("mnemoforge", object(), "ignored", force=False)
 
         assert first.snapshot["commit_sha"] == "abc123def456"
         assert first.last_rebuild_mode == "rebuild"
@@ -150,7 +150,7 @@ async def test_rebuild_docs_uses_cheap_diff_scoped_mode_for_narrow_component_cha
 
         async def fake_snapshot(*args, **kwargs):
             return {
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "components": [
                     {
                         "name": "Context",
@@ -159,7 +159,7 @@ async def test_rebuild_docs_uses_cheap_diff_scoped_mode_for_narrow_component_cha
                         "key_files": ["app/context.py"],
                         "snapshot": {
                             "source_mode": "git_snapshot",
-                            "repo": "https://github.com/example/supermemory",
+                            "repo": "https://github.com/example/mnemoforge",
                             "branch": "main",
                             "commit_sha": state["commit_sha"],
                             "dirty_workspace": False,
@@ -172,7 +172,7 @@ async def test_rebuild_docs_uses_cheap_diff_scoped_mode_for_narrow_component_cha
                         "key_files": ["app/routing.py"],
                         "snapshot": {
                             "source_mode": "git_snapshot",
-                            "repo": "https://github.com/example/supermemory",
+                            "repo": "https://github.com/example/mnemoforge",
                             "branch": "main",
                             "commit_sha": state["commit_sha"],
                             "dirty_workspace": False,
@@ -206,10 +206,10 @@ async def test_rebuild_docs_uses_cheap_diff_scoped_mode_for_narrow_component_cha
         monkeypatch.setattr(docs_service, "_gen_skills", lambda skills: "Skills")
         monkeypatch.setattr(docs_service, "_gen_performance", lambda project: "Performance")
 
-        await docs_service.rebuild_docs("supermemory", object(), "ignored", force=True)
+        await docs_service.rebuild_docs("mnemoforge", object(), "ignored", force=True)
         state["commit_sha"] = "def789abc000"
         second = await docs_service.rebuild_docs(
-            "supermemory",
+            "mnemoforge",
             object(),
             "ignored",
             force=False,
@@ -231,35 +231,35 @@ async def test_docs_candidate_apply_and_discard_endpoints(client):
     docs_service._CACHE_DIR = local_tmp / "docs_cache"
     try:
         status = DocsStatus(
-            project="supermemory",
+            project="mnemoforge",
             generated_at=datetime.now(timezone.utc),
             sections={"overview": DocsSection(name="Overview", content="Effective overview.")},
             candidate_generated_at=datetime.now(timezone.utc),
             candidate_sections={"overview": DocsSection(name="Overview", content="Candidate overview.")},
         )
-        docs_service._save_docs_cache("supermemory", status)
+        docs_service._save_docs_cache("mnemoforge", status)
 
-        candidate = await client.get("/api/v1/docs/status?project=supermemory&view=candidate")
+        candidate = await client.get("/api/v1/docs/status?project=mnemoforge&view=candidate")
         assert candidate.status_code == 200
         assert candidate.json()["sections"]["overview"]["content"] == "Candidate overview."
 
-        applied = await client.post("/api/v1/docs/apply-candidate?project=supermemory")
+        applied = await client.post("/api/v1/docs/apply-candidate?project=mnemoforge")
         assert applied.status_code == 200
         assert applied.json()["sections"]["overview"]["content"] == "Candidate overview."
         assert applied.json()["candidate_sections"] == {}
         assert applied.json()["last_review_action"] == "apply_candidate"
 
         status = DocsStatus(
-            project="supermemory",
+            project="mnemoforge",
             generated_at=datetime.now(timezone.utc),
             sections={"overview": DocsSection(name="Overview", content="Effective overview.")},
             candidate_generated_at=datetime.now(timezone.utc),
             candidate_sections={"overview": DocsSection(name="Overview", content="Discard me.")},
         )
-        docs_service._save_docs_cache("supermemory", status)
+        docs_service._save_docs_cache("mnemoforge", status)
 
         discarded = await client.post(
-            "/api/v1/docs/discard-candidate?project=supermemory",
+            "/api/v1/docs/discard-candidate?project=mnemoforge",
             json={"reviewed_by": "owner", "review_source": "dashboard_review", "reason": "Keep current docs"},
         )
         assert discarded.status_code == 200
@@ -291,7 +291,7 @@ async def test_docs_status_marks_projection_stale_when_component_snapshot_moves(
             implementation="Combines project knowledge surfaces.",
             snapshot={
                 "source_mode": "git_snapshot",
-                "repo": "https://github.com/example/supermemory",
+                "repo": "https://github.com/example/mnemoforge",
                 "branch": "main",
                 "commit_sha": "new-commit-456",
                 "dirty_workspace": False,
@@ -304,7 +304,7 @@ async def test_docs_status_marks_projection_stale_when_component_snapshot_moves(
             sections={"overview": DocsSection(name="Overview", content="Alpha overview.")},
             snapshot={
                 "source_mode": "git_snapshot",
-                "repo": "https://github.com/example/supermemory",
+                "repo": "https://github.com/example/mnemoforge",
                 "branch": "main",
                 "commit_sha": "old-commit-123",
                 "dirty_workspace": False,
@@ -412,7 +412,7 @@ async def test_fetch_skills_filters_global_skills_for_external_project(monkeypat
                 FakePoint({"skill_name": "pinned-global", "tags": [], "pinned": True}),
             ], None)
 
-    monkeypatch.setattr(docs_service.settings, "self_project_id", "supermemory")
+    monkeypatch.setattr(docs_service.settings, "self_project_id", "mnemoforge")
     skills = await docs_service._fetch_skills(FakeQdrant(), "memories", "alpha")
     names = {item.get("skill_name") for item in skills}
     assert "alpha-skill" in names
@@ -434,8 +434,8 @@ async def test_fetch_skills_keeps_global_scope_for_self_project(monkeypatch):
                 FakePoint({"skill_name": "another-global", "tags": []}),
             ], None)
 
-    monkeypatch.setattr(docs_service.settings, "self_project_id", "supermemory")
-    skills = await docs_service._fetch_skills(FakeQdrant(), "memories", "supermemory")
+    monkeypatch.setattr(docs_service.settings, "self_project_id", "mnemoforge")
+    skills = await docs_service._fetch_skills(FakeQdrant(), "memories", "mnemoforge")
     names = {item.get("skill_name") for item in skills}
     assert names == {"global-skill", "another-global"}
 

@@ -53,10 +53,10 @@ class TestMcpToolExecution:
         assert names[0] == "operational_tray"
         assert len(names) == 4
         assert len(names) < len(mcp_sse.TOOLS)
-        assert result["_supermemory"]["catalog_mode"] == "compact"
-        assert result["_supermemory"]["schema_mode"] == "summary"
-        assert result["_supermemory"]["recommended_first_tool"] == "operational_tray"
-        assert result["_supermemory"]["full_catalog_available"] is True
+        assert result["_mnemoforge"]["catalog_mode"] == "compact"
+        assert result["_mnemoforge"]["schema_mode"] == "summary"
+        assert result["_mnemoforge"]["recommended_first_tool"] == "operational_tray"
+        assert result["_mnemoforge"]["full_catalog_available"] is True
         assert "inputSummary" in result["tools"][0]
         assert "inputSchema" not in result["tools"][0]
 
@@ -72,8 +72,8 @@ class TestMcpToolExecution:
         )
 
         result = response["result"]
-        assert result["_supermemory"]["catalog_mode"] == "compact"
-        assert result["_supermemory"]["schema_mode"] == "full"
+        assert result["_mnemoforge"]["catalog_mode"] == "compact"
+        assert result["_mnemoforge"]["schema_mode"] == "full"
         assert "inputSchema" in result["tools"][0]
         assert "inputSummary" not in result["tools"][0]
 
@@ -86,13 +86,13 @@ class TestMcpToolExecution:
                 "method": "initialize",
                 "params": {
                     "clientInfo": {"name": "Codex CLI"},
-                    "_supermemory": {"tool_catalog": {"preferred_mode": "compact"}},
+                    "_mnemoforge": {"tool_catalog": {"preferred_mode": "compact"}},
                 },
             },
             "http://test",
             session_id=session_id,
         )
-        assert initialized["result"]["_supermemory"]["tool_catalog"]["negotiated_mode"] == "compact"
+        assert initialized["result"]["_mnemoforge"]["tool_catalog"]["negotiated_mode"] == "compact"
 
         response = await mcp_sse._handle(
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
@@ -102,8 +102,8 @@ class TestMcpToolExecution:
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
         assert names[0] == "operational_tray"
-        assert result["_supermemory"]["catalog_mode"] == "compact"
-        assert result["_supermemory"]["schema_mode"] == "summary"
+        assert result["_mnemoforge"]["catalog_mode"] == "compact"
+        assert result["_mnemoforge"]["schema_mode"] == "summary"
         assert "inputSummary" in result["tools"][0]
         assert "inputSchema" not in result["tools"][0]
         assert len(names) < len(mcp_sse.TOOLS)
@@ -114,7 +114,7 @@ class TestMcpToolExecution:
             session_id=session_id,
         )
         assert len(full["result"]["tools"]) == len(mcp_sse.TOOLS)
-        assert "_supermemory" not in full["result"]
+        assert "_mnemoforge" not in full["result"]
 
     async def test_initialize_can_negotiate_compact_tools_list_via_capabilities(self):
         session_id = "sess-compact-tools-list-capabilities"
@@ -127,7 +127,7 @@ class TestMcpToolExecution:
                     "clientInfo": {"name": "Codex CLI"},
                     "capabilities": {
                         "experimental": {
-                            "supermemory": {
+                            "mnemoforge": {
                                 "tool_catalog_mode": "compact",
                             }
                         }
@@ -137,14 +137,14 @@ class TestMcpToolExecution:
             "http://test",
             session_id=session_id,
         )
-        assert initialized["result"]["_supermemory"]["tool_catalog"]["negotiated_mode"] == "compact"
+        assert initialized["result"]["_mnemoforge"]["tool_catalog"]["negotiated_mode"] == "compact"
 
         response = await mcp_sse._handle(
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
             "http://test",
             session_id=session_id,
         )
-        assert response["result"]["_supermemory"]["catalog_mode"] == "compact"
+        assert response["result"]["_mnemoforge"]["catalog_mode"] == "compact"
 
     async def test_initialize_can_negotiate_small_context_hygiene(self):
         session_id = "sess-small-context-hygiene"
@@ -155,7 +155,7 @@ class TestMcpToolExecution:
                 "method": "initialize",
                 "params": {
                     "clientInfo": {"name": "Small Model Agent"},
-                    "_supermemory": {
+                    "_mnemoforge": {
                         "tool_catalog": {"preferred_mode": "compact"},
                         "context": {"hygiene_mode": "small_context"},
                     },
@@ -165,7 +165,7 @@ class TestMcpToolExecution:
             session_id=session_id,
         )
 
-        assert initialized["result"]["_supermemory"]["context_hygiene"]["negotiated_mode"] == "small_context"
+        assert initialized["result"]["_mnemoforge"]["context_hygiene"]["negotiated_mode"] == "small_context"
 
     async def test_initialize_infers_small_context_from_model_window(self):
         session_id = "sess-small-context-window"
@@ -183,7 +183,7 @@ class TestMcpToolExecution:
             session_id=session_id,
         )
 
-        info = initialized["result"]["_supermemory"]
+        info = initialized["result"]["_mnemoforge"]
         assert info["tool_catalog"]["negotiated_mode"] == "compact"
         assert info["tool_catalog"]["inferred"] is True
         assert info["context_hygiene"]["negotiated_mode"] == "small_context"
@@ -195,8 +195,8 @@ class TestMcpToolExecution:
             "http://test",
             session_id=session_id,
         )
-        assert listed["result"]["_supermemory"]["catalog_mode"] == "compact"
-        assert listed["result"]["_supermemory"]["schema_mode"] == "summary"
+        assert listed["result"]["_mnemoforge"]["catalog_mode"] == "compact"
+        assert listed["result"]["_mnemoforge"]["schema_mode"] == "summary"
         assert "inputSummary" in listed["result"]["tools"][0]
         assert "inputSchema" not in listed["result"]["tools"][0]
 
@@ -215,7 +215,7 @@ class TestMcpToolExecution:
             session_id="sess-small-context-profile",
         )
 
-        info = initialized["result"]["_supermemory"]
+        info = initialized["result"]["_mnemoforge"]
         assert info["tool_catalog"]["negotiated_mode"] == "compact"
         assert info["context_hygiene"]["negotiated_mode"] == "small_context"
         assert info["context_hygiene"]["inference_reason"] == "small_model_profile"
@@ -229,7 +229,7 @@ class TestMcpToolExecution:
                 "params": {
                     "clientInfo": {"name": "Debug Agent"},
                     "modelInfo": {"contextWindow": 32000},
-                    "_supermemory": {
+                    "_mnemoforge": {
                         "tool_catalog": {"preferred_mode": "full"},
                         "context": {"hygiene_mode": "full"},
                     },
@@ -239,7 +239,7 @@ class TestMcpToolExecution:
             session_id="sess-small-context-full-override",
         )
 
-        info = initialized["result"]["_supermemory"]
+        info = initialized["result"]["_mnemoforge"]
         assert info["tool_catalog"]["negotiated_mode"] == "full"
         assert "inferred" not in info["tool_catalog"]
         assert info["context_hygiene"]["negotiated_mode"] == "full"
@@ -298,9 +298,9 @@ class TestMcpToolExecution:
             "status": "active",
             "reason": "Matched required terms.",
         }
-        assert data["_supermemory_refs"]["mode"] == "small_context"
-        assert data["_supermemory_refs"]["omitted_service_fields"] >= 1
-        assert "full_response" in data["_supermemory_refs"]
+        assert data["_mnemoforge_refs"]["mode"] == "small_context"
+        assert data["_mnemoforge_refs"]["omitted_service_fields"] >= 1
+        assert "full_response" in data["_mnemoforge_refs"]
 
     async def test_tools_call_full_context_keeps_service_keys(self, monkeypatch):
         async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
@@ -369,7 +369,26 @@ class TestMcpToolExecution:
 
     def test_tool_discovery_family_tools_are_exposed(self):
         names = {tool["name"] for tool in mcp_sse.TOOLS}
-        assert {"list_tool_families", "tool_family_tools", "tool_explain", "tool_recommend", "tool_feedback", "continue_task", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "get_task_execution_context", "operational_tray"} <= names
+        assert {"list_tool_families", "tool_family_tools", "tool_explain", "tool_recommend", "tool_feedback", "continue_task", "clerk_draft_report", "draft_task_checkpoint", "record_work_result", "record_task_checkpoint", "report_task_checkpoint", "get_task_execution_context", "operational_tray"} <= names
+
+    def test_record_work_result_tool_is_high_level_closeout_facade(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "record_work_result")
+        schema = tool["inputSchema"]
+        assert schema["required"] == ["summary"]
+        props = schema["properties"]
+        assert "task_id" in props
+        assert "artifact_key" in props
+        assert props["should_resolve_artifact"]["default"] is False
+        assert props["create_issue_if_unmatched"]["default"] is False
+        assert props["use_clerk"]["default"] is True
+
+    def test_clerk_draft_report_tool_is_first_class_closeout_surface(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "clerk_draft_report")
+        props = tool["inputSchema"]["properties"]
+        assert "work_id" in props
+        assert "raw_notes" in props
+        assert props["preserve_evidence"]["default"] is True
+        assert props["use_llm"]["default"] is False
 
     def test_operational_tray_tool_is_state_aware_facade(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "operational_tray")
@@ -622,6 +641,209 @@ class TestMcpToolExecution:
         assert posted[1][1]["source"] == "operational_tray"
         assert "stage_evidence=checkpoint:change-doc-1" in result
 
+    async def test_record_work_result_uses_provided_task_and_records_memory_checkpoint(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            if path == "/memories":
+                return {"id": "memory-1"}
+            if path == "/project/tasks/task-1/changes":
+                return {"id": "change-1", "task_id": "task-1"}
+            raise AssertionError(f"unexpected POST path: {path}")
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "record_work_result",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "summary": "Implemented high-level closeout facade.",
+                "changed_files": ["app/routers/mcp_sse.py"],
+                "verification": ["pytest tests/test_mcp_sse.py passed"],
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["route"] == ["memory", "task_checkpoint"]
+        assert data["target"]["artifact_key"] == "task:alpha:task-1"
+        assert posted[0][0] == "/memories"
+        assert "Implemented high-level closeout facade." in posted[0][1]["content"]
+        assert posted[1][0] == "/project/tasks/task-1/changes"
+        assert "task_checkpoint" in posted[1][1]["tags"]
+        assert data["checkpoint"]["stage_evidence"] == "checkpoint:change-1"
+
+    async def test_record_work_result_auto_matches_newest_open_task(self, monkeypatch):
+        requested: list[str] = []
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_get(api_base: str, path: str):
+            requested.append(path)
+            if path.startswith("/artifacts?"):
+                return {
+                    "items": [
+                        {
+                            "artifact_key": "task:alpha:auto-task",
+                            "linked_artifact_key": "improvement:alpha:auto-task",
+                        }
+                    ]
+                }
+            raise AssertionError(f"unexpected GET path: {path}")
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            if path == "/memories":
+                return {"id": "memory-1"}
+            if path == "/project/tasks/auto-task/changes":
+                return {"id": "change-2", "task_id": "auto-task"}
+            raise AssertionError(f"unexpected POST path: {path}")
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "record_work_result",
+            {"project": "alpha", "summary": "Recorded result on the current task."},
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert requested[0].startswith("/artifacts?project=alpha&status=open&type=task&limit=1")
+        assert data["target"]["target_source"] == "newest_open_task"
+        assert data["target"]["task_id"] == "auto-task"
+        assert posted[1][0] == "/project/tasks/auto-task/changes"
+
+    async def test_record_work_result_falls_back_to_memory_only_when_unmatched(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            return {"items": []}
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            if path == "/memories":
+                return {"id": "memory-only"}
+            raise AssertionError(f"unexpected POST path: {path}")
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "record_work_result",
+            {"project": "alpha", "summary": "No artifact was available."},
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["route"] == ["memory"]
+        assert data["memory"]["id"] == "memory-only"
+        assert "memory-only result" in data["warnings"][0]
+
+    async def test_record_work_result_prefers_clerk_draft_when_stenographer_spans_exist(self, monkeypatch):
+        from pathlib import Path
+        from app.services import checkpoint_draft_service as draft_mod
+        from app.services import stenographer_service as stenographer_mod
+
+        store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(stenographer_mod, "_STORE", store)
+        posted: list[tuple[str, dict]] = []
+        draft_calls: list[dict] = []
+
+        class FakeDraft:
+            def model_dump(self, mode: str = "json"):
+                return {
+                    "draft_id": "draft-1",
+                    "version": 1,
+                    "status": "drafted",
+                    "validation_report": {"can_approve": True},
+                    "source_span_ids": ["span-1"],
+                }
+
+        async def fake_draft(payload: dict, llm_gateway):
+            draft_calls.append(payload)
+            return FakeDraft()
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            if path == "/memories":
+                return {"id": "memory-1"}
+            raise AssertionError(f"unexpected POST path: {path}")
+
+        monkeypatch.setattr(draft_mod, "draft_checkpoint_from_spans", fake_draft)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            store.start_work_session(
+                project="alpha",
+                task_id="task-1",
+                agent_id="codex",
+                session_id="sess-1",
+                work_id="work-1",
+            )
+            store.record_span(
+                project="alpha",
+                task_id="task-1",
+                agent_id="codex",
+                session_id="sess-1",
+                work_id="work-1",
+                kind="verification",
+                source="pytest",
+                content="pytest passed",
+            )
+            result = await mcp_sse._execute_tool(
+                "record_work_result",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "work_id": "work-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-1",
+                    "summary": "Closeout with stenographer evidence.",
+                },
+                "http://test",
+            )
+        finally:
+            store.close()
+
+        data = json.loads(result)
+        assert data["status"] == "drafted"
+        assert data["route"] == ["memory", "clerk_draft"]
+        assert data["clerk_draft"]["draft_id"] == "draft-1"
+        assert posted == [("/memories", posted[0][1])]
+        assert draft_calls[0]["work_id"] == "work-1"
+        assert "review-only clerk draft" in data["warnings"][0]
+
+    async def test_clerk_draft_report_from_raw_notes_uses_memory_scribe_without_mutating(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "unexpected"}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool(
+            "clerk_draft_report",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "stage": "completed",
+                "status": "done",
+                "use_llm": False,
+                "raw_notes": "\n".join(
+                    [
+                        "Summary: Clerk structured raw notes.",
+                        "Verification: pytest tests/test_mcp_sse.py passed",
+                        "Changed files: app/routers/mcp_sse.py",
+                        "Next step: Approve the report draft.",
+                    ]
+                ),
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert posted == []
+        assert data["clerk_mode"] == "raw_notes"
+        assert data["mutates_memory"] is False
+        assert data["record_task_checkpoint_args"]["source"] == "memory_scribe"
+
     async def test_upsert_knowledge_tree_node_tool_posts_structured_payload(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
 
@@ -643,7 +865,7 @@ class TestMcpToolExecution:
         result = await mcp_sse._execute_tool(
             "upsert_knowledge_tree_node",
             {
-                "topic_path": "supermemory/architecture/mcp/compact-discovery",
+                "topic_path": "mnemoforge/architecture/mcp/compact-discovery",
                 "title": "Compact MCP Discovery",
                 "responsibility": "Expose a small MCP catalog before the full flat tool list.",
                 "runtime_entrypoints": ["initialize", "tools/list"],
@@ -654,7 +876,7 @@ class TestMcpToolExecution:
         )
 
         assert posted[0][0] == "/tree/upsert-by-path"
-        assert posted[0][1]["topic_path"] == "supermemory/architecture/mcp/compact-discovery"
+        assert posted[0][1]["topic_path"] == "mnemoforge/architecture/mcp/compact-discovery"
         assert posted[0][1]["type"] == "area"
         assert posted[0][1]["source"] == "mcp_upsert_knowledge_tree_node"
         assert '"created": true' in result
@@ -968,11 +1190,11 @@ class TestMcpToolExecution:
 
         await mcp_sse._mcp_live_observe(
             "memory_search",
-            {"project": "supermemory", "agent_id": "codex"},
+            {"project": "mnemoforge", "agent_id": "codex"},
             "http://test",
         )
 
-        fake_qdrant.mark_used.assert_awaited_once_with([], project="supermemory")
+        fake_qdrant.mark_used.assert_awaited_once_with([], project="mnemoforge")
 
     async def test_live_observer_emits_user_request_when_text_snippet_exists(self, monkeypatch):
         posted: list[dict] = []
@@ -989,7 +1211,7 @@ class TestMcpToolExecution:
         await mcp_sse._mcp_live_observe(
             "memory_search",
             {
-                "project": "supermemory",
+                "project": "mnemoforge",
                 "agent_id": "codex",
                 "query": "Need rollback checklist for Qdrant WAL cleanup after disk pressure.",
             },
@@ -1001,7 +1223,7 @@ class TestMcpToolExecution:
         assert "user_request" in event_types
         user_event = next(item for item in posted if item.get("event_type") == "user_request")
         assert "rollback checklist" in user_event["payload"]["request_text"].lower()
-        fake_qdrant.mark_used.assert_awaited_once_with([], project="supermemory")
+        fake_qdrant.mark_used.assert_awaited_once_with([], project="mnemoforge")
 
     async def test_session_observe_collects_dialogue_snippets(self, monkeypatch):
         class _FakeSessionStore:
@@ -1296,7 +1518,7 @@ class TestMcpToolExecution:
 
         result = await mcp_sse._execute_tool(
             "normalize_mcp_intent",
-            {"intent": "Reopen task 84c4e534-d722-4132-8660-4a56ed93f44a", "project_id": "supermemory", "top_n": 3},
+            {"intent": "Reopen task 84c4e534-d722-4132-8660-4a56ed93f44a", "project_id": "mnemoforge", "top_n": 3},
             "http://test",
         )
 
@@ -1607,6 +1829,7 @@ class TestMcpToolExecution:
         draft_store = draft_mod.CheckpointDraftStore(root / f"drafts-{uuid4().hex}.db")
         monkeypatch.setattr(draft_mod, "get_stenographer_store", lambda: stenographer_store)
         monkeypatch.setattr(draft_mod, "_STORE", draft_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
         try:
             stenographer_store.start_work_session(
@@ -1667,6 +1890,43 @@ class TestMcpToolExecution:
             assert "record_task_checkpoint_args" not in preview_data
             assert "source_evidence" not in preview_data
             assert preview_data["metrics"]["estimated_saved_chars"] > 0
+
+            async def fake_save(payload: dict) -> dict:
+                return {"id": "change-approved"}
+
+            await draft_mod.approve_checkpoint_draft(
+                drafted_data["draft_id"],
+                drafted_data["version"],
+                save_checkpoint=fake_save,
+                store=draft_store,
+            )
+
+            approved_preview = await mcp_sse._execute_tool(
+                "get_checkpoint_draft",
+                {"draft_id": drafted_data["draft_id"], "view": "preview"},
+                "http://test",
+            )
+            approved_preview_data = json.loads(approved_preview)
+            assert approved_preview_data["status"] == "approved"
+            assert approved_preview_data["recommended_next_tool"] == "get_task_execution_context"
+
+            ended = await mcp_sse._execute_tool(
+                "end_work_session",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "work_id": "work-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-1",
+                    "status": "completed",
+                    "result": "Approved clerk draft by reference.",
+                },
+                "http://test",
+            )
+            ended_data = json.loads(ended)
+            assert ended_data.get("recommended_next_tool") == "get_task_execution_context", ended_data
+            assert ended_data["approved_checkpoint_draft_id"] == drafted_data["draft_id"]
+            assert ended_data["saved_change_id"] == "change-approved"
         finally:
             stenographer_store.close()
             draft_store.close()
@@ -1766,7 +2026,7 @@ class TestMcpToolExecution:
                 "title": "Replay task from durable MCP state",
                 "description": "\n".join(
                     [
-                        "Build a replay completeness check for SuperMemory task continuity.",
+                        "Build a replay completeness check for mnemoforge task continuity.",
                         "Assumption: checkpoints are task changes, not a separate store.",
                         "Constraint: a new agent must not ask the user for old session context.",
                         "Definition of done: continue_task reconstructs next action from MCP state.",
@@ -2084,7 +2344,7 @@ class TestMcpToolExecution:
         assert fake_store.event_calls
         assert fake_store.event_calls[0]["event_type"] == "artifact_feedback"
 
-    async def test_initialize_exposes_supermemory_operational_guidance(self):
+    async def test_initialize_exposes_mnemoforge_operational_guidance(self):
         response = await mcp_sse._handle(
             {
                 "jsonrpc": "2.0",
@@ -2096,7 +2356,7 @@ class TestMcpToolExecution:
             session_id="sess-1",
         )
 
-        info = response["result"]["_supermemory"]
+        info = response["result"]["_mnemoforge"]
         assert info["agent_id"] == "codex-cli"
         assert "get_onboarding" in info["tip"]
         assert "operational_tray" in info["tip"]
@@ -2107,7 +2367,7 @@ class TestMcpToolExecution:
         assert info["tool_catalog"]["recommended_first_tool"] == "operational_tray"
         assert any("/api/v1/coordination/" in line for line in info["semantic_defaults"])
 
-    async def test_get_onboarding_includes_supermemory_basics(self, monkeypatch):
+    async def test_get_onboarding_includes_mnemoforge_basics(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
             if path == "/admin/storage-trust":
                 return {
@@ -2289,7 +2549,7 @@ class TestMcpToolExecution:
                         "from_agent": "codex",
                         "memory_id": "mem-1",
                         "status": "pending",
-                        "project_id": "supermemory",
+                        "project_id": "mnemoforge",
                         "owner_agent": "claude-code",
                         "write_scope": ["handoff", "task-packet"],
                         "phase": "task_framing",
@@ -2319,7 +2579,7 @@ class TestMcpToolExecution:
         )
 
         assert "status: pending" in result
-        assert "project_id: supermemory" in result
+        assert "project_id: mnemoforge" in result
         assert "owner_agent: claude-code" in result
         assert "write_scope: handoff, task-packet" in result
         assert "phase: task_framing" in result
@@ -2339,7 +2599,7 @@ class TestMcpToolExecution:
             assert path == "/models/handoff/expand_refs"
             return {
                 "memory_id": "mem-1",
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "requested_ref_types": ["laws", "components"],
                 "resolved": {
                     "laws": [
@@ -2371,7 +2631,7 @@ class TestMcpToolExecution:
         )
 
         assert "Expanded handoff refs for mem-1" in result
-        assert "project_id: supermemory" in result
+        assert "project_id: mnemoforge" in result
         assert "requested_ref_types: laws, components" in result
         assert "- law-1 [active] Require review" in result
         assert "- handoff Handoff: Carry portable task context." in result
@@ -2382,7 +2642,7 @@ class TestMcpToolExecution:
             assert path == "/models/handoff/expand_refs"
             return {
                 "memory_id": "mem-2",
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "requested_ref_types": ["task_capture_candidates"],
                 "resolved": {
                     "task_capture_candidates": [
@@ -2417,7 +2677,7 @@ class TestMcpToolExecution:
             return {
                 "memory_id": "mem-1",
                 "status": "picked_up",
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "owner_agent": "claude-code",
                 "write_scope": ["handoff"],
                 "task_description": "Refresh this task packet",
@@ -2451,7 +2711,7 @@ class TestMcpToolExecution:
 
         assert "Refreshed handoff context for mem-1" in result
         assert "status: picked_up" in result
-        assert "project_id: supermemory" in result
+        assert "project_id: mnemoforge" in result
         assert "owner_agent: claude-code" in result
         assert "write_scope: handoff" in result
         assert "task: Refresh this task packet" in result
@@ -2633,7 +2893,7 @@ class TestMcpToolExecution:
                 "refreshed": True,
                 "acted_by": "codex",
                 "reason": "returning to task",
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "owner_agent": "claude-code",
                 "write_scope": ["handoff", "task-packet"],
                 "phase": "pre_implementation",
@@ -2674,7 +2934,7 @@ class TestMcpToolExecution:
         assert "write_scope: handoff, task-packet" in result
         assert "acted_by: codex" in result
         assert "reason: returning to task" in result
-        assert "project_id: supermemory" in result
+        assert "project_id: mnemoforge" in result
         assert "phase: pre_implementation" in result
         assert "priority: medium" in result
         assert "task: Resume this task packet" in result
@@ -2685,7 +2945,7 @@ class TestMcpToolExecution:
 
     async def test_decompose_task_packet_formats_recommended_packet_stubs(self, monkeypatch):
         response = {
-            "project_id": "supermemory",
+            "project_id": "mnemoforge",
             "strategy": "split_by_write_scope",
             "recommended_packet_count": 2,
             "phase": "pre_implementation",
@@ -2722,7 +2982,7 @@ class TestMcpToolExecution:
         async def fake_sse_post(api_base: str, path: str, payload: dict):
             assert path == "/models/handoff/decompose"
             assert payload == {
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "task_description": "Split packet work",
                 "priority": "high",
                 "write_scope": ["app/routers/models.py", "app/routers/mcp_sse.py", "mcp/server.py"],
@@ -2736,7 +2996,7 @@ class TestMcpToolExecution:
         sse_result = await mcp_sse._execute_tool(
             "decompose_task_packet",
             {
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "task_description": "Split packet work",
                 "priority": "high",
                 "write_scope": ["app/routers/models.py", "app/routers/mcp_sse.py", "mcp/server.py"],
@@ -2753,7 +3013,7 @@ class TestMcpToolExecution:
 
     async def test_create_task_packets_formats_created_packet_bundle(self, monkeypatch):
         response = {
-            "project_id": "supermemory",
+            "project_id": "mnemoforge",
             "created_count": 2,
             "packets": [
                 {
@@ -2800,7 +3060,7 @@ class TestMcpToolExecution:
         expected_payload = {
             "from_agent": "codex",
             "to_agent": "claude-code",
-            "project_id": "supermemory",
+            "project_id": "mnemoforge",
             "task_description": "Split packet work",
             "partial_result": "Preflight ready",
             "key_facts": ["one", "two"],
@@ -2855,7 +3115,7 @@ class TestMcpToolExecution:
             {
                 "from_agent": "codex",
                 "to_agent": "claude-code",
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "task_description": "Split packet work",
                 "partial_result": "Preflight ready",
                 "key_facts": ["one", "two"],
@@ -3023,7 +3283,7 @@ class TestMcpToolExecution:
                 "executor_used": "local_slm_background",
                 "model_used": "qwen3:1.7b",
                 "result_summary": "Background job docs_rebuild completed.",
-                "verification_summary": "project=supermemory; sections=overview, api",
+                "verification_summary": "project=mnemoforge; sections=overview, api",
                 "poll": "/api/v1/tasks/job-docs-1",
             }
 
@@ -3043,7 +3303,7 @@ class TestMcpToolExecution:
         assert "executor_used: local_slm_background" in result
         assert "model_used: qwen3:1.7b" in result
         assert "result_summary: Background job docs_rebuild completed." in result
-        assert "verification_summary: project=supermemory; sections=overview, api" in result
+        assert "verification_summary: project=mnemoforge; sections=overview, api" in result
         assert "poll: /api/v1/tasks/job-docs-1" in result
 
     async def test_list_handoffs_surfaces_background_job_state(self, monkeypatch):
@@ -3081,7 +3341,7 @@ class TestMcpToolExecution:
     async def test_handoff_task_includes_phase_and_iteration_contract(self, monkeypatch):
         async def fake_post(api_base: str, path: str, payload: dict):
             if path == "/project/enrich-task":
-                assert payload["project_id"] == "supermemory"
+                assert payload["project_id"] == "mnemoforge"
                 assert payload["task"] == "Benchmark competitors"
                 return {
                     "context": "## Relevant Components\n\n### Handoff\n**Purpose:** Carry portable task context.\n",
@@ -3098,7 +3358,7 @@ class TestMcpToolExecution:
                     "message": "",
                 }
             assert path == "/models/handoff"
-            assert payload["project_id"] == "supermemory"
+            assert payload["project_id"] == "mnemoforge"
             assert payload["phase"] == "task_framing"
             assert payload["priority"] == "high"
             assert payload["definition_of_done"] == "Produce a planning packet"
@@ -3119,7 +3379,7 @@ class TestMcpToolExecution:
                 "memory_id": "mem-1",
                 "task_id": "abc12345",
                 "handoff_label": "benchmark28",
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "owner_agent": "claude-code",
                 "write_scope": ["handoff", "task-packet"],
                 "phase": "task_framing",
@@ -3152,7 +3412,7 @@ class TestMcpToolExecution:
                 "from_agent": "codex",
                 "to_agent": "claude-code",
                 "task_description": "Benchmark competitors",
-                "project_id": "supermemory",
+                "project_id": "mnemoforge",
                 "owner_agent": "claude-code",
                 "write_scope": ["handoff", "task-packet"],
                 "handoff_label": "benchmark28",

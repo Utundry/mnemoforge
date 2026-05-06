@@ -52,8 +52,8 @@ from app.services.mcp_tool_contracts import (
     build_reject_learning_candidate_payload,
     build_reopen_task_payload,
     build_send_coordination_message_payload,
-    build_supermemory_initialize_hint,
-    build_supermemory_onboarding_basics,
+    build_mnemoforge_initialize_hint,
+    build_mnemoforge_onboarding_basics,
     build_report_task_checkpoint_payload,
     format_coordination_list,
     format_coordination_message,
@@ -165,7 +165,7 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
     "project_knowledge": {
         "title": "Project knowledge & artifact lifecycle",
         "description": "Unified discovery for tasks, improvements, readiness, canonical knowledge, lifecycle checkpoints, reopen/resume flows, and lifecycle changes.",
-        "entrypoints": ["operational_tray", "project_workflow", "continue_task", "get_task_execution_context", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
+        "entrypoints": ["operational_tray", "record_work_result", "clerk_draft_report", "project_workflow", "continue_task", "get_task_execution_context", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
         "keywords": [
             "task",
             "tasks",
@@ -210,6 +210,7 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
             "enrich_task_with_context",
             "get_task_execution_context",
             "operational_tray",
+            "record_work_result",
             "review_improvement",
             "list_project_aliases",
             "rename_project",
@@ -220,6 +221,7 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
             "end_work_session",
             "record_stenographer_span",
             "list_stenographer_spans",
+            "clerk_draft_report",
             "draft_checkpoint_from_spans",
             "get_checkpoint_draft",
             "revise_checkpoint_draft",
@@ -618,24 +620,24 @@ def _mnemoforge_params(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_requested_tool_catalog_mode(params: dict[str, Any]) -> str:
-    supermemory = _mnemoforge_params(params)
-    tool_catalog = supermemory.get("tool_catalog") if isinstance(supermemory.get("tool_catalog"), dict) else {}
+    mnemoforge = _mnemoforge_params(params)
+    tool_catalog = mnemoforge.get("tool_catalog") if isinstance(mnemoforge.get("tool_catalog"), dict) else {}
     candidates = [
         tool_catalog.get("preferred_mode"),
         tool_catalog.get("mode"),
-        supermemory.get("tool_catalog_mode"),
+        mnemoforge.get("tool_catalog_mode"),
         params.get("tool_catalog_mode"),
     ]
     capabilities = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
     experimental = capabilities.get("experimental") if isinstance(capabilities.get("experimental"), dict) else {}
-    capability_supermemory = (
+    capability_mnemoforge = (
         capabilities.get("mnemoforge")
         if isinstance(capabilities.get("mnemoforge"), dict)
         else capabilities.get("supermemory")
         if isinstance(capabilities.get("supermemory"), dict)
         else {}
     )
-    experimental_supermemory = (
+    experimental_mnemoforge = (
         experimental.get("mnemoforge")
         if isinstance(experimental.get("mnemoforge"), dict)
         else experimental.get("supermemory")
@@ -644,8 +646,8 @@ def _extract_requested_tool_catalog_mode(params: dict[str, Any]) -> str:
     )
     candidates.extend(
         [
-            capability_supermemory.get("tool_catalog_mode"),
-            experimental_supermemory.get("tool_catalog_mode"),
+            capability_mnemoforge.get("tool_catalog_mode"),
+            experimental_mnemoforge.get("tool_catalog_mode"),
         ]
     )
     for candidate in candidates:
@@ -656,27 +658,27 @@ def _extract_requested_tool_catalog_mode(params: dict[str, Any]) -> str:
 
 
 def _extract_requested_context_hygiene_mode(params: dict[str, Any]) -> str:
-    supermemory = _mnemoforge_params(params)
-    context = supermemory.get("context") if isinstance(supermemory.get("context"), dict) else {}
+    mnemoforge = _mnemoforge_params(params)
+    context = mnemoforge.get("context") if isinstance(mnemoforge.get("context"), dict) else {}
     candidates = [
         context.get("hygiene_mode"),
         context.get("mode"),
-        supermemory.get("context_hygiene_mode"),
-        supermemory.get("context_profile"),
+        mnemoforge.get("context_hygiene_mode"),
+        mnemoforge.get("context_profile"),
         params.get("context_hygiene_mode"),
         params.get("context_profile"),
         params.get("response_mode"),
     ]
     capabilities = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
     experimental = capabilities.get("experimental") if isinstance(capabilities.get("experimental"), dict) else {}
-    capability_supermemory = (
+    capability_mnemoforge = (
         capabilities.get("mnemoforge")
         if isinstance(capabilities.get("mnemoforge"), dict)
         else capabilities.get("supermemory")
         if isinstance(capabilities.get("supermemory"), dict)
         else {}
     )
-    experimental_supermemory = (
+    experimental_mnemoforge = (
         experimental.get("mnemoforge")
         if isinstance(experimental.get("mnemoforge"), dict)
         else experimental.get("supermemory")
@@ -685,10 +687,10 @@ def _extract_requested_context_hygiene_mode(params: dict[str, Any]) -> str:
     )
     candidates.extend(
         [
-            capability_supermemory.get("context_hygiene_mode"),
-            capability_supermemory.get("context_profile"),
-            experimental_supermemory.get("context_hygiene_mode"),
-            experimental_supermemory.get("context_profile"),
+            capability_mnemoforge.get("context_hygiene_mode"),
+            capability_mnemoforge.get("context_profile"),
+            experimental_mnemoforge.get("context_hygiene_mode"),
+            experimental_mnemoforge.get("context_profile"),
         ]
     )
     for candidate in candidates:
@@ -716,20 +718,20 @@ def _casefold_nested(*values: Any) -> str:
 
 
 def _infer_small_context_modes(params: dict[str, Any]) -> dict[str, Any]:
-    supermemory = _mnemoforge_params(params)
-    context = supermemory.get("context") if isinstance(supermemory.get("context"), dict) else {}
+    mnemoforge = _mnemoforge_params(params)
+    context = mnemoforge.get("context") if isinstance(mnemoforge.get("context"), dict) else {}
     model = params.get("model") if isinstance(params.get("model"), dict) else {}
     model_info = params.get("modelInfo") if isinstance(params.get("modelInfo"), dict) else {}
     capabilities = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
     experimental = capabilities.get("experimental") if isinstance(capabilities.get("experimental"), dict) else {}
-    capability_supermemory = (
+    capability_mnemoforge = (
         capabilities.get("mnemoforge")
         if isinstance(capabilities.get("mnemoforge"), dict)
         else capabilities.get("supermemory")
         if isinstance(capabilities.get("supermemory"), dict)
         else {}
     )
-    experimental_supermemory = (
+    experimental_mnemoforge = (
         experimental.get("mnemoforge")
         if isinstance(experimental.get("mnemoforge"), dict)
         else experimental.get("supermemory")
@@ -746,8 +748,8 @@ def _infer_small_context_modes(params: dict[str, Any]) -> dict[str, Any]:
         model.get("contextWindow"),
         model_info.get("context_window"),
         model_info.get("contextWindow"),
-        capability_supermemory.get("model_context_window"),
-        experimental_supermemory.get("model_context_window"),
+        capability_mnemoforge.get("model_context_window"),
+        experimental_mnemoforge.get("model_context_window"),
     )
     profile_text = _casefold_nested(
         params.get("agent_profile"),
@@ -759,8 +761,8 @@ def _infer_small_context_modes(params: dict[str, Any]) -> dict[str, Any]:
         model.get("name"),
         model_info.get("tier"),
         model_info.get("name"),
-        capability_supermemory.get("agent_profile"),
-        experimental_supermemory.get("agent_profile"),
+        capability_mnemoforge.get("agent_profile"),
+        experimental_mnemoforge.get("agent_profile"),
     )
     inferred = False
     reason = ""
@@ -808,7 +810,10 @@ def _family_recommendation_score(task: str, family: str) -> int:
 
 
 def _tool_lifecycle_annotations(tool_name: str) -> dict[str, Any]:
-    stage = get_tool_stage(str(tool_name or "").strip())
+    try:
+        stage = get_tool_stage(str(tool_name or "").strip())
+    except Exception:
+        stage = "stable"
     return {
         "stage": stage,
         "feedback_expected": stage == "testing",
@@ -839,6 +844,19 @@ def _annotate_structured_tool_payload(tool_name: str, data: dict[str, Any]) -> d
                 normalized_items.append(item)
         enriched[key] = normalized_items
     return enriched
+
+
+def _checkpoint_draft_recommended_next_tool(data: dict[str, Any]) -> str:
+    status = str(data.get("status") or "").strip()
+    if status == "approved":
+        return "get_task_execution_context"
+    if status in {"rejected", "expired"}:
+        return "draft_checkpoint_from_spans"
+    return (
+        "approve_checkpoint_draft"
+        if data.get("validation_report", {}).get("can_approve")
+        else "revise_checkpoint_draft"
+    )
 
 
 _SMALL_CONTEXT_SERVICE_KEYS = {
@@ -2771,12 +2789,14 @@ TOOLS = [
     tool_definition("end_work_session"),
     tool_definition("record_stenographer_span"),
     tool_definition("list_stenographer_spans"),
+    tool_definition("clerk_draft_report"),
     tool_definition("draft_checkpoint_from_spans"),
     tool_definition("get_checkpoint_draft"),
     tool_definition("revise_checkpoint_draft"),
     tool_definition("approve_checkpoint_draft"),
     tool_definition("reject_checkpoint_draft"),
     tool_definition("draft_task_checkpoint"),
+    tool_definition("record_work_result"),
     tool_definition("record_task_checkpoint"),
     tool_definition("report_task_checkpoint"),
     tool_definition("operational_tray"),
@@ -3753,7 +3773,7 @@ def _operational_tray_target_tool(tray_action: str) -> str:
     return {
         "record_stage_evidence": "record_task_checkpoint",
         "record_checkpoint": "record_task_checkpoint",
-        "draft_checkpoint": "draft_task_checkpoint",
+        "draft_checkpoint": "clerk_draft_report",
         "review_rule_candidates": "get_rule_candidate_review_packet",
         "list_rule_candidates": "list_rule_candidates",
     }.get(str(tray_action or "").strip(), "")
@@ -4037,6 +4057,99 @@ def _format_tool_error_brief(exc: Exception, *, default: str = "request failed")
     if not message:
         return default
     return message[:180]
+
+
+def _string_list_arg(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _parse_artifact_key_ref(artifact_key: str) -> dict[str, str]:
+    parts = str(artifact_key or "").split(":", 2)
+    if len(parts) != 3:
+        return {}
+    artifact_type, project, local_id = [part.strip() for part in parts]
+    if not artifact_type or not project or not local_id:
+        return {}
+    return {"type": artifact_type, "project": project, "local_id": local_id}
+
+
+def _available_stenographer_spans(args: dict[str, Any], *, default_project: str, default_task_id: str = "") -> list[Any]:
+    if not bool(args.get("use_clerk", True)) or bool(args.get("force_direct_checkpoint", False)):
+        return []
+    try:
+        from app.services.stenographer_service import get_stenographer_store
+
+        work_id = str(args.get("work_id") or "").strip()
+        session_id_arg = str(args.get("session_id") or "").strip()
+        task_id = str(args.get("task_id") or default_task_id or "").strip()
+        return get_stenographer_store().list_spans(
+            project=str(args.get("project") or default_project or "mnemoforge").strip() or None,
+            task_id=task_id or None,
+            work_id=work_id or None,
+            agent_id=str(args.get("agent_id") or args.get("acted_by") or "codex").strip() or None if not work_id else None,
+            session_id=session_id_arg or None,
+            limit=int(args.get("clerk_span_limit") or args.get("limit") or 50),
+        )
+    except Exception:
+        return []
+
+
+async def _resolve_work_result_target(api_base: str, args: dict[str, Any]) -> dict[str, Any]:
+    project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    artifact_key = str(args.get("artifact_key") or "").strip()
+    task_id = str(args.get("task_id") or "").strip()
+    linked_artifact_key = ""
+    target_source = "provided"
+
+    parsed = _parse_artifact_key_ref(artifact_key)
+    if parsed:
+        project = parsed["project"]
+        if parsed["type"] == "task" and not task_id:
+            task_id = parsed["local_id"]
+        elif parsed["type"] == "improvement":
+            linked_artifact_key = artifact_key
+            try:
+                artifact = await _get(api_base, f"/artifacts/{quote(artifact_key, safe='')}")
+                linked = str(artifact.get("linked_artifact_key") or "").strip()
+                linked_parsed = _parse_artifact_key_ref(linked)
+                if linked_parsed.get("type") == "task":
+                    task_id = linked_parsed["local_id"]
+                    artifact_key = linked
+            except Exception:
+                pass
+    elif task_id:
+        artifact_key = f"task:{project}:{task_id}"
+
+    if not task_id:
+        try:
+            query = build_list_open_tasks_query({"project": project, "limit": 1})
+            data = await _get(api_base, f"/artifacts?{query}")
+            items = data.get("items") or []
+            if items:
+                item = items[0]
+                item_key = str(item.get("artifact_key") or "").strip()
+                item_parsed = _parse_artifact_key_ref(item_key)
+                if item_parsed.get("type") == "task":
+                    task_id = item_parsed["local_id"]
+                    artifact_key = item_key
+                    linked_artifact_key = str(item.get("linked_artifact_key") or "").strip()
+                    target_source = "newest_open_task"
+        except Exception:
+            target_source = "unmatched"
+
+    return {
+        "project": project,
+        "task_id": task_id,
+        "artifact_key": artifact_key,
+        "linked_artifact_key": linked_artifact_key,
+        "target_source": target_source if task_id else "unmatched",
+    }
 
 
 async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None) -> str:
@@ -5078,6 +5191,199 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
+    elif name == "record_work_result":
+        target = await _resolve_work_result_target(api_base, args)
+        project = target["project"]
+        summary = str(args["summary"]).strip()
+        title = str(args.get("title") or "Agent work result").strip() or "Agent work result"
+        changed_files = _string_list_arg(args.get("changed_files"))
+        verification = _string_list_arg(args.get("verification"))
+        decisions = _string_list_arg(args.get("decisions"))
+        blockers = _string_list_arg(args.get("blockers"))
+        remaining_risk = _string_list_arg(args.get("remaining_risk"))
+        next_step = str(args.get("next_step") or "").strip()
+        source = str(args.get("source") or "record_work_result").strip() or "record_work_result"
+        agent_id = str(args.get("agent_id") or args.get("acted_by") or "codex").strip() or "codex"
+
+        memory_lines = [title, "", summary]
+        if changed_files:
+            memory_lines.append("Changed files: " + ", ".join(changed_files))
+        if verification:
+            memory_lines.append("Verification: " + "; ".join(verification))
+        if decisions:
+            memory_lines.append("Decisions: " + "; ".join(decisions))
+        if blockers:
+            memory_lines.append("Blockers: " + "; ".join(blockers))
+        if remaining_risk:
+            memory_lines.append("Remaining risk: " + "; ".join(remaining_risk))
+        if next_step:
+            memory_lines.append("Next step: " + next_step)
+        memory_payload = {
+            "content": "\n".join(memory_lines),
+            "agent_id": agent_id,
+            "memory_type": "task",
+            "category": "work_result",
+            "importance_score": float(args.get("importance_score") or 0.65),
+            "source": source,
+            "tags": [
+                "work_result",
+                f"project:{project}",
+                f"target:{target['target_source']}",
+            ],
+        }
+        if target.get("task_id"):
+            memory_payload["tags"].append(f"task_id:{target['task_id']}")
+        memory_result = await _post(api_base, "/memories", memory_payload)
+
+        created_issue = None
+        clerk_draft = None
+        checkpoint_result = None
+        resolve_result = None
+        route = ["memory"]
+        warnings: list[str] = []
+
+        if not target.get("task_id") and bool(args.get("create_issue_if_unmatched", False)):
+            created_issue = await _post(
+                api_base,
+                "/improvements",
+                {
+                    "project": project,
+                    "title": title,
+                    "description": summary,
+                    "agent_id": agent_id,
+                    "importance_score": float(args.get("importance_score") or 0.65),
+                    "stage": "proposal",
+                    "tags": ["work-result", "mcp-facade", f"project:{project}"],
+                },
+            )
+            route.append("improvement")
+
+        if target.get("task_id"):
+            available_spans = _available_stenographer_spans(args, default_project=project, default_task_id=target["task_id"])
+            if available_spans:
+                try:
+                    from app.dependencies import get_llm_gateway
+                    from app.services.checkpoint_draft_service import draft_checkpoint_from_spans
+
+                    draft_args = {
+                        "project": project,
+                        "task_id": target["task_id"],
+                        "work_id": str(args.get("work_id") or "").strip(),
+                        "agent_id": agent_id,
+                        "session_id": str(args.get("session_id") or "").strip(),
+                        "stage": str(args.get("stage") or "completed").strip() or "completed",
+                        "status": str(args.get("status") or "done").strip() or "done",
+                        "reason": str(args.get("reason") or "record_work_result_clerk_draft").strip(),
+                        "use_llm": bool(args.get("clerk_use_llm", args.get("use_llm", False))),
+                        "preserve_evidence": bool(args.get("preserve_evidence", True)),
+                        "limit": int(args.get("clerk_span_limit") or args.get("limit") or 50),
+                    }
+                    clerk_record = await draft_checkpoint_from_spans(draft_args, get_llm_gateway())
+                    clerk_draft = clerk_record.model_dump(mode="json")
+                    clerk_draft["mutates_memory"] = False
+                    clerk_draft["recommended_next_tool"] = (
+                        "approve_checkpoint_draft"
+                        if clerk_draft.get("validation_report", {}).get("can_approve")
+                        else "revise_checkpoint_draft"
+                    )
+                    route.append("clerk_draft")
+                    warnings.append(
+                        "Stenographer spans were available, so record_work_result created a review-only clerk draft instead of writing a direct task checkpoint."
+                    )
+                    if bool(args.get("should_resolve_artifact", False)):
+                        warnings.append("Artifact was not resolved because clerk draft approval is required before lifecycle closure.")
+                except Exception as exc:
+                    warnings.append(f"Clerk draft failed; falling back to direct checkpoint: {_format_tool_error_brief(exc)}")
+
+            if clerk_draft is not None:
+                data = {
+                    "status": "drafted",
+                    "project": project,
+                    "route": route,
+                    "target": target,
+                    "memory": {"id": memory_result.get("id")},
+                    "clerk_draft": {
+                        "draft_id": clerk_draft.get("draft_id"),
+                        "version": clerk_draft.get("version"),
+                        "status": clerk_draft.get("status"),
+                        "recommended_next_tool": clerk_draft.get("recommended_next_tool"),
+                        "validation_report": clerk_draft.get("validation_report"),
+                        "source_span_ids": clerk_draft.get("source_span_ids"),
+                    },
+                    "checkpoint": None,
+                    "created_issue": created_issue,
+                    "resolved_artifact": None,
+                    "warnings": warnings,
+                    "next_action": clerk_draft.get("recommended_next_tool") or "Review clerk draft before persisting checkpoint.",
+                }
+                data = _annotate_structured_tool_payload(name, data)
+                return json.dumps(data, indent=2, ensure_ascii=False)
+
+            stage = str(args.get("stage") or "completed").strip().lower()
+            checkpoint_args = {
+                "project": project,
+                "task_id": target["task_id"],
+                "stage": stage,
+                "summary": summary,
+                "checkpoint_mode": str(args.get("checkpoint_mode") or "standard").strip() or "standard",
+                "changed_files": changed_files,
+                "verification": verification,
+                "decisions": decisions,
+                "blockers": blockers,
+                "remaining_risk": remaining_risk,
+                "next_step": next_step,
+                "next_step_scope": str(args.get("next_step_scope") or "none").strip() or "none",
+                "status": args.get("status") or ("done" if stage == "completed" else "active"),
+                "reason": str(args.get("reason") or "record_work_result closeout").strip(),
+                "acted_by": str(args.get("acted_by") or agent_id).strip() or agent_id,
+                "source": source,
+            }
+            checkpoint_payload = build_report_task_checkpoint_payload(checkpoint_args)
+            checkpoint_result = await _post(
+                api_base,
+                f"/project/tasks/{quote(target['task_id'], safe='')}/changes",
+                checkpoint_payload,
+            )
+            route.append("task_checkpoint")
+            if checkpoint_result.get("id"):
+                checkpoint_result["stage_evidence"] = f"checkpoint:{checkpoint_result['id']}"
+
+            if bool(args.get("should_resolve_artifact", False)):
+                artifact_to_resolve = target.get("artifact_key") or f"task:{project}:{target['task_id']}"
+                resolve_result = await _post(
+                    api_base,
+                    f"/artifacts/{quote(artifact_to_resolve, safe='')}/resolve",
+                    {
+                        "acted_by": str(args.get("acted_by") or agent_id).strip() or agent_id,
+                        "action_source": source,
+                        "reason": summary,
+                    },
+                )
+                route.append("resolve_artifact")
+        elif not created_issue:
+            warnings.append(
+                "No task_id/artifact_key was provided and no open task could be matched; recorded memory-only result."
+            )
+
+        data = {
+            "status": "recorded",
+            "project": project,
+            "route": route,
+            "target": target,
+            "memory": {"id": memory_result.get("id")},
+            "checkpoint": checkpoint_result,
+            "created_issue": created_issue,
+            "resolved_artifact": resolve_result,
+            "warnings": warnings,
+            "next_action": (
+                "Review unresolved follow-up before resolving artifact."
+                if remaining_risk or blockers or next_step
+                else "No immediate follow-up recorded."
+            ),
+        }
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
     elif name in {
         "get_work_session_state",
         "start_work_session",
@@ -5136,6 +5442,36 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                     status=str(args["status"]),
                     result=str(args.get("result") or ""),
                 ).model_dump(mode="json")
+                if str(args.get("status") or "").strip() == "completed":
+                    spans = store.list_spans(
+                        project=str(data.get("project") or "") or None,
+                        task_id=str(args["task_id"]),
+                        work_id=str(args["work_id"]),
+                        limit=50,
+                    )
+                    if spans:
+                        data["stenographer_span_count"] = len(spans)
+                        from app.services.checkpoint_draft_service import get_checkpoint_draft_store
+
+                        latest_draft = get_checkpoint_draft_store().latest_for_work(
+                            project=str(data.get("project") or ""),
+                            task_id=str(args["task_id"]),
+                            work_id=str(args["work_id"]),
+                        )
+                        if latest_draft and latest_draft.status == "approved":
+                            data["approved_checkpoint_draft_id"] = latest_draft.draft_id
+                            data["saved_change_id"] = latest_draft.saved_change_id
+                            data["recommended_next_tool"] = "get_task_execution_context"
+                            data["closeout_notice"] = (
+                                "Stenographer spans already have an approved checkpoint draft. "
+                                "Use get_task_execution_context for the next operational step."
+                            )
+                        else:
+                            data["recommended_next_tool"] = "clerk_draft_report"
+                            data["closeout_notice"] = (
+                                "Stenographer spans exist for this completed work session. "
+                                "Use clerk_draft_report to structure them into a review-only checkpoint/report draft before governed memory mutation."
+                            )
             elif name == "record_stenographer_span":
                 data = store.record_span(
                     project=str(args.get("project") or "mnemoforge"),
@@ -5171,6 +5507,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name in {
+        "clerk_draft_report",
         "draft_checkpoint_from_spans",
         "get_checkpoint_draft",
         "revise_checkpoint_draft",
@@ -5188,12 +5525,40 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         )
 
         try:
-            if name == "draft_checkpoint_from_spans":
+            if name == "clerk_draft_report":
+                if str(args.get("raw_notes") or "").strip():
+                    from app.services.memory_scribe_service import draft_task_checkpoint
+
+                    data = await draft_task_checkpoint(
+                        {
+                            **args,
+                            "reason": str(args.get("reason") or "clerk_draft_report"),
+                        },
+                        get_llm_gateway(),
+                    )
+                    data["clerk_mode"] = "raw_notes"
+                    data["mutates_memory"] = False
+                    data["recommended_next_tool"] = "record_task_checkpoint" if data.get("validation_report", {}).get("can_approve") else "revise_notes_or_add_evidence"
+                else:
+                    data = (
+                        await draft_checkpoint_from_spans(
+                            {
+                                **args,
+                                "reason": str(args.get("reason") or "clerk_draft_report"),
+                                "preserve_evidence": bool(args.get("preserve_evidence", True)),
+                            },
+                            get_llm_gateway(),
+                        )
+                    ).model_dump(mode="json")
+                    data["clerk_mode"] = "stenographer_spans"
+                    data["mutates_memory"] = False
+                    data["recommended_next_tool"] = _checkpoint_draft_recommended_next_tool(data)
+            elif name == "draft_checkpoint_from_spans":
                 data = (
                     await draft_checkpoint_from_spans(args, get_llm_gateway())
                 ).model_dump(mode="json")
                 data["mutates_memory"] = False
-                data["recommended_next_tool"] = "approve_checkpoint_draft" if data.get("validation_report", {}).get("can_approve") else "revise_checkpoint_draft"
+                data["recommended_next_tool"] = _checkpoint_draft_recommended_next_tool(data)
             elif name == "get_checkpoint_draft":
                 record = get_checkpoint_draft(
                     str(args["draft_id"]),
@@ -5213,7 +5578,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                         "metrics": data["metrics"],
                         "content_hash": data["content_hash"],
                         "source_span_ids": data["source_span_ids"],
-                        "recommended_next_tool": "approve_checkpoint_draft" if data.get("validation_report", {}).get("can_approve") else "revise_checkpoint_draft",
+                        "recommended_next_tool": _checkpoint_draft_recommended_next_tool(data),
                     }
             elif name == "revise_checkpoint_draft":
                 data = revise_checkpoint_draft(
@@ -5222,8 +5587,13 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                     revised_by=str(args.get("revised_by") or "codex"),
                 ).model_dump(mode="json")
                 data["mutates_memory"] = False
-                data["recommended_next_tool"] = "approve_checkpoint_draft" if data.get("validation_report", {}).get("can_approve") else "revise_checkpoint_draft"
+                data["recommended_next_tool"] = _checkpoint_draft_recommended_next_tool(data)
             elif name == "approve_checkpoint_draft":
+                before_approve = get_checkpoint_draft(
+                    str(args["draft_id"]),
+                    int(args["version"]),
+                )
+                was_approved = before_approve.status == "approved"
                 data = (
                     await approve_checkpoint_draft(
                         str(args["draft_id"]),
@@ -5235,6 +5605,8 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 ).model_dump(mode="json")
                 data["mutates_memory"] = True
                 data["saved_by_reference"] = True
+                data["already_approved"] = was_approved
+                data["recommended_next_tool"] = _checkpoint_draft_recommended_next_tool(data)
             else:
                 data = reject_checkpoint_draft(
                     str(args["draft_id"]),
@@ -5621,7 +5993,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 get_active_operational_instincts(
                     context_type="onboarding",
                     storage_trust_status=locals().get("trust_status", "ok"),
-                    limit=5,
+                    limit=8,
                 )
             )
         )
@@ -5899,12 +6271,15 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 **action_args,
                 "project": args.get("project", "mnemoforge"),
                 "task_id": args.get("task_id", action_args.get("task_id", "")),
+                "work_id": action_args.get("work_id") or args.get("work_id", ""),
+                "agent_id": action_args.get("agent_id") or args.get("agent_id", "codex"),
+                "session_id": action_args.get("session_id") or args.get("session_id", ""),
                 "task_title": action_args.get("task_title") or str(args.get("task") or "")[:160],
                 "raw_notes": action_args.get("raw_notes") or str(args.get("task") or ""),
                 "stage": action_args.get("stage") or _checkpoint_stage_for_state(str(args["state"])),
                 "status": action_args.get("status") or "active",
             }
-            return await _execute_tool("draft_task_checkpoint", draft_args, api_base, session_id=session_id)
+            return await _execute_tool("clerk_draft_report", draft_args, api_base, session_id=session_id)
         if tray_action == "review_rule_candidates":
             review_args = {
                 "project": args.get("project", "mnemoforge"),
@@ -6124,7 +6499,7 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
             "serverInfo": {"name": "mnemoforge", "version": "1.0.0"},
         }
         if agent_id:
-            result["_mnemoforge"] = build_supermemory_initialize_hint(agent_id)
+            result["_mnemoforge"] = build_mnemoforge_initialize_hint(agent_id)
             result["_supermemory"] = result["_mnemoforge"]
             if negotiated_tool_catalog_mode:
                 result["_mnemoforge"]["tool_catalog"]["negotiated_mode"] = negotiated_tool_catalog_mode

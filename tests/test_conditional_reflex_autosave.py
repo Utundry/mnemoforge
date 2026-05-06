@@ -1,4 +1,4 @@
-"""Regression test: conditional reflex for auto-saving reports to supermemory."""
+"""Regression test: conditional reflex for auto-saving reports to mnemoforge."""
 
 from __future__ import annotations
 

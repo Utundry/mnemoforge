@@ -89,7 +89,7 @@ async def test_memory_scribe_preserves_explicit_structured_fields_before_summary
 
     draft = await draft_task_checkpoint(
         {
-            "project": "supermemory",
+            "project": "mnemoforge",
             "task_id": "task-structured-first",
             "stage": "completed",
             "status": "done",
@@ -321,6 +321,18 @@ async def test_approve_checkpoint_draft_saves_by_reference(monkeypatch) -> None:
 
         assert approved.status == "approved"
         assert approved.saved_change_id == "change-1"
+        assert saved_payloads == [draft.record_task_checkpoint_args]
+
+        approved_again = await approve_checkpoint_draft(
+            draft.draft_id,
+            draft.version,
+            approved_by="codex",
+            save_checkpoint=fake_save,
+            store=drafts,
+        )
+
+        assert approved_again.status == "approved"
+        assert approved_again.saved_change_id == "change-1"
         assert saved_payloads == [draft.record_task_checkpoint_args]
     finally:
         stenographer.close()

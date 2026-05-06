@@ -54,4 +54,4 @@ Type: <type> | Importance: <score>
 ```
 
 If the memory server is unreachable, say so clearly and suggest running:
-`docker compose up qdrant -d` and `uvicorn app.main:app` in `D:\work\supermemory`
+`docker compose up qdrant -d` and `uvicorn app.main:app` in `D:\work\mnemoforge`

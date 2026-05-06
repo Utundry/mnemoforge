@@ -76,7 +76,7 @@ def test_unified_mcp_surface_instinct_mentions_list_artifacts_and_no_sql(tmp_pat
 
     assert "list_artifacts" in instinct["action"]
     assert "do not read project tables directly" in instinct["action"].lower()
-    assert "report the outcome back to SuperMemory" in instinct["action"]
+    assert "report the outcome back to mnemoforge" in instinct["action"]
 
 
 def test_render_operational_instincts_block_is_human_and_llm_readable(tmp_path: Path, monkeypatch):

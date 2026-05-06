@@ -36,7 +36,7 @@ def test_positive_feedback_can_promote_testing_tool_to_stable(tmp_path: Path, mo
         friction="",
         suggestion="",
         task_context="",
-        project_id="supermemory",
+        project_id="mnemoforge",
         agent_id="codex",
         session_id="sess-1",
     )

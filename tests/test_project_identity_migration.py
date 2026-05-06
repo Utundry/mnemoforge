@@ -8,7 +8,7 @@ from scripts.migrate_project_identity import migrate_sqlite_file, migrate_value,
 
 
 def test_migrate_value_rewrites_structured_refs_without_free_text():
-    raw = '{"project": "supermemory", "tags": ["project:supermemory"], "content": "SuperMemory was the old name."}'
+    raw = '{"project": "mnemoforge", "tags": ["project:supermemory"], "content": "SuperMemory was the old name."}'
 
     migrated = migrate_value(raw, "supermemory", "mnemoforge", include_text=False)
 

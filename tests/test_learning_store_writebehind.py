@@ -24,9 +24,9 @@ async def test_learning_store_write_event_batches(tmp_path):
                 store.write_event(
                     event_type="run_tests",
                     agent_id="test",
-                    project="supermemory",
+                    project="mnemoforge",
                     transport="pytest",
-                    context_signature="project=supermemory;task_type=test;phase=unit;category=learning;transport=pytest",
+                    context_signature="project=mnemoforge;task_type=test;phase=unit;category=learning;transport=pytest",
                     payload={"i": i},
                 )
             )

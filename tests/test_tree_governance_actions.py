@@ -122,7 +122,7 @@ async def test_upsert_node_by_path_creates_and_updates_structured_knowledge(clie
     response = await client.post(
         "/api/v1/tree/upsert-by-path",
         json={
-            "topic_path": "supermemory/architecture/mcp/compact-discovery",
+            "topic_path": "mnemoforge/architecture/mcp/compact-discovery",
             "title": "Compact MCP Discovery",
             "type": "area",
             "status": "active",
@@ -143,7 +143,7 @@ async def test_upsert_node_by_path_creates_and_updates_structured_knowledge(clie
     body = response.json()
     assert body["created"] is True
     node = body["node"]
-    assert node["topic_path"] == "supermemory/architecture/mcp/compact-discovery"
+    assert node["topic_path"] == "mnemoforge/architecture/mcp/compact-discovery"
     assert "structured_knowledge" in node["tags"]
     structured = node["meta_json"]["structured_knowledge"]
     assert structured["responsibility"] == "Expose a small MCP catalog before the full flat tool list."
@@ -152,7 +152,7 @@ async def test_upsert_node_by_path_creates_and_updates_structured_knowledge(clie
     updated = await client.post(
         "/api/v1/tree/upsert-by-path",
         json={
-            "topic_path": "supermemory/architecture/mcp/compact-discovery",
+            "topic_path": "mnemoforge/architecture/mcp/compact-discovery",
             "title": "Compact MCP Discovery",
             "type": "area",
             "status": "active",

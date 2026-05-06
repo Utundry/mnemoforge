@@ -355,6 +355,19 @@ class CheckpointDraftStore:
             ).fetchone()
         return self._row_to_record(row) if row else None
 
+    def latest_for_work(self, *, project: str, task_id: str, work_id: str) -> CheckpointDraftRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT * FROM checkpoint_drafts
+                 WHERE project=? AND task_id=? AND work_id=?
+                 ORDER BY updated_at DESC, version DESC
+                 LIMIT 1
+                """,
+                (project, task_id, work_id),
+            ).fetchone()
+        return self._row_to_record(row) if row else None
+
     def update_status(
         self,
         *,
@@ -559,6 +572,8 @@ async def approve_checkpoint_draft(
         raise DraftValidationError("draft_not_found", "Checkpoint draft not found.")
     if current.version != int(version):
         raise DraftValidationError("stale_draft_version", "Approve requires the latest checked draft version.", draft=current.model_dump(mode="json"))
+    if current.status == "approved":
+        return current
     if current.status not in {"drafted", "revised"}:
         raise DraftValidationError("draft_not_approvable", "Checkpoint draft is not approvable.", draft=current.model_dump(mode="json"))
     if not current.validation_report.get("can_approve"):

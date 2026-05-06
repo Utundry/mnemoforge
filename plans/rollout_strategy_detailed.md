@@ -197,7 +197,7 @@ export UNIFIED_ARTIFACTS_ENABLED=true
 export UNIFIED_ARTIFACTS_CANARY_PERCENT=10
 
 # Перезапустить сервис
-systemctl restart supermemory-api
+systemctl restart mnemoforge-api
 ```
 
 #### 2. Мониторинг в течение 24 часов
@@ -216,13 +216,13 @@ systemctl restart supermemory-api
 
 ```bash
 # Просмотр sync операций
-grep "sync_operation" /var/log/supermemory/unified_artifacts.log | jq .
+grep "sync_operation" /var/log/mnemoforge/unified_artifacts.log | jq .
 
 # Просмотр edge cases
-grep "edge_case" /var/log/supermemory/unified_artifacts.log | jq .
+grep "edge_case" /var/log/mnemoforge/unified_artifacts.log | jq .
 
 # Просмотр ошибок
-grep "ERROR" /var/log/supermemory/unified_artifacts.log | tail -100
+grep "ERROR" /var/log/mnemoforge/unified_artifacts.log | tail -100
 ```
 
 #### 3. Ежедневный отчет
@@ -351,7 +351,7 @@ def emergency_rollback():
     os.environ["UNIFIED_ARTIFACTS_ENABLED"] = "false"
 
     # 2. Перезапустить сервис
-    os.system("systemctl restart supermemory-api")
+    os.system("systemctl restart mnemoforge-api")
 
     # 3. Отправить уведомление
     send_slack_notification(
@@ -380,7 +380,7 @@ def emergency_rollback():
 
 ```bash
 export UNIFIED_ARTIFACTS_CANARY_PERCENT=50
-systemctl restart supermemory-api
+systemctl restart mnemoforge-api
 ```
 
 #### 2. Дополнительный мониторинг
@@ -441,7 +441,7 @@ async def load_test_get_artifact(concurrency=10, duration=60):
                 try:
                     req_start = datetime.utcnow()
                     async with session.get(
-                        "/artifacts/improvement:supermemory:abc"
+                        "/artifacts/improvement:mnemoforge:abc"
                     ) as response:
                         await response.text()
                         req_end = datetime.utcnow()
@@ -493,7 +493,7 @@ print(json.dumps(results, indent=2))
 
 ```bash
 export UNIFIED_ARTIFACTS_CANARY_PERCENT=100
-systemctl restart supermemory-api
+systemctl restart mnemoforge-api
 ```
 
 #### 2. Удаление canary логики
@@ -530,18 +530,18 @@ def compare_endpoints():
     # Legacy endpoints
     legacy_improvements = benchmark_endpoint(
         "GET /improvements",
-        params={"project": "supermemory", "status": "open"},
+        params={"project": "mnemoforge", "status": "open"},
     )
 
     legacy_tasks = benchmark_endpoint(
         "GET /project-tasks",
-        params={"project": "supermemory", "status": "active"},
+        params={"project": "mnemoforge", "status": "active"},
     )
 
     # Unified endpoint
     unified_artifacts = benchmark_endpoint(
         "GET /artifacts",
-        params={"project": "supermemory", "status": "open", "type": None},
+        params={"project": "mnemoforge", "status": "open", "type": None},
     )
 
     return {
@@ -627,7 +627,7 @@ async def list_improvements(
 **Before (Legacy):**
 ```python
 # List improvements
-response = requests.get("/improvements?project=supermemory&status=open")
+response = requests.get("/improvements?project=mnemoforge&status=open")
 
 # Get improvement by ID
 response = requests.get(f"/improvements/{improvement_id}")
@@ -639,10 +639,10 @@ response = requests.patch(f"/improvements/{improvement_id}/resolve")
 **After (Unified):**
 ```python
 # List artifacts (improvements only)
-response = requests.get("/artifacts?project=supermemory&status=open&type=improvement")
+response = requests.get("/artifacts?project=mnemoforge&status=open&type=improvement")
 
 # Get artifact by artifact_key
-artifact_key = f"improvement:supermemory:{improvement_id}"
+artifact_key = f"improvement:mnemoforge:{improvement_id}"
 response = requests.get(f"/artifacts/{artifact_key}")
 
 # Resolve artifact
@@ -710,7 +710,7 @@ def notify_users_about_deprecation():
     for user in users:
         send_email(
             to=user.email,
-            subject="Important: SuperMemory API Changes",
+            subject="Important: MnemoForge API Changes",
             body=f"""
             Dear {user.name},
 
@@ -728,12 +728,12 @@ def notify_users_about_deprecation():
             - POST /artifacts/{{artifact_key}}/resolve
             - POST /artifacts/{{artifact_key}}/reopen
 
-            Migration guide: https://docs.supermemory.ai/migration/unified-artifacts
+            Migration guide: https://docs.mnemoforge.ai/migration/unified-artifacts
 
             Legacy endpoints will be removed on {deprecation_date}.
 
             Best regards,
-            SuperMemory Team
+            MnemoForge Team
             """,
         )
 ```
@@ -763,7 +763,7 @@ def notify_users_about_deprecation():
 # docs/api/unified-artifacts.yaml - удалить legacy endpoints
 
 # 4. Перезапустить сервис
-systemctl restart supermemory-api
+systemctl restart mnemoforge-api
 
 # 5. Верифицировать
 curl -X GET /improvements  # Должен вернуть 404 Not Found

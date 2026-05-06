@@ -100,7 +100,7 @@ class TestEventsApi:
         r = await client.post(f"{BASE}/events", json={
             "event_type": "user_request",
             "agent_id": "test-agent",
-            "project": "supermemory",
+            "project": "mnemoforge",
         })
         assert r.status_code == 201
         body = r.json()
@@ -133,7 +133,7 @@ class TestEventsApi:
     async def test_record_event_with_payload(self, client):
         r = await client.post(f"{BASE}/events", json={
             "event_type": "user_request",
-            "payload": {"request_type": "save_to_supermemory"},
+            "payload": {"request_type": "save_to_mnemoforge"},
         })
         assert r.status_code == 201
 
@@ -187,7 +187,7 @@ class TestCreateCandidate:
         r = await client.post(f"{BASE}/candidates", json={
             "artifact_type": "if_then_rule",
             "action_type": "suggest_save_result",
-            "trigger_dsl": 'event(user_request).request_type == "save_to_supermemory"',
+            "trigger_dsl": 'event(user_request).request_type == "save_to_mnemoforge"',
             "content": "When user requests save, auto-suggest memory write.",
             "observation": "Save requests without memory writes.",
             "why_it_matters": "Reduces manual saves.",
@@ -238,7 +238,7 @@ class TestCreateCandidate:
             "artifact_type": "hint",
             "action_type": "suggest_save_result",
             "content": "Content.",
-            "project": "supermemory",
+            "project": "mnemoforge",
             "phase": "implement",
             "category": "code",
             "transport": "mcp",
@@ -512,7 +512,7 @@ class TestContextSignatureApi:
 
     async def test_build_context_signature(self, client):
         r = await client.post(f"{BASE}/context-signature", json={
-            "project": "supermemory",
+            "project": "mnemoforge",
             "task_type": "code",
             "phase": "implement",
             "category": "general",
@@ -520,7 +520,7 @@ class TestContextSignatureApi:
         })
         assert r.status_code == 200
         sig = r.json()["context_signature"]
-        assert "project=supermemory" in sig
+        assert "project=mnemoforge" in sig
         assert "phase=implement" in sig
 
     async def test_context_signature_deterministic(self, client):

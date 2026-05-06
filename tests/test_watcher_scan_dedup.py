@@ -81,7 +81,7 @@ async def test_watcher_scan_analyzes_dialogue_history_and_creates_review_candida
 
     assert response.status_code == 200
 
-    improvements = await client.get("/api/v1/artifacts?project=supermemory&type=improvement&artifact_status=open&limit=50")
+    improvements = await client.get("/api/v1/artifacts?project=mnemoforge&type=improvement&artifact_status=open&limit=50")
     assert improvements.status_code == 200
     data = improvements.json()
     items = data.get("items", [])

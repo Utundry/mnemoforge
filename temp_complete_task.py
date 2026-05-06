@@ -15,7 +15,7 @@ async def complete_task():
     qdrant = QdrantService(client)
 
     # Get the task
-    task = await get_project_task(qdrant, project="supermemory", task_id=task_id)
+    task = await get_project_task(qdrant, project="mnemoforge", task_id=task_id)
     if not task:
         print(f"Task {task_id} not found")
         return

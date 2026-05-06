@@ -4,7 +4,7 @@ from app.services.text_localization import looks_like_mojibake
 
 async def check():
     store = get_improvements_store()
-    rows = await store.list(project='supermemory', status='open', limit=50)
+    rows = await store.list(project='mnemoforge', status='open', limit=50)
     mojibake_count = 0
     for row in rows:
         title = row['title']

@@ -65,7 +65,7 @@ async def test_ensure_project_laws_from_markdown_if_missing_imports_when_no_acti
     result = await law_import_service.ensure_project_laws_from_markdown_if_missing(
         qdrant=object(),
         ollama=object(),
-        project="supermemory",
+        project="mnemoforge",
         path=str(path),
         agent_id="system",
         confirmed_by="system",
@@ -74,7 +74,7 @@ async def test_ensure_project_laws_from_markdown_if_missing_imports_when_no_acti
     )
 
     assert result is not None
-    assert result.project == "supermemory"
+    assert result.project == "mnemoforge"
     assert result.created == 1
 
 
@@ -94,7 +94,7 @@ async def test_ensure_project_laws_from_markdown_if_missing_skips_when_active_ex
     result = await law_import_service.ensure_project_laws_from_markdown_if_missing(
         qdrant=object(),
         ollama=object(),
-        project="supermemory",
+        project="mnemoforge",
         path=str(path),
         agent_id="system",
         confirmed_by="system",

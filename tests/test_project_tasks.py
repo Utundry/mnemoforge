@@ -79,7 +79,7 @@ async def test_project_tasks_api_resolves_project_alias_for_resume_paths(client,
         reason="canonical",
     )
     alias_store.upsert_alias(
-        alias="supermemory",
+        alias="mnemoforge",
         project_id="mnemoforge",
         reason="old working name",
     )
@@ -88,12 +88,12 @@ async def test_project_tasks_api_resolves_project_alias_for_resume_paths(client,
             "/api/v1/project/tasks",
             json={
                 "task_id": "publish-release",
-                "project": "supermemory",
+                "project": "mnemoforge",
                 "title": "Publish release",
                 "description": "Publish to GitHub and Docker Hub.",
                 "agent_id": "codex",
                 "status": "active",
-                "tags": ["github", "dockerhub", "project:supermemory"],
+                "tags": ["github", "dockerhub", "project:mnemoforge"],
             },
         )
         assert create.status_code == 201, create.text
@@ -101,11 +101,11 @@ async def test_project_tasks_api_resolves_project_alias_for_resume_paths(client,
         change = await client.post(
             "/api/v1/project/tasks/publish-release/changes",
             json={
-                "project": "supermemory",
+                "project": "mnemoforge",
                 "change_type": "decision",
                 "content": "Use MnemoForge as release identity.",
                 "agent_id": "codex",
-                "tags": ["project:supermemory"],
+                "tags": ["project:mnemoforge"],
             },
         )
         assert change.status_code == 201, change.text
@@ -116,7 +116,7 @@ async def test_project_tasks_api_resolves_project_alias_for_resume_paths(client,
         assert body["task_id"] == "publish-release"
         assert body["project"] == "mnemoforge"
         assert "project:mnemoforge" in body["tags"]
-        assert "project:supermemory" not in body["tags"]
+        assert "project:mnemoforge" not in body["tags"]
         assert body["changes"][0]["project"] == "mnemoforge"
         assert "project:mnemoforge" in body["changes"][0]["tags"]
 

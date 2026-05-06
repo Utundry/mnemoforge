@@ -1204,6 +1204,71 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "record_work_result": {
+        "name": "record_work_result",
+        "description": (
+            "High-level closeout facade for agent work. Use this when you want to save the current result "
+            "without choosing between memory_store, task checkpoints, and artifact lifecycle tools. "
+            "It always records a compact memory summary, tries to attach to a task when task_id/artifact_key is provided "
+            "or a recent open task is available, and can optionally resolve the linked artifact."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["summary"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge", "description": "Project name"},
+                "summary": {"type": "string", "description": "Short result summary to persist"},
+                "task_id": {"type": "string", "description": "Optional task identifier. If omitted, the facade tries the newest open task."},
+                "artifact_key": {"type": "string", "description": "Optional unified artifact key, e.g. task:mnemoforge:<id> or improvement:mnemoforge:<id>."},
+                "title": {"type": "string", "description": "Optional human title for the memory record"},
+                "stage": {
+                    "type": "string",
+                    "enum": ["planning", "in_progress", "blocked", "interrupted", "handoff", "completed"],
+                    "default": "completed",
+                    "description": "Checkpoint stage when a task checkpoint is recorded",
+                },
+                "checkpoint_mode": {
+                    "type": "string",
+                    "enum": ["lightweight", "standard", "full"],
+                    "default": "standard",
+                },
+                "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
+                "verification": {"type": "array", "items": {"type": "string"}, "default": []},
+                "decisions": {"type": "array", "items": {"type": "string"}, "default": []},
+                "blockers": {"type": "array", "items": {"type": "string"}, "default": []},
+                "remaining_risk": {"type": "array", "items": {"type": "string"}, "default": []},
+                "next_step": {"type": "string", "description": "Remaining work or resume point"},
+                "next_step_scope": {
+                    "type": "string",
+                    "enum": ["none", "follow_up_task", "same_artifact_remaining_work", "operator_review", "unknown"],
+                    "default": "none",
+                },
+                "should_resolve_artifact": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Resolve the linked artifact after checkpointing. Defaults to false to avoid accidental closure.",
+                },
+                "use_clerk": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "When stenographer spans are available, create a review-only clerk draft before direct checkpointing.",
+                },
+                "force_direct_checkpoint": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Bypass clerk draft creation and write the checkpoint directly even when stenographer spans exist.",
+                },
+                "create_issue_if_unmatched": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "When no task/artifact can be matched, create a proposal improvement from title/summary instead of memory-only closeout.",
+                },
+                "agent_id": {"type": "string", "default": "codex"},
+                "acted_by": {"type": "string", "default": "codex"},
+                "source": {"type": "string", "default": "record_work_result"},
+            },
+        },
+    },
     "record_task_checkpoint": {
         "name": "record_task_checkpoint",
         "description": (
@@ -1350,6 +1415,56 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "enum": ["normal", "complex", "handoff", "emergency"],
                     "default": "normal",
                 },
+            },
+        },
+    },
+    "clerk_draft_report": {
+        "name": "clerk_draft_report",
+        "description": (
+            "First-class clerk/scribe closeout surface. Use this before writing governed memory when a work session "
+            "has stenographer spans or when you have raw agent notes. It returns a review-only checkpoint/report draft "
+            "and the next approve/revise tool; it does not mutate project memory."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "task_id": {"type": "string", "description": "Task identifier when known"},
+                "work_id": {"type": "string", "description": "Preferred when drafting from stenographer spans"},
+                "agent_id": {"type": "string", "default": "codex"},
+                "session_id": {"type": "string"},
+                "task_title": {"type": "string", "description": "Optional task title for fallback summaries"},
+                "stage": {
+                    "type": "string",
+                    "enum": ["planning", "in_progress", "blocked", "interrupted", "handoff", "completed"],
+                    "default": "completed",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["planning", "active", "paused", "done"],
+                    "default": "done",
+                },
+                "raw_notes": {
+                    "type": "string",
+                    "description": "Optional raw notes. If omitted, the clerk drafts from stenographer spans.",
+                },
+                "reason": {"type": "string", "default": "clerk_draft_report"},
+                "use_llm": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Use cheap local/cloud LLM extraction when available; deterministic fallback remains available.",
+                },
+                "preserve_evidence": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "When drafting from spans, preserve bounded source evidence alongside the draft.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["compact", "preserve_evidence", "no_compression", "project_overview", "economy", "strict_economy", "balanced"],
+                    "default": "compact",
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
             },
         },
     },
@@ -2549,7 +2664,7 @@ def format_coordination_list(data: dict[str, Any], *, empty_text: str) -> str:
     return "\n".join(lines)
 
 
-def build_supermemory_initialize_hint(agent_id: str) -> dict[str, Any]:
+def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
     from app.services.instruction_layers import build_l0_policy
     
     return {
@@ -2587,7 +2702,7 @@ def build_supermemory_initialize_hint(agent_id: str) -> dict[str, Any]:
     }
 
 
-def build_supermemory_onboarding_basics() -> str:
+def build_mnemoforge_onboarding_basics() -> str:
     return (
         "MNEMOFORGE BASICS:\n"
         "  - Call get_onboarding at session start or when you lose context.\n"
@@ -2599,6 +2714,11 @@ def build_supermemory_onboarding_basics() -> str:
         "  - Use send_coordination_message for requests, replies, and handoffs; coordination is operational, not project truth.\n"
         "  - Keep project_id explicit and consistent across retrieval, bootstrap, and coordination."
     )
+
+
+# Compatibility for older internal imports during the project rename window.
+build_supermemory_initialize_hint = build_mnemoforge_initialize_hint
+build_supermemory_onboarding_basics = build_mnemoforge_onboarding_basics
 
 
 def build_set_canonical_status_payload(args: dict[str, Any]) -> dict[str, Any]:

@@ -30,13 +30,13 @@ class TestNormalization:
     async def test_add_term_returns_record(self, client):
         r = await client.post("/api/v1/normalization/terms", json={
             "term": "sm",
-            "expansion": "supermemory",
+            "expansion": "mnemoforge",
             "agent_id": "test-agent",
         })
         assert r.status_code == 201
         body = r.json()
         assert body["term"] == "sm"
-        assert body["expansion"] == "supermemory"
+        assert body["expansion"] == "mnemoforge"
         assert "id" in body
 
     async def test_list_terms_for_agent(self, client):

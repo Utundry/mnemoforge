@@ -39,7 +39,7 @@ Keep domain truth stores separate (tracker.db, glossary store, etc.), but allow 
 2) Port workflow guidance emission to ledger artifacts
 3) Port behavior patterns to ledger artifacts
 4) Wire onboarding to read "automatable habits" from ledger artifacts
-5) Add implicit feedback rules (e.g. user_request save_to_supermemory -> memory_write)
+5) Add implicit feedback rules (e.g. user_request save_to_mnemoforge -> memory_write)
 
 ## P2 (Mirroring)
 
@@ -66,7 +66,7 @@ Keep domain truth stores separate (tracker.db, glossary store, etc.), but allow 
 
 ## Success Metrics
 
-- Manual "save to supermemory" requests decrease for regular users/agents
+- Manual "save to mnemoforge" requests decrease for regular users/agents
 - Suggestion accept rate >= 0.85 for persistent_rules
 - Reject rate stays low; artifacts auto-throttle effectively
 - Onboarding includes at most 5 automatable habits per context
