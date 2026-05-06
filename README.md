@@ -1,191 +1,197 @@
 # MnemoForge
 
-Local-first project memory and coordination server for AI coding agents.
+Local-first memory, knowledge, and coordination server for AI coding agents.
 
-MnemoForge is the public release name for this project. The development project
-may still appear internally as `mnemoforge` in task history, storage metadata,
-and compatibility-oriented code paths.
+MnemoForge helps agents keep durable project context across sessions. It is not
+just a larger chat history: it stores project-scoped memory, governed knowledge,
+task evidence, reusable rules, and MCP-accessible workflows so an agent can pick
+up real work without asking the user to reconstruct the whole project again.
 
-MnemoForge is not just a long chat log or a bigger prompt window. It gives agents a shared memory layer for:
-- semantic retrieval
-- project-scoped context
-- governed knowledge such as laws, runtime hints, and improvements
-- MCP access for external clients
-- storage trust, integrity, and hygiene workflows
+> Public alpha: the core server works, but packaging, documentation, and external
+> project bootstrap are still being hardened.
 
-Stack: FastAPI + Qdrant + SQLite + Ollama.
+## What It Is For
 
-## Why MnemoForge
+Use MnemoForge when you want AI coding agents to:
 
-Use MnemoForge when you want agents to work with durable project memory instead of starting every session from scratch.
+- remember project decisions, tasks, verification results, and follow-up work;
+- retrieve project context semantically instead of relying only on prompt text;
+- maintain governed knowledge such as project laws, runtime hints, and
+  improvement records;
+- coordinate through MCP tools rather than ad hoc chat summaries;
+- keep storage health, integrity, and data hygiene visible;
+- work with local LLM providers when available and cloud fallback when configured.
 
-What it does well:
-- project-aware memory, not only user-profile memory
-- local-first operation with MCP access
-- governed project knowledge and project laws
-- external-project bootstrap and readiness assessment
-- storage trust tooling: integrity, hygiene, remediation, backup/restore
+## Core Capabilities
+
+- **Project memory**: semantic memories, task checkpoints, decisions, and
+  evidence records scoped by project.
+- **MCP server**: SSE and stdio transports for agent clients.
+- **Work-session closeout**: stenographer spans, clerk/scribe draft reports, and
+  approve-by-reference checkpoints before governed memory mutation.
+- **Project governance**: project laws, improvements, task artifacts, readiness
+  checks, and operational guidance.
+- **Storage trust**: integrity audits, hygiene reports, runtime ownership guards,
+  backup/restore helpers, and remediation surfaces.
+- **Provider-flexible LLM path**: local Ollama and LM Studio support, plus cloud
+  LLM fallback through configurable provider profiles.
+
+## Architecture
+
+MnemoForge is built around a FastAPI service with Qdrant for vector search and
+SQLite stores for durable project metadata. Agents interact with it over HTTP or
+MCP.
+
+```text
+AI agent / MCP client
+        |
+        |  MCP SSE or stdio
+        v
+MnemoForge FastAPI server
+        |
+        +-- Qdrant vector index
+        +-- SQLite governed stores
+        +-- local/cloud LLM providers
+```
 
 ## Quick Start
 
-- Server setup: `SETUP.md`
-- Client setup: `CLIENT_SETUP.md`
-- Public alpha status: `STATUS.md`
-- External-project roadmap: `docs/EXTERNAL_PROJECT_ROADMAP.md`
-- Usage conditions: `docs/USAGE_CONDITIONS.md`
-- Public release checklist: `docs/PUBLIC_RELEASE_CHECKLIST.md`
-- Safe demo dataset: `demo/README.md`
+### Option 1: Docker Hub Image
 
-### Docker Compose
+The current public image is published as:
 
 ```bash
+docker pull caveboy/mnemoforge:latest
+```
+
+Immutable tag for the current published build:
+
+```bash
+docker pull caveboy/mnemoforge:b99f1d2
+```
+
+Run it with a Qdrant container or use the repository `docker-compose.yml` for a
+development stack.
+
+### Option 2: Docker Compose From Source
+
+```bash
+git clone https://github.com/Utundry/mnemoforge.git
+cd mnemoforge
 docker compose up -d
 ```
 
-Default ports:
-- Qdrant: `6333` / `6334`
-- API, development container published on host `8000`: `8000`
-- API, baked production container published on host `8001`: `8001`
+Default local ports:
 
-Local development and container layout details are documented in
-[`docs/CONTAINER_STATUS.md`](docs/CONTAINER_STATUS.md).
+- API dev container: `http://localhost:8000`
+- API baked container: `http://localhost:8001`
+- Qdrant: `6333` and `6334`
 
-Health probe:
+Health check:
 
 ```bash
 curl http://localhost:8000/api/v1/health
 ```
 
-Canonical smoke probe:
+MCP smoke check:
 
 ```bash
 python scripts/mcp_smoke.py --server http://localhost:8000
 ```
 
-Isolated remote MCP e2e probe:
+## MCP Usage
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\run_docker_remote_mcp_e2e.ps1
-```
+MnemoForge exposes two MCP transports:
 
-This uses the Docker Compose `test` profile (`memory-server-test`, `qdrant-test`,
-`mcp-e2e-test-runner`) with disposable test storage so replay/e2e fixtures do not
-pollute the working `qdrant_data` database.
+- **SSE**: `http://localhost:8000/mcp/sse`
+- **STDIO**: `python -m mcp.server`
 
-DB-backed integration/e2e checks must use this Docker test contour. The live
-server is on host `8000`; the test server is on host `8010` and
-`memory-server-test:8000` inside Docker. Do not start a host `uvicorn` server or
-point DB-backed tests at `localhost:8000` unless the user explicitly approves the
-unsafe override `MNEMOFORGE_ALLOW_UNSAFE_LIVE_TESTS=1`.
-The guard reads the project contour from `MNEMOFORGE_DB_TEST_TARGETS` and live
-targets from `MNEMOFORGE_LIVE_TARGETS`; container names and ports belong in
-Compose/env configuration, not in the guard mechanism.
+Recommended first tools for agents:
 
-Production `qdrant_data` also has a runtime ownership guard. A writable server
-writes `qdrant_data/runtime_owner.json` with a heartbeat; another writable
-runtime on the same DB is refused while that owner is active. Host restarts via
-`scripts\restart_server.ps1 -Mode local` perform the same preflight and require
-the explicit `-AllowSharedDb` override if a Docker runtime owns the DB.
+- `get_onboarding` for session-specific operating guidance;
+- `operational_tray` for state-aware project workflow actions;
+- `get_task_execution_context` before implementation or closeout;
+- `clerk_draft_report` for review-only closeout drafts from raw notes or
+  stenographer spans;
+- `approve_checkpoint_draft` to persist an approved draft canonically.
 
-Agent-facing pytest entrypoint:
+MnemoForge also supports compact MCP tool discovery for clients that should not
+load the full tool catalog immediately. See [SETUP.md](SETUP.md) for client
+configuration examples.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps1 tests/test_testing_guard.py -q
-```
+## LLM Providers
 
-This runs pytest inside the Compose `test` profile instead of the Windows host,
-so tests do not depend on host temp directory ACLs. Agents should prefer this
-wrapper over local `pytest` unless they are intentionally running a tiny
-host-only unit check.
+MnemoForge is local-first but not locked to one local service.
 
-## MCP
+Supported provider paths include:
 
-Two transports are available:
+- Ollama for local embeddings/generation;
+- LM Studio as a local fallback;
+- configurable cloud LLM providers such as DeepSeek through the cloud gateway.
 
-- `SSE`
-  `.mcp.json` points to `http://localhost:8000/mcp/sse`
-- `STDIO`
-  `python -m mcp.server`
-
-### Compact Tool Discovery
-
-MnemoForge can expose a compact MCP catalog for clients that do not want to
-load the full flat tool list. The compact catalog starts with `operational_tray`,
-the state-aware facade for normal project work, followed by staged discovery
-tools.
-
-Compatibility default: `tools/list` without parameters still returns the full
-catalog unless the MCP session negotiated compact mode during `initialize`.
-
-Opt in during `initialize`:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "initialize",
-  "params": {
-    "clientInfo": {"name": "Example Client"},
-    "_mnemoforge": {
-      "tool_catalog": {
-        "preferred_mode": "compact"
-      }
-    }
-  }
-}
-```
-
-After that, empty `tools/list` calls in the same session return the compact
-catalog. Clients can also request either mode explicitly:
-
-```json
-{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"mode": "compact"}}
-{"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {"mode": "full"}}
-```
-
-Use `operational_tray` first for task work. Use `mode=full` only for debug,
-compatibility, or when staged discovery says a deeper tool surface is needed.
+If a local provider is unavailable, the server should surface degraded provider
+state while continuing through configured fallbacks where possible. See
+[docs/CLOUD_LLM_PROVIDERS.md](docs/CLOUD_LLM_PROVIDERS.md).
 
 ## Public Alpha Defaults
 
-Recommended defaults for a public alpha:
-- use the safe demo dataset in `demo/`
-- do not ship live service data
-- keep experimental modules disabled by default
-- enable `API_KEY` when the server is reachable outside localhost
-- use `.env.public.example` as the public-release template instead of the full internal `.env.example`
+For public or shared deployments:
 
-Public bootstrap:
+- set `API_KEY` when the server is reachable outside localhost;
+- do not publish live `qdrant_data`;
+- start from `.env.public.example`;
+- keep experimental modules disabled unless you are actively testing them;
+- use the safe demo dataset in [demo/](demo/) for examples.
 
-```bash
-python scripts/bootstrap_public_release.py --check
-```
-
-Release artifact audit:
-
-```bash
-python scripts/audit_release_artifacts.py
-```
-
-Docker Hub publish helper:
-
-```bash
-python scripts/publish_docker_image.py --repository yourname/mnemoforge --tag latest --push
-```
-
-Current recommended `DISABLED_MODULES` baseline:
+Recommended public-alpha disable list:
 
 ```env
 DISABLED_MODULES=auto_memory,code_search,layout_fixer,log_filter,openai_compat
 ```
 
-## Security
+## Development And Testing
 
-Set these in `.env` when not running purely local:
+Use Docker-backed tests for DB and MCP integration checks:
 
-- `API_KEY`: require `X-Api-Key` on non-exempt endpoints
-- `INGEST_ALLOWED_ROOTS`: restrict filesystem-reading routes
-- `MAX_REQUEST_SIZE_MB`: reject oversized request bodies
-- `LLM_RATE_LIMIT_PER_MIN`: per-IP limit for LLM-heavy routes
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps1 tests/test_learning_store_writebehind.py -q
+```
 
-If you expose the server on a network interface such as `0.0.0.0`, enable `API_KEY` at minimum.
+Remote MCP e2e contour:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_docker_remote_mcp_e2e.ps1
+```
+
+The Docker test profile uses disposable Qdrant and SQLite storage, so test runs
+do not pollute live `qdrant_data`.
+
+## Documentation
+
+- [SETUP.md](SETUP.md): server setup and local development notes
+- [CLIENT_SETUP.md](CLIENT_SETUP.md): client-only MCP setup
+- [STATUS.md](STATUS.md): current alpha status and known rough edges
+- [docs/CLOUD_LLM_PROVIDERS.md](docs/CLOUD_LLM_PROVIDERS.md): cloud LLM setup
+- [docs/EXTERNAL_PROJECT_ROADMAP.md](docs/EXTERNAL_PROJECT_ROADMAP.md):
+  roadmap for non-self projects
+- [docs/USAGE_CONDITIONS.md](docs/USAGE_CONDITIONS.md): intended use and limits
+- [docs/PUBLIC_RELEASE_CHECKLIST.md](docs/PUBLIC_RELEASE_CHECKLIST.md): release
+  checklist
+- [demo/README.md](demo/README.md): safe demo dataset
+
+## Security Notes
+
+Set these in `.env` for non-local deployments:
+
+- `API_KEY`: require `X-Api-Key` on protected endpoints;
+- `INGEST_ALLOWED_ROOTS`: restrict filesystem-reading routes;
+- `MAX_REQUEST_SIZE_MB`: reject oversized request bodies;
+- `LLM_RATE_LIMIT_PER_MIN`: rate-limit LLM-heavy routes.
+
+Do not expose MnemoForge publicly without authentication and a deliberate data
+boundary.
+
+## Project Name
+
+`MnemoForge` is the public release name. The internal project id remains
+`mnemoforge` in task history, storage metadata, and compatibility paths.
