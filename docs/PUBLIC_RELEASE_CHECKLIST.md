@@ -14,6 +14,7 @@ Use this checklist before publishing a GitHub alpha or Docker Hub image.
    `auto_memory,code_search,layout_fixer,log_filter,openai_compat`.
 5. Confirm public examples use the synthetic demo dataset in `demo/`.
 6. Do not include live service data, private notes, database files, backups, logs, or local temp files.
+7. Confirm README contact details are current: Nikolai Laptev, `caveboy@yandex.ru`.
 
 ## Readiness Checks
 
@@ -40,9 +41,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps
 1. Build and inspect the image locally before pushing.
 2. Keep the repository and tag explicit and separate.
 3. Push only after the readiness checks pass.
+4. Publish under Docker Hub namespace `caveboy/mnemoforge`.
 
 ```bash
-python scripts/publish_docker_image.py --repository yourname/mnemoforge --tag latest --push
+python scripts/publish_docker_image.py --repository caveboy/mnemoforge --tag latest --push
 ```
 
 ## Public FAQ

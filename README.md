@@ -67,7 +67,7 @@ docker pull caveboy/mnemoforge:latest
 Immutable tag for the current published build:
 
 ```bash
-docker pull caveboy/mnemoforge:b99f1d2
+docker pull caveboy/mnemoforge:513e632
 ```
 
 Run it with a Qdrant container or use the repository `docker-compose.yml` for a
@@ -190,6 +190,14 @@ Set these in `.env` for non-local deployments:
 
 Do not expose MnemoForge publicly without authentication and a deliberate data
 boundary.
+
+## Author And Contact
+
+MnemoForge is created and maintained by Nikolai Laptev.
+
+- Email: `caveboy@yandex.ru`
+- Docker Hub: `caveboy/mnemoforge`
+- GitHub repository: `Utundry/mnemoforge`
 
 ## Project Name
 

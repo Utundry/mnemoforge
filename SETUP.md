@@ -134,3 +134,11 @@ python -m scripts.publish_docker_image --repository caveboy/mnemoforge --tag lat
 - Do not expose the service publicly without an `API_KEY`.
 - Do not commit `.env`, local databases, logs, or `qdrant_data`.
 - Treat memory contents as potentially sensitive user data.
+
+## Author And Contact
+
+MnemoForge is created and maintained by Nikolai Laptev.
+
+- Email: `caveboy@yandex.ru`
+- Docker Hub: `caveboy/mnemoforge`
+- GitHub repository: `Utundry/mnemoforge`
