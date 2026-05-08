@@ -263,6 +263,40 @@ def test_execution_readiness_fails_loudly_when_bundle_lacks_action_evidence():
     ]
 
 
+def test_execution_readiness_counts_checkpoint_stage_as_implementation_history():
+    result = evaluate_execution_readiness(
+        {
+            "next_safe_action": "Use handoff checkpoint for operator review.",
+            "latest_checkpoint": {
+                "stage": "handoff",
+                "summary": "Ready for handoff.",
+                "verification": ["unit test passed"],
+                "remaining_risk": ["feedback pending"],
+            },
+            "replay_bundle": {
+                "linked_improvement": {"available": True},
+                "task_history": [
+                    {"change_type": "decision", "content": "Use durable replay state."},
+                    {
+                        "change_type": "note",
+                        "content": "[task_checkpoint]\nCheckpoint stage: in_progress\nSummary: Implemented the facade.",
+                        "tags": ["task_checkpoint", "task_stage:in_progress"],
+                    },
+                ],
+                "handoff_refs": [{"memory_id": "handoff-1"}],
+                "project_context_refs": {
+                    "readiness_tool": "get_project_readiness",
+                    "enrichment_tool": "enrich_task_with_context",
+                },
+            },
+        }
+    )
+
+    assert result["status"] == "ready"
+    assert result["evidence"]["implementation_history"] is True
+    assert result["missing_evidence"] == []
+
+
 def test_replay_drill_selects_checkpoint_when_replay_is_incomplete():
     decision = build_replay_drill_decision(
         {

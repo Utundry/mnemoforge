@@ -97,9 +97,23 @@ _DEFAULT_INSTINCTS: dict[str, dict[str, Any]] = {
         "rank": "P0",
         "scope": "project",
         "trigger": "A new project task or investigation request.",
-        "action": "Start with onboarding, readiness, enrich-task, and related memory surfaces before doing targeted code inspection.",
-        "why_it_matters": "MnemoForge should narrow the search space before the agent spends effort reading code.",
-        "failure_if_missing": "The agent falls back to cold code reading and loses the main value of the system.",
+        "action": (
+            "For any MnemoForge-backed project task, query MnemoForge before repository files, shell search, or ad-hoc "
+            "memory reconstruction. Start with enrich_task_with_context using an explicit project_id. For priority, "
+            "continuation, lifecycle, or open-work questions, call list_open_tasks, list_artifacts, or continue_task "
+            "before inspecting files. For new or external projects, call get_project_readiness and bootstrap checklist "
+            "surfaces before assuming project knowledge exists. Treat MnemoForge output as triage guidance: check degraded "
+            "state, missing sources, data hygiene warnings, and whether results come from governed layers rather than raw "
+            "memories. Inspect repository files only after MnemoForge narrows the question or reports missing/degraded context."
+        ),
+        "why_it_matters": (
+            "MnemoForge is the project memory and coordination substrate; it carries task state, open improvements, "
+            "checkpoints, laws, and operator intent that files alone cannot represent."
+        ),
+        "failure_if_missing": (
+            "The agent answers project-priority, continuation, or architecture questions from markdown/status files alone "
+            "while MCP is available, producing stale priorities and hidden assumptions."
+        ),
         "language": "en",
         "active": True,
         "activation_tags": ["task_enrichment", "project_readiness", "project"],

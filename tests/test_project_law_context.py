@@ -1208,6 +1208,93 @@ async def test_project_readiness_reports_pilot_ready_when_core_layers_exist(clie
 
 
 @pytest.mark.asyncio
+async def test_project_reconstruction_bundle_assembles_governed_layers(client, monkeypatch):
+    async def fake_list_components(self, project_id):
+        return [
+            {
+                "component_id": "context",
+                "name": "Context Assembly",
+                "purpose": "Builds unified project context.",
+                "implementation": "Combines governed project knowledge sources.",
+                "status": "working",
+                "endpoints": ["/project/reconstruction-bundle"],
+                "key_files": ["app/services/project_context_service.py"],
+                "version_note": "",
+            }
+        ]
+
+    async def fake_list_doc_sections(qdrant_client, collection, project, limit=20):
+        return [
+            {
+                "content": "Project documentation can be regenerated from governed memory.",
+                "timestamp": "2026-03-22T12:00:00Z",
+                "meta": {
+                    "section_key": "overview",
+                    "section_name": "Overview",
+                    "generated_at": "2026-03-22T12:00:00Z",
+                    "candidate_available": False,
+                },
+            }
+        ]
+
+    monkeypatch.setattr(ProjectKnowledgeService, "list_components", fake_list_components)
+    monkeypatch.setattr("app.services.project_context_service.list_doc_sections", fake_list_doc_sections)
+
+    law = await client.post(f"{PREFIX}/laws", json={
+        "project": "alpha",
+        "title": "Recover from governed memory",
+        "statement": "Reconstruction must use governed project memory, not raw chat.",
+        "agent_id": "codex",
+        "status": "active",
+        "confirmed_by": "user",
+    })
+    assert law.status_code == 201, law.text
+
+    improvement = await client.post(f"{PREFIX}/improvements", json={
+        "title": "Reconstruct any project from memory",
+        "description": "Build source-loss reconstruction bundles from project artifacts.",
+        "project": "alpha",
+        "agent_id": "codex",
+        "importance_score": 0.8,
+        "tags": ["source-loss-reconstruction"],
+    })
+    assert improvement.status_code == 201, improvement.text
+
+    task = await client.post(f"{PREFIX}/project/tasks", json={
+        "task_id": "alpha-reconstruct",
+        "project": "alpha",
+        "title": "Reconstruct project from governed memory",
+        "description": "Recover product intent and architecture from DB-backed artifacts.",
+        "agent_id": "codex",
+        "status": "active",
+    })
+    assert task.status_code == 201, task.text
+
+    resp = await client.post(
+        f"{PREFIX}/project/reconstruction-bundle",
+        json={"project_id": "alpha", "detail": "compact", "max_items_per_layer": 2},
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    assert data["project_id"] == "alpha"
+    assert data["source_policy"]["project_agnostic"] is True
+    assert data["source_policy"]["source_code_required"] is False
+    assert data["source_policy"]["uses_governed_memory_layers"] is True
+    assert data["reconstruction_readiness"]["status"] == "partial"
+    assert data["reconstruction_readiness"]["missing_layers"] == []
+    assert data["coverage"]["components"] == 1
+    assert data["coverage"]["docs_sections"] == 1
+    assert data["coverage"]["laws"] == 1
+    assert data["coverage"]["improvements"] >= 1
+    assert data["coverage"]["tasks"] >= 1
+    layers = {layer["layer"]: layer for layer in data["layers"]}
+    assert layers["components"]["items"][0]["component_id"] == "context"
+    assert layers["tasks"]["items"][0]["task_id"] == "alpha-reconstruct"
+    assert any("dry reconstruction drill" in item for item in data["next_actions"])
+
+
+@pytest.mark.asyncio
 async def test_project_readiness_counts_bootstrap_task_entities_even_when_context_filters_them(client, monkeypatch):
     async def fake_list_components(self, project_id):
         return [

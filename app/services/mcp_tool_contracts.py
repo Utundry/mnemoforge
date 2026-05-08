@@ -488,6 +488,23 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "get_project_reconstruction_bundle": {
+        "name": "get_project_reconstruction_bundle",
+        "description": (
+            "Assemble a read-only source-loss reconstruction bundle for any SuperMemory-backed project. "
+            "Uses governed project memory layers such as components, tasks, improvements, laws, docs, memoirs, and runtime hints; "
+            "does not require source code and does not mutate project state."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["project_id"],
+            "properties": {
+                "project_id": {"type": "string"},
+                "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
+                "max_items_per_layer": {"type": "integer", "default": 5, "minimum": 1, "maximum": 50},
+            },
+        },
+    },
     "plan_remote_snapshot": {
         "name": "plan_remote_snapshot",
         "description": (
@@ -1269,6 +1286,53 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "project_work": {
+        "name": "project_work",
+        "description": (
+            "Thematic project-work routing facade. Use this as the first-contact surface for common project work "
+            "requests such as next priority, continue task, review capture drafts, close tail, save checkpoint, or route verification/restart work. "
+            "It classifies intent, returns routing evidence, executes safe read-only routes, and plans guarded mutations unless allow_mutation=true."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["intent"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge", "description": "Project name"},
+                "intent": {"type": "string", "description": "Natural-language project-work request or operator intent"},
+                "task_id": {"type": "string", "description": "Optional task id when the request belongs to a known task"},
+                "artifact_key": {"type": "string", "description": "Optional unified artifact key"},
+                "state": {
+                    "type": "string",
+                    "enum": ["planning", "implementation", "verification", "live_validation", "documentation", "checkpointing", "handoff", "operator_review"],
+                    "description": "Optional current task state used for routing evidence",
+                },
+                "summary": {"type": "string", "description": "Optional work summary for checkpoint/closeout routes"},
+                "raw_notes": {"type": "string", "description": "Optional raw notes for capture/checkpoint routes"},
+                "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
+                "verification": {"type": "array", "items": {"type": "string"}, "default": []},
+                "allow_mutation": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "When false, mutating routes return a plan instead of writing memory or changing lifecycle state.",
+                },
+                "scorer_backend": {
+                    "type": "string",
+                    "enum": ["lexical", "auto", "llm"],
+                    "default": "lexical",
+                    "description": "Route scorer backend. lexical is deterministic; auto/llm may use cheap LLM disambiguation for ambiguous matches.",
+                },
+                "detail": {
+                    "type": "string",
+                    "enum": ["compact", "full"],
+                    "default": "compact",
+                    "description": "Detail level for read-only route execution",
+                },
+                "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100},
+                "acted_by": {"type": "string", "default": "codex"},
+                "agent_id": {"type": "string", "default": "codex"},
+            },
+        },
+    },
     "record_task_checkpoint": {
         "name": "record_task_checkpoint",
         "description": (
@@ -1852,6 +1916,14 @@ def build_project_readiness_payload(args: dict[str, Any]) -> dict[str, Any]:
 
 def build_project_bootstrap_payload(args: dict[str, Any]) -> dict[str, Any]:
     return {"project_id": args["project_id"]}
+
+
+def build_project_reconstruction_payload(args: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "project_id": args["project_id"],
+        "detail": str(args.get("detail") or "compact").strip() or "compact",
+        "max_items_per_layer": max(1, min(50, int(args.get("max_items_per_layer") or 5))),
+    }
 
 
 def build_remote_snapshot_payload(args: dict[str, Any]) -> dict[str, Any]:
@@ -2530,6 +2602,38 @@ def format_project_bootstrap_response(data: dict[str, Any]) -> str:
         lines.append("Operational instincts:")
         lines.extend(f"- [{item.get('rank','?')}] {item.get('instinct_id')}: {item.get('action')}" for item in instincts[:5])
     return "\n".join(lines)
+
+
+def format_project_reconstruction_response(data: dict[str, Any]) -> str:
+    readiness = data.get("reconstruction_readiness") or {}
+    lines = [
+        f"Project reconstruction bundle for {data['project_id']}: {readiness.get('status', 'unknown')}",
+        "source_policy="
+        + ", ".join(f"{key}={value}" for key, value in (data.get("source_policy") or {}).items()),
+    ]
+    coverage = data.get("coverage") or {}
+    if coverage:
+        lines.append("Coverage: " + ", ".join(f"{key}={value}" for key, value in coverage.items()))
+    missing = readiness.get("missing_layers") or []
+    warnings = readiness.get("warning_layers") or []
+    if missing:
+        lines.append("Missing layers: " + ", ".join(str(item) for item in missing))
+    if warnings:
+        lines.append("Warning layers: " + ", ".join(str(item) for item in warnings))
+    layers = data.get("layers") or []
+    if layers:
+        lines.append("Reconstruction layers:")
+        for layer in layers:
+            lines.append(f"- {layer.get('layer')}: count={layer.get('count')} role={layer.get('role')}")
+    sequence = data.get("reconstruction_sequence") or []
+    if sequence:
+        lines.append("Sequence:")
+        lines.extend(f"{idx}. {item}" for idx, item in enumerate(sequence, 1))
+    actions = data.get("next_actions") or []
+    if actions:
+        lines.append("Next actions:")
+        lines.extend(f"- {item}" for item in actions[:6])
+    return "\n".join(line for line in lines if line)
 
 
 def format_remote_snapshot_plan_response(data: dict[str, Any]) -> str:

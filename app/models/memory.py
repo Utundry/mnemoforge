@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.enums import MemoryType
 
@@ -118,10 +118,25 @@ class ImprovementCreate(BaseModel):
     description: str = Field(..., min_length=1, max_length=10000)
     project: str = Field("mnemoforge", max_length=128)
     agent_id: str = Field("llm", max_length=256)
-    importance_score: float = Field(0.7, ge=0.0, le=1.0)
+    importance_score: float = Field(
+        0.7,
+        ge=0.0,
+        le=10.0,
+        description="Importance on 0..1 scale; values >1 and <=10 are accepted as 1..10 shorthand and normalized.",
+    )
     tags: list[str] = Field(default_factory=list)
     stage: str = Field("proposal", pattern="^(proposal|beta_test|experimental|stable|deprecated)$")
     verdict: str | None = Field(None, pattern="^(effective|ineffective)$")
+
+    @field_validator("importance_score", mode="before")
+    @classmethod
+    def normalize_importance_score(cls, value: Any) -> Any:
+        if value is None or value == "":
+            return value
+        score = float(value)
+        if score > 1.0 and score <= 10.0:
+            return score / 10.0
+        return score
 
 
 class ImprovementRecord(BaseModel):

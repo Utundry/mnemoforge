@@ -46,6 +46,7 @@ from app.services.mcp_tool_contracts import (
     build_project_workflow_submit_payload,
     build_project_workflow_submit_plan,
     build_project_bootstrap_payload,
+    build_project_reconstruction_payload,
     build_project_readiness_payload,
     build_remote_snapshot_payload,
     build_merge_canonicals_payload,
@@ -70,6 +71,7 @@ from app.services.mcp_tool_contracts import (
     format_continue_task_response,
     format_enrich_task_response,
     format_project_bootstrap_response,
+    format_project_reconstruction_response,
     format_project_workflow_response,
     format_project_workflow_submit_response,
     format_remote_snapshot_plan_response,
@@ -165,7 +167,7 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
     "project_knowledge": {
         "title": "Project knowledge & artifact lifecycle",
         "description": "Unified discovery for tasks, improvements, readiness, canonical knowledge, lifecycle checkpoints, reopen/resume flows, and lifecycle changes.",
-        "entrypoints": ["operational_tray", "record_work_result", "clerk_draft_report", "project_workflow", "continue_task", "get_task_execution_context", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
+        "entrypoints": ["project_work", "project_rules", "project_context", "project_verify", "project_capture", "operational_tray", "record_work_result", "clerk_draft_report", "project_workflow", "continue_task", "get_task_execution_context", "get_project_reconstruction_bundle", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
         "keywords": [
             "task",
             "tasks",
@@ -198,6 +200,11 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
             "док",
         ],
         "preferred_tools": [
+            "project_work",
+            "project_rules",
+            "project_context",
+            "project_verify",
+            "project_capture",
             "project_workflow",
             "project_workflow_submit",
             "continue_task",
@@ -209,6 +216,7 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
             "review_completed_checkpoint_scopes",
             "enrich_task_with_context",
             "get_task_execution_context",
+            "get_project_reconstruction_bundle",
             "operational_tray",
             "record_work_result",
             "review_improvement",
@@ -1167,6 +1175,8 @@ def _tool_example_payload(tool_name: str, *, intent: str, project_id: str = "") 
     if name == "list_open_tasks":
         payload = {"project": project_id or "mnemoforge", "limit": 50}
         return payload
+    if name == "project_work":
+        return {"project": project_id or "mnemoforge", "intent": intent[:240], "allow_mutation": False}
     if name == "report_task_checkpoint":
         return {
             "project": project_id or "mnemoforge",
@@ -1339,6 +1349,1224 @@ def _normalize_mcp_intent(intent: str, *, project_id: str = "", top_n: int = 3) 
     }
 
 
+_PROJECT_WORK_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
+    {
+        "intent_type": "next_priority",
+        "tool": "list_open_tasks",
+        "family": "project_knowledge",
+        "mutating": False,
+        "examples": (
+            "what is the next priority",
+            "what should i do next",
+            "show open work",
+            "list open tasks",
+            "find the next task",
+            "current priority task",
+        ),
+        "reason": "Priority/open-work intent maps to the unified open-task surface.",
+    },
+    {
+        "intent_type": "continue_task",
+        "tool": "continue_task",
+        "family": "project_knowledge",
+        "mutating": False,
+        "examples": (
+            "continue task",
+            "resume current task",
+            "pick up this task",
+            "go on with the priority task",
+            "continue the active task",
+            "resume from checkpoint",
+        ),
+        "reason": "Continuation intent maps to continue_task with compact handoff-aware replay.",
+    },
+    {
+        "intent_type": "capture_or_closeout",
+        "tool": "record_work_result",
+        "family": "project_knowledge",
+        "mutating": True,
+        "examples": (
+            "close the tail",
+            "close tail",
+            "close remaining lifecycle gap",
+            "save checkpoint",
+            "record result",
+            "save work result",
+            "wrap up the task",
+            "finish up",
+            "create handoff",
+            "record progress",
+        ),
+        "reason": "Capture/closeout intent maps to record_work_result, but mutation is guarded by allow_mutation.",
+    },
+    {
+        "intent_type": "verify_or_live_validate",
+        "tool": "get_task_execution_context",
+        "family": "project_knowledge",
+        "mutating": False,
+        "examples": (
+            "restart and validate",
+            "restart server and check health",
+            "run verification",
+            "run tests",
+            "pytest verification",
+            "live validation",
+            "check mcp after restart",
+            "validate server change",
+        ),
+        "reason": "Verification/restart intent first needs state-scoped project rules and risk controls.",
+    },
+    {
+        "intent_type": "review_task_capture",
+        "tool": "task_capture_review",
+        "family": "project_knowledge",
+        "mutating": False,
+        "examples": (
+            "review pending capture drafts",
+            "review task capture drafts",
+            "show capture candidates",
+            "list pending task capture",
+            "review missing task framing",
+            "show definition of done candidates",
+            "inspect task capture review",
+        ),
+        "reason": "Task-framing review intent maps to the task capture candidate review surface before promotion or rejection.",
+    },
+    {
+        "intent_type": "rule_work",
+        "tool": "project_rules",
+        "family": "project_knowledge",
+        "mutating": True,
+        "examples": (
+            "record this as a project rule",
+            "make this a project policy",
+            "make a rule candidate",
+            "promote rule",
+            "review project law",
+            "capture canonical rule",
+            "why did the agent miss a project rule",
+        ),
+        "reason": "Rule/governance intent belongs to the future project_rules thematic facade; do not guess a mutating review route here.",
+    },
+)
+
+
+def _route_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[\w]+", str(text or "").casefold(), flags=re.UNICODE)
+        if len(token) >= 3
+    }
+
+
+def _project_work_catalog_scores(text: str, args: dict[str, Any]) -> list[dict[str, Any]]:
+    lowered = str(text or "").casefold()
+    intent_tokens = _route_tokens(lowered)
+    candidates: list[dict[str, Any]] = []
+    for route in _PROJECT_WORK_ROUTE_CATALOG:
+        best_score = 0.0
+        best_example = ""
+        for example in route["examples"]:
+            example_text = str(example).casefold()
+            example_tokens = _route_tokens(example_text)
+            if not example_tokens:
+                continue
+            overlap = len(intent_tokens & example_tokens)
+            union = len(intent_tokens | example_tokens) or 1
+            score = overlap / union
+            if example_text in lowered:
+                score += 0.45
+            elif all(token in intent_tokens for token in example_tokens):
+                score += 0.25
+            if score > best_score:
+                best_score = score
+                best_example = example
+
+        if route["intent_type"] == "continue_task" and args.get("task_id"):
+            best_score += 0.05
+        if route["intent_type"] == "verify_or_live_validate" and args.get("changed_files"):
+            best_score += 0.05
+        if route["intent_type"] == "capture_or_closeout" and (args.get("summary") or args.get("raw_notes")):
+            best_score += 0.04
+        if route["intent_type"] == "rule_work" and any(token in intent_tokens for token in {"rule", "law", "candidate"}):
+            best_score += 0.08
+        if route["intent_type"] == "review_task_capture" and any(token in intent_tokens for token in {"capture", "draft", "drafts", "candidate", "candidates", "framing"}):
+            best_score += 0.08
+
+        candidates.append(
+            {
+                "intent_type": route["intent_type"],
+                "tool": route["tool"],
+                "score": round(min(best_score, 1.0), 3),
+                "matched_example": best_example,
+            }
+        )
+    candidates.sort(key=lambda item: (-item["score"], item["intent_type"]))
+    return candidates
+
+
+def _project_work_selected_catalog_route(text: str, args: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    candidates = _project_work_catalog_scores(text, args)
+    if not candidates or candidates[0]["score"] < 0.22:
+        return None, candidates[:3]
+    best = candidates[0]
+    route = next(item for item in _PROJECT_WORK_ROUTE_CATALOG if item["intent_type"] == best["intent_type"])
+    return route, candidates[:3]
+
+
+def _project_work_needs_llm_disambiguation(candidates: list[dict[str, Any]]) -> bool:
+    if not candidates:
+        return True
+    top = float(candidates[0].get("score") or 0.0)
+    second = float(candidates[1].get("score") or 0.0) if len(candidates) > 1 else 0.0
+    return top < 0.34 or (top - second) < 0.08
+
+
+def _project_work_catalog_route_by_intent(intent_type: str) -> dict[str, Any] | None:
+    clean = str(intent_type or "").strip()
+    return next((item for item in _PROJECT_WORK_ROUTE_CATALOG if item["intent_type"] == clean), None)
+
+
+def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> dict[str, Any]:
+    project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    intent = str(args.get("intent") or "").strip()
+    task_id = str(args.get("task_id") or "").strip()
+    artifact_key = str(args.get("artifact_key") or "").strip()
+    changed_files = _string_list_arg(args.get("changed_files"))
+    verification = _string_list_arg(args.get("verification"))
+    limit = max(1, min(100, int(args.get("limit") or 10)))
+    detail = str(args.get("detail") or "compact").strip().lower()
+    if detail not in {"compact", "full"}:
+        detail = "compact"
+
+    if route["intent_type"] == "next_priority":
+        route["payload"] = {"project": project, "limit": limit}
+    elif route["intent_type"] == "continue_task":
+        route["payload"] = {
+            "project": project,
+            "task_id": task_id,
+            "detail": detail,
+            "include_handoffs": True,
+            "limit": limit,
+        }
+    elif route["intent_type"] == "capture_or_closeout":
+        summary = str(args.get("summary") or args.get("raw_notes") or intent).strip()
+        route["payload"] = {
+            "project": project,
+            "task_id": task_id,
+            "artifact_key": artifact_key,
+            "summary": summary or "Record project work result.",
+            "changed_files": changed_files,
+            "verification": verification,
+            "stage": "completed" if any(token in _route_tokens(text) for token in {"close", "done", "completed"}) else "in_progress",
+            "checkpoint_mode": "standard",
+            "next_step_scope": "operator_review" if any(token in _route_tokens(text) for token in {"close", "tail"}) else "unknown",
+            "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+            "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
+            "source": "project_work",
+        }
+    elif route["intent_type"] == "verify_or_live_validate":
+        tokens = _route_tokens(text)
+        state = "live_validation" if tokens & {"restart", "health", "live"} else "verification"
+        route["payload"] = {
+            "project": project,
+            "task_id": task_id,
+            "task": intent,
+            "state": state,
+            "intent": intent,
+            "changed_files": changed_files,
+            "include_rules": True,
+            "include_tools": True,
+        }
+    elif route["intent_type"] == "review_task_capture":
+        route["payload"] = {"project": project, "task_id": task_id, "limit": limit}
+    elif route["intent_type"] == "rule_work":
+        route["payload"] = {
+            "project": project,
+            "intent": intent,
+            "suggested_first_tools": ["list_project_laws", "list_rule_candidates", "get_rule_candidate_review_packet"],
+        }
+    return route
+
+
+def _project_work_route(args: dict[str, Any], *, llm_decision: dict[str, Any] | None = None, scorer_meta: dict[str, Any] | None = None) -> dict[str, Any]:
+    project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    intent = str(args.get("intent") or "").strip()
+    text = " ".join(
+        part
+        for part in (
+            intent,
+            str(args.get("summary") or "").strip(),
+            str(args.get("raw_notes") or "").strip(),
+            str(args.get("state") or "").strip(),
+        )
+        if part
+    )
+    task_id = str(args.get("task_id") or "").strip()
+    artifact_key = str(args.get("artifact_key") or "").strip()
+    changed_files = _string_list_arg(args.get("changed_files"))
+    verification = _string_list_arg(args.get("verification"))
+
+    evidence: list[str] = ["facade:project_work", f"project:{project}"]
+    if task_id:
+        evidence.append(f"task_id:{task_id}")
+    if artifact_key:
+        evidence.append(f"artifact_key:{artifact_key}")
+    if changed_files:
+        evidence.append("changed_files_present")
+    if verification:
+        evidence.append("verification_present")
+
+    route = {
+        "family": "project_knowledge",
+        "tool": "tool_recommend",
+        "intent_type": "ambiguous",
+        "confidence": 0.55,
+        "mutating": False,
+        "payload": {"task": intent, "project_id": project, "top_n": 3},
+        "reason": "Intent is ambiguous; use tool recommendation rather than guessing a specialized route.",
+        "matched_example": "",
+        "route_candidates": [],
+        "scorer": scorer_meta or {"backend_requested": str(args.get("scorer_backend") or "lexical"), "backend_used": "lexical"},
+    }
+
+    catalog_route, route_candidates = _project_work_selected_catalog_route(text, args)
+    route["route_candidates"] = route_candidates
+    if llm_decision and _project_work_catalog_route_by_intent(str(llm_decision.get("intent_type") or "")):
+        chosen = _project_work_catalog_route_by_intent(str(llm_decision.get("intent_type") or ""))
+        assert chosen is not None
+        catalog_route = chosen
+        route_candidates = [
+            {
+                "intent_type": chosen["intent_type"],
+                "tool": chosen["tool"],
+                "score": round(float(llm_decision.get("confidence") or 0.0), 3),
+                "matched_example": str(llm_decision.get("matched_example") or "llm_disambiguation"),
+                "scorer": "llm",
+            },
+            *[item for item in route["route_candidates"] if item.get("intent_type") != chosen["intent_type"]],
+        ][:3]
+        route["route_candidates"] = route_candidates
+    if catalog_route:
+        best_score = route_candidates[0]["score"] if route_candidates else 0.0
+        route.update(
+            {
+                "family": catalog_route["family"],
+                "tool": catalog_route["tool"],
+                "intent_type": catalog_route["intent_type"],
+                "confidence": round(min(0.95, 0.55 + best_score * 0.4), 2),
+                "mutating": catalog_route["mutating"],
+                "reason": catalog_route["reason"],
+                "matched_example": route_candidates[0].get("matched_example", "") if route_candidates else "",
+            }
+        )
+
+    route = _project_work_apply_payload(route, args, text)
+
+    route["evidence"] = evidence
+    if route.get("matched_example"):
+        route["evidence"].append(f"matched_example:{route['matched_example']}")
+    return route
+
+
+def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
+    if route.get("tool") == "list_open_tasks" and isinstance(result, dict):
+        items = result.get("items") or []
+        return [
+            {
+                "artifact_key": item.get("artifact_key"),
+                "title": item.get("title"),
+                "status": item.get("status"),
+                "task_id": item.get("task_id"),
+                "linked_artifact_key": item.get("linked_artifact_key"),
+            }
+            for item in items[:5]
+            if isinstance(item, dict)
+        ]
+    if route.get("tool") == "continue_task" and isinstance(result, dict):
+        return {
+            "task_id": result.get("task_id"),
+            "status": result.get("status"),
+            "latest_checkpoint": result.get("latest_checkpoint"),
+            "next_safe_action": result.get("next_safe_action"),
+            "execution_readiness": result.get("execution_readiness"),
+            "recommended_first_tool": result.get("recommended_first_tool"),
+        }
+    if route.get("tool") == "get_task_execution_context" and isinstance(result, dict):
+        return {
+            "state": result.get("state"),
+            "readiness": result.get("readiness"),
+            "required_rules": result.get("required_rules"),
+            "recommended_rules": result.get("recommended_rules"),
+            "risk_controls": result.get("risk_controls"),
+            "next_transitions": result.get("next_transitions"),
+        }
+    if route.get("tool") == "task_capture_review" and isinstance(result, dict):
+        return {
+            "found": result.get("found"),
+            "candidates": [
+                {
+                    "artifact_id": item.get("artifact_id"),
+                    "kind": item.get("kind"),
+                    "content": item.get("content"),
+                    "confidence": item.get("confidence"),
+                }
+                for item in (result.get("candidates") or [])[:5]
+                if isinstance(item, dict)
+            ],
+        }
+    return result
+
+
+def _project_rules_route(args: dict[str, Any]) -> dict[str, Any]:
+    intent = str(args.get("intent") or "").strip()
+    text = intent.casefold()
+    project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    candidate_id = str(args.get("candidate_id") or "").strip()
+    law_id = str(args.get("law_id") or "").strip()
+    limit = max(1, min(500, int(args.get("limit") or 100)))
+    max_matches = max(0, min(20, int(args.get("max_matches") or 5)))
+    source_task_id = str(args.get("source_task_id") or "").strip()
+    status = str(args.get("status") or "").strip()
+
+    route = {
+        "tool": "get_rule_candidate_review_packet",
+        "intent_type": "review_candidates",
+        "mutating": False,
+        "confidence": 0.65,
+        "reason": "Rule governance defaults to a read-only review packet before mutation.",
+        "payload": {
+            "project": project,
+            "status": "candidate",
+            "source_task_id": source_task_id,
+            "limit": limit,
+            "max_matches": max_matches,
+        },
+    }
+
+    if law_id and any(term in text for term in ("get", "show", "inspect", "law", "rule")):
+        route.update(
+            tool="get_project_law",
+            intent_type="inspect_law",
+            confidence=0.9,
+            reason="A law_id plus inspection intent maps to get_project_law.",
+            payload={"law_id": law_id},
+        )
+    elif any(term in text for term in ("list laws", "show laws", "check laws", "active laws", "project laws", "user_confirmed", "confirmed rules")):
+        route.update(
+            tool="list_project_laws",
+            intent_type="list_laws",
+            confidence=0.86,
+            reason="Law listing/checking intent maps to list_project_laws.",
+            payload={
+                "project": project,
+                "status": status if status in {"observed", "proposed", "reviewed", "user_confirmed", "active", "suppressed", "superseded", "archived", "all"} else "active",
+                "include_promoted": True,
+                "limit": min(limit, 200),
+            },
+        )
+    elif candidate_id and any(term in text for term in ("promote", "confirm", "activate", "make active")):
+        route.update(
+            tool="promote_rule_candidate",
+            intent_type="promote_candidate",
+            mutating=True,
+            confidence=0.88,
+            reason="Candidate promotion intent is mutating and must be explicitly confirmed.",
+            payload={
+                "candidate_id": candidate_id,
+                "title": args.get("title"),
+                "target_scope": args.get("target_scope"),
+                "status": args.get("target_status", "proposed"),
+                "reason": str(args.get("reason") or intent).strip(),
+                "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+                "confirmed_by": args.get("confirmed_by"),
+            },
+        )
+    elif candidate_id and law_id and any(term in text for term in ("revise", "update law", "revision")):
+        route.update(
+            tool="revise_law_from_rule_candidate",
+            intent_type="revise_law",
+            mutating=True,
+            confidence=0.88,
+            reason="Law revision intent is mutating and must be explicitly confirmed.",
+            payload={
+                "candidate_id": candidate_id,
+                "law_id": law_id,
+                "reason": str(args.get("reason") or intent).strip(),
+                "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+                "title": args.get("title"),
+                "statement": args.get("statement"),
+                "rationale": args.get("rationale"),
+                "evidence": args.get("evidence") or [],
+            },
+        )
+    elif candidate_id and (args.get("action") or any(term in text for term in ("reject", "suppress", "clarification", "reopen"))):
+        action = str(args.get("action") or "").strip()
+        if not action:
+            action = "needs_clarification" if "clarification" in text else "reopen" if "reopen" in text else "suppress" if "suppress" in text else "reject"
+        route.update(
+            tool="review_rule_candidate",
+            intent_type="review_candidate",
+            mutating=True,
+            confidence=0.86,
+            reason="Candidate review changes candidate state and must be explicitly confirmed.",
+            payload={
+                "candidate_id": candidate_id,
+                "action": action,
+                "reason": str(args.get("reason") or intent).strip(),
+                "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+            },
+        )
+    elif any(term in text for term in ("project from stenography", "extract markers", "make candidates", "create candidates", "rule markers")):
+        route.update(
+            tool="project_rule_candidates_from_stenography",
+            intent_type="project_candidates_from_stenography",
+            mutating=True,
+            confidence=0.8,
+            reason="Projecting stenographer markers creates review candidates and is guarded as a mutation.",
+            payload={"project": project, "limit": limit},
+        )
+    elif any(term in text for term in ("list candidates", "show candidates", "candidate list", "pending rules")):
+        route.update(
+            tool="list_rule_candidates",
+            intent_type="list_candidates",
+            confidence=0.82,
+            reason="Candidate listing intent maps to list_rule_candidates.",
+            payload={
+                "project": project,
+                "status": status if status in {"candidate", "needs_clarification", "trial", "revision_pending", "rejected", "suppressed"} else "candidate",
+                "source_task_id": source_task_id,
+                "limit": limit,
+            },
+        )
+    elif any(term in text for term in ("review packet", "review candidates", "check candidates", "why forget", "forgot rule", "почему", "забыва")):
+        route.update(
+            tool="get_rule_candidate_review_packet",
+            intent_type="review_candidates",
+            confidence=0.82,
+            reason="Rule review/forgetfulness intent maps to a read-only review packet before governance mutation.",
+            payload={
+                "project": project,
+                "status": status if status in {"candidate", "needs_clarification", "trial", "revision_pending", "rejected", "suppressed"} else "candidate",
+                "source_task_id": source_task_id,
+                "limit": limit,
+                "max_matches": max_matches,
+            },
+        )
+
+    route["payload"] = {key: value for key, value in route["payload"].items() if value not in (None, "")}
+    return route
+
+
+async def _build_project_rules_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
+    route = _project_rules_route(args)
+    allow_mutation = bool(args.get("allow_mutation", False))
+    executed = False
+    result: Any = None
+    warnings: list[str] = []
+    if route["mutating"] and not allow_mutation:
+        warnings.append("Selected rule-governance route is mutating; set allow_mutation=true only after reviewing submit_payload.")
+    else:
+        result_text = await _execute_tool(route["tool"], route["payload"], api_base, session_id=session_id)
+        try:
+            result = json.loads(result_text)
+        except Exception:
+            result = result_text
+        executed = True
+    action_status = "executed" if executed else "needs_confirmation" if route["mutating"] else "ready"
+    recommended_next_call = None
+    if not executed:
+        recommended_next_call = {
+            "tool": "project_rules" if route["mutating"] else route["tool"],
+            "arguments": ({**args, "allow_mutation": True} if route["mutating"] else route["payload"]),
+        }
+    route_telemetry = _build_route_telemetry(
+        facade="project_rules",
+        route=route,
+        executed=executed,
+        warnings=warnings,
+        args=args,
+    )
+    await _session_observe(session_id, "project_rules:route", {"route_telemetry": route_telemetry})
+    return {
+        "status": "executed" if executed else "planned",
+        "facade": "project_rules",
+        "project": args.get("project") or "mnemoforge",
+        "intent": str(args.get("intent") or "").strip(),
+        "action_status": action_status,
+        "selected_route": {
+            "tool": route["tool"],
+            "intent_type": route["intent_type"],
+            "mutating": route["mutating"],
+            "confidence": route["confidence"],
+            "reason": route["reason"],
+        },
+        "agent_action": {
+            "one_sentence_summary": f"project_rules selected {route['tool']} for {route['intent_type']} with confidence {route['confidence']:.2f}.",
+            "recommended_next_call": recommended_next_call,
+            "confirmation_required": action_status == "needs_confirmation",
+            "confirmation_phrase": "set allow_mutation=true after reviewing submit_payload" if action_status == "needs_confirmation" else "",
+            "do_not_call": ["promote_rule_candidate", "revise_law_from_rule_candidate", "review_rule_candidate"] if action_status == "needs_confirmation" else [],
+            "warnings": warnings,
+        },
+        "executed": executed,
+        "submit_payload": route["payload"],
+        "result": result,
+        "route_telemetry": route_telemetry,
+        "warnings": warnings,
+        "next_safe_action": "Continue from the executed rule route result." if executed else "Review submit_payload before confirming governance mutation.",
+    }
+
+
+def _facade_action_card(
+    *,
+    facade: str,
+    route: dict[str, Any],
+    args: dict[str, Any],
+    executed: bool,
+    warnings: list[str],
+    guarded_tools: list[str] | None = None,
+) -> dict[str, Any]:
+    action_status = "executed" if executed else "needs_confirmation" if route.get("mutating") else "ready"
+    recommended_next_call = None
+    if not executed:
+        recommended_next_call = {
+            "tool": facade if route.get("mutating") else route["tool"],
+            "arguments": ({**args, "allow_mutation": True} if route.get("mutating") else route["payload"]),
+        }
+    return {
+        "action_status": action_status,
+        "one_sentence_summary": (
+            f"{facade} selected {route['tool']} for {route['intent_type']} "
+            f"with confidence {route['confidence']:.2f}."
+        ),
+        "recommended_next_call": recommended_next_call,
+        "confirmation_required": action_status == "needs_confirmation",
+        "confirmation_phrase": "set allow_mutation=true after reviewing submit_payload" if action_status == "needs_confirmation" else "",
+        "do_not_call": guarded_tools if action_status == "needs_confirmation" else [],
+        "why": route.get("reason"),
+        "warnings": warnings,
+    }
+
+
+def _build_route_telemetry(
+    *,
+    facade: str,
+    route: dict[str, Any],
+    executed: bool,
+    warnings: list[str],
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    scorer = route.get("scorer") if isinstance(route.get("scorer"), dict) else {}
+    return {
+        "facade": facade,
+        "intent": str(args.get("intent") or "").strip()[:240],
+        "intent_type": route.get("intent_type"),
+        "underlying_tool": route.get("tool"),
+        "mutating": bool(route.get("mutating")),
+        "executed": bool(executed),
+        "guardrail_triggered": bool(route.get("mutating")) and not bool(executed),
+        "confidence": route.get("confidence"),
+        "scorer_backend": scorer.get("backend_used") or scorer.get("backend_requested") or "rule_based",
+        "fallback_used": bool(scorer.get("fallback_reason")) or route.get("tool") == "tool_recommend",
+        "fallback_reason": scorer.get("fallback_reason") or "",
+        "warnings": list(warnings),
+        "reason": str(route.get("reason") or "").strip(),
+        "project": route.get("payload", {}).get("project") or route.get("payload", {}).get("project_id") or args.get("project") or args.get("project_id") or "",
+        "task_id": route.get("payload", {}).get("task_id") or args.get("task_id") or "",
+    }
+
+
+async def _run_facade_route(
+    *,
+    facade: str,
+    route: dict[str, Any],
+    args: dict[str, Any],
+    api_base: str,
+    session_id: str | None = None,
+    guarded_tools: list[str] | None = None,
+) -> dict[str, Any]:
+    allow_mutation = bool(args.get("allow_mutation", False))
+    executed = False
+    result: Any = None
+    warnings: list[str] = []
+    if route.get("mutating") and not allow_mutation:
+        warnings.append(f"Selected {facade} route is mutating; set allow_mutation=true only after reviewing submit_payload.")
+    else:
+        result_text = await _execute_tool(route["tool"], route["payload"], api_base, session_id=session_id)
+        try:
+            result = json.loads(result_text)
+        except Exception:
+            result = result_text
+        executed = True
+
+    action_card = _facade_action_card(
+        facade=facade,
+        route=route,
+        args=args,
+        executed=executed,
+        warnings=warnings,
+        guarded_tools=guarded_tools,
+    )
+    route_telemetry = _build_route_telemetry(
+        facade=facade,
+        route=route,
+        executed=executed,
+        warnings=warnings,
+        args=args,
+    )
+    await _session_observe(session_id, f"{facade}:route", {"route_telemetry": route_telemetry})
+    return {
+        "status": "executed" if executed else "planned",
+        "facade": facade,
+        "project": route["payload"].get("project") or route["payload"].get("project_id") or args.get("project") or args.get("project_id") or "mnemoforge",
+        "intent": str(args.get("intent") or "").strip(),
+        "action_status": action_card["action_status"],
+        "selected_route": {
+            "tool": route["tool"],
+            "intent_type": route["intent_type"],
+            "mutating": bool(route.get("mutating")),
+            "confidence": route["confidence"],
+            "reason": route["reason"],
+        },
+        "agent_action": action_card,
+        "executed": executed,
+        "submit_payload": route["payload"],
+        "result": result,
+        "route_telemetry": route_telemetry,
+        "warnings": warnings,
+        "next_safe_action": "Continue from the executed route result." if executed else "Review submit_payload before confirming mutation.",
+    }
+
+
+def _project_context_route(args: dict[str, Any]) -> dict[str, Any]:
+    intent = str(args.get("intent") or args.get("task") or "").strip()
+    text = intent.casefold()
+    project = str(args.get("project_id") or args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    task = str(args.get("task") or intent or "Retrieve project context.").strip()
+    detail = str(args.get("detail") or "compact").strip().lower()
+    if detail not in {"compact", "full"}:
+        detail = "compact"
+    limit = max(1, min(50, int(args.get("limit") or args.get("max_items_per_layer") or 10)))
+
+    route = {
+        "tool": "enrich_task_with_context",
+        "intent_type": "enrich_context",
+        "mutating": False,
+        "confidence": 0.72,
+        "reason": "General project-context intent maps to enrich_task_with_context.",
+        "payload": {
+            "project_id": project,
+            "task": task,
+            "detail": detail,
+            "context_profile": args.get("context_profile") or "hot_path",
+            "max_components": max(1, min(20, int(args.get("max_components") or 5))),
+        },
+    }
+
+    if any(term in text for term in ("law", "laws", "rule", "rules", "constraint", "constraints", "огранич", "правил")):
+        route.update(
+            tool="project_rules",
+            intent_type="rules_context",
+            confidence=0.85,
+            reason="Rule/constraint context belongs to the project_rules facade.",
+            payload={
+                "project": project,
+                "intent": args.get("intent") or "check active project laws",
+                "status": args.get("status") or "active",
+                "limit": min(max(1, int(args.get("limit") or 100)), 200),
+            },
+        )
+    elif any(term in text for term in ("reconstruct", "reconstruction", "source loss", "lost source", "восстанов")):
+        route.update(
+            tool="get_project_reconstruction_bundle",
+            intent_type="reconstruction_bundle",
+            confidence=0.86,
+            reason="Source-loss or recovery context maps to the reconstruction bundle.",
+            payload={
+                "project_id": project,
+                "detail": detail,
+                "max_items_per_layer": limit,
+            },
+        )
+    elif any(term in text for term in ("readiness", "ready", "bootstrap", "onboard", "готов", "старт")):
+        route.update(
+            tool="get_project_readiness",
+            intent_type="project_readiness",
+            confidence=0.82,
+            reason="Readiness/bootstrap context maps to get_project_readiness.",
+            payload={"project_id": project},
+        )
+
+    route["payload"] = {key: value for key, value in route["payload"].items() if value not in (None, "")}
+    return route
+
+
+async def _build_project_context_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
+    route = _project_context_route(args)
+    return await _run_facade_route(facade="project_context", route=route, args=args, api_base=api_base, session_id=session_id)
+
+
+def _project_verify_route(args: dict[str, Any]) -> dict[str, Any]:
+    intent = str(args.get("intent") or args.get("task") or "").strip()
+    text = intent.casefold()
+    project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    changed_files = _string_list_arg(args.get("changed_files"))
+    state = str(args.get("state") or "").strip()
+    if state not in {"planning", "implementation", "verification", "live_validation", "documentation", "checkpointing", "handoff", "operator_review"}:
+        state = "live_validation" if any(term in text for term in ("restart", "health", "live", "server", "перезап")) else "verification"
+    task = str(args.get("task") or intent or "Verify current project work.").strip()
+
+    route = {
+        "tool": "get_task_execution_context",
+        "intent_type": "verification_context",
+        "mutating": False,
+        "confidence": 0.82,
+        "reason": "Verification/test intent first needs state-scoped project rules, Docker contour hints, and risk controls.",
+        "payload": {
+            "project": project,
+            "task_id": str(args.get("task_id") or "").strip(),
+            "task": task,
+            "state": state,
+            "intent": intent,
+            "changed_files": changed_files,
+            "include_rules": True,
+            "include_tools": True,
+            "prior_stage_recorded": bool(args.get("prior_stage_recorded")) if "prior_stage_recorded" in args else None,
+            "stage_evidence": _string_list_arg(args.get("stage_evidence")),
+        },
+    }
+
+    if any(term in text for term in ("health", "healthcheck", "status server", "server status")) and not any(term in text for term in ("restart", "test", "pytest")):
+        route.update(
+            tool="memory_health",
+            intent_type="health_check",
+            confidence=0.8,
+            reason="Pure server health intent maps to the read-only health endpoint.",
+            payload={},
+        )
+    elif any(term in text for term in ("restart", "перезап")):
+        route.update(
+            intent_type="restart_validation_plan",
+            confidence=0.88,
+            reason="Restart/live validation maps to execution context; external restart remains outside MCP and must observe the 120-second post-restart window.",
+        )
+
+    route["payload"] = {key: value for key, value in route["payload"].items() if value not in (None, "", [])}
+    return route
+
+
+async def _build_project_verify_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
+    route = _project_verify_route(args)
+    data = await _run_facade_route(facade="project_verify", route=route, args=args, api_base=api_base, session_id=session_id)
+    if route["intent_type"] in {"verification_context", "restart_validation_plan"}:
+        data["project_verify_guidance"] = {
+            "docker_test_contour": "Use scripts/run_pytest_docker.ps1 for pytest so tests run in mcp-e2e-test-runner against memory-server-test/qdrant-test.",
+            "restart_window_seconds": 120,
+            "live_boundary": "Do not treat Docker test-contour success as live-dev validation; restart memory-server-dev and wait 120 seconds before live MCP/API checks.",
+        }
+    return data
+
+
+def _project_capture_route(args: dict[str, Any]) -> dict[str, Any]:
+    intent = str(args.get("intent") or args.get("summary") or args.get("raw_notes") or "").strip()
+    text = intent.casefold()
+    project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    task_id = str(args.get("task_id") or "").strip()
+    work_id = str(args.get("work_id") or "").strip()
+    changed_files = _string_list_arg(args.get("changed_files"))
+    verification = _string_list_arg(args.get("verification"))
+    raw_notes = str(args.get("raw_notes") or args.get("summary") or intent or "Capture project work.").strip()
+
+    route = {
+        "tool": "clerk_draft_report",
+        "intent_type": "draft_capture",
+        "mutating": False,
+        "confidence": 0.78,
+        "reason": "Draft/capture intent maps to a reviewable clerk draft before governed memory mutation.",
+        "payload": {
+            "project": project,
+            "task_id": task_id,
+            "work_id": work_id,
+            "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
+            "task_title": str(args.get("task_title") or intent or "Project capture").strip()[:160],
+            "raw_notes": raw_notes,
+            "stage": str(args.get("stage") or "implementation").strip(),
+            "status": str(args.get("status") or "active").strip(),
+            "changed_files": changed_files,
+            "verification": verification,
+            "use_llm": bool(args.get("use_llm", False)),
+        },
+    }
+
+    if any(term in text for term in ("list spans", "show spans", "stenographer spans", "transcript spans")):
+        route.update(
+            tool="list_stenographer_spans",
+            intent_type="list_stenographer_spans",
+            confidence=0.84,
+            reason="Span inspection intent maps to list_stenographer_spans.",
+            payload={
+                "project": project,
+                "task_id": task_id,
+                "work_id": work_id,
+                "limit": max(1, min(200, int(args.get("limit") or 50))),
+            },
+        )
+    elif any(term in text for term in ("record span", "stenographer", "scribe span", "capture span")) and args.get("span_type"):
+        route.update(
+            tool="record_stenographer_span",
+            intent_type="record_stenographer_span",
+            mutating=True,
+            confidence=0.86,
+            reason="Recording a stenographer span mutates session capture state and is guarded.",
+            payload={
+                "project": project,
+                "task_id": task_id,
+                "work_id": work_id,
+                "span_type": args.get("span_type"),
+                "content": raw_notes,
+                "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
+                "source": args.get("source") or "project_capture",
+            },
+        )
+    elif any(term in text for term in ("save", "record result", "work result", "handoff", "close", "закр", "сохран")) or (
+        "checkpoint" in text and not any(term in text for term in ("draft", "preview", "чернов"))
+    ):
+        route.update(
+            tool="record_work_result",
+            intent_type="record_work_result",
+            mutating=True,
+            confidence=0.88,
+            reason="Persisting work result/checkpoint mutates governed project memory and is guarded.",
+            payload={
+                "project": project,
+                "task_id": task_id,
+                "artifact_key": str(args.get("artifact_key") or "").strip(),
+                "summary": raw_notes,
+                "changed_files": changed_files,
+                "verification": verification,
+                "stage": str(args.get("stage") or "in_progress").strip(),
+                "checkpoint_mode": args.get("checkpoint_mode") or "standard",
+                "next_step": args.get("next_step") or "",
+                "next_step_scope": args.get("next_step_scope") or "unknown",
+                "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+                "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
+                "source": "project_capture",
+            },
+        )
+
+    route["payload"] = {key: value for key, value in route["payload"].items() if value not in (None, "", [])}
+    return route
+
+
+async def _build_project_capture_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
+    route = _project_capture_route(args)
+    return await _run_facade_route(
+        facade="project_capture",
+        route=route,
+        args=args,
+        api_base=api_base,
+        session_id=session_id,
+        guarded_tools=["record_work_result", "record_task_checkpoint", "record_stenographer_span"],
+    )
+
+
+def _project_work_action_card(
+    *,
+    route: dict[str, Any],
+    executed: bool,
+    result: Any,
+    warnings: list[str],
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    if executed:
+        action_status = "executed"
+        recommended_next_call = None
+    elif route.get("mutating"):
+        action_status = "needs_confirmation"
+        recommended_next_call = {
+            "tool": "project_work",
+            "arguments": {
+                **{key: value for key, value in args.items() if key not in {"allow_mutation"}},
+                "allow_mutation": True,
+            },
+        }
+    elif route.get("tool") == "tool_recommend":
+        action_status = "needs_clarification"
+        recommended_next_call = {"tool": "tool_recommend", "arguments": route["payload"]}
+    else:
+        action_status = "ready"
+        recommended_next_call = {"tool": route["tool"], "arguments": route["payload"]}
+
+    one_sentence_summary = (
+        f"project_work selected {route['tool']} for {route['intent_type']} "
+        f"with confidence {route['confidence']:.2f}."
+    )
+    if executed:
+        one_sentence_summary += " The safe route was executed."
+    elif route.get("mutating"):
+        one_sentence_summary += " The route is guarded and needs explicit mutation confirmation."
+
+    do_not_call = []
+    if route.get("tool") in {"record_work_result", "record_task_checkpoint"} and not executed:
+        do_not_call = ["record_task_checkpoint", "record_work_result"]
+    elif route.get("tool") == "project_rules":
+        do_not_call = ["promote_rule_candidate", "revise_law_from_rule_candidate"]
+
+    return {
+        "action_status": action_status,
+        "one_sentence_summary": one_sentence_summary,
+        "recommended_next_call": recommended_next_call,
+        "confirmation_required": action_status == "needs_confirmation",
+        "confirmation_phrase": "set allow_mutation=true after reviewing submit_payload" if action_status == "needs_confirmation" else "",
+        "do_not_call": do_not_call,
+        "why": route.get("reason"),
+        "compact_result": _compact_project_work_result(route, result),
+        "warnings": warnings,
+    }
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    raw = str(text or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        pass
+    match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+    if not match:
+        return {}
+    try:
+        parsed = json.loads(match.group(0))
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+async def _project_work_llm_disambiguate(text: str, args: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    from app.dependencies import get_llm_gateway
+
+    allowed = [route["intent_type"] for route in _PROJECT_WORK_ROUTE_CATALOG]
+    route_brief = [
+        {
+            "intent_type": route["intent_type"],
+            "tool": route["tool"],
+            "mutating": route["mutating"],
+            "examples": list(route["examples"])[:4],
+        }
+        for route in _PROJECT_WORK_ROUTE_CATALOG
+    ]
+    prompt = json.dumps(
+        {
+            "task": "Choose the best project_work route for the user intent. Return only JSON.",
+            "allowed_intent_types": allowed,
+            "intent": text,
+            "explicit_context": {
+                "project": args.get("project"),
+                "task_id_present": bool(args.get("task_id")),
+                "artifact_key_present": bool(args.get("artifact_key")),
+                "changed_files_present": bool(args.get("changed_files")),
+                "summary_present": bool(args.get("summary") or args.get("raw_notes")),
+            },
+            "lexical_candidates": candidates,
+            "route_catalog": route_brief,
+            "output_schema": {
+                "intent_type": "one allowed_intent_types value",
+                "confidence": "number 0..1",
+                "matched_example": "closest example or short rationale phrase",
+                "reason": "one sentence",
+            },
+            "safety": "Only classify route intent. Do not authorize mutations.",
+        },
+        ensure_ascii=False,
+    )
+    response = await get_llm_gateway().generate(
+        prompt,
+        system="You are a strict JSON classifier for MCP route selection. Return only a JSON object.",
+        task_type="intent_classification",
+        mode="economy",
+        max_tokens=240,
+        temperature=0.0,
+        timeout=20.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
+    parsed = _extract_json_object(response)
+    if str(parsed.get("intent_type") or "") not in set(allowed):
+        return {}
+    try:
+        confidence = float(parsed.get("confidence") or 0.0)
+    except Exception:
+        confidence = 0.0
+    parsed["confidence"] = max(0.0, min(1.0, confidence))
+    return parsed
+
+
+async def _project_work_route_with_backend(args: dict[str, Any]) -> dict[str, Any]:
+    backend_requested = str(args.get("scorer_backend") or "lexical").strip().lower() or "lexical"
+    if backend_requested not in {"lexical", "auto", "llm"}:
+        backend_requested = "lexical"
+    lexical_route = _project_work_route(
+        args,
+        scorer_meta={
+            "backend_requested": backend_requested,
+            "backend_used": "lexical",
+            "llm_attempted": False,
+            "fallback_reason": "",
+        },
+    )
+    candidates = lexical_route.get("route_candidates") or []
+    should_try_llm = backend_requested == "llm" or (
+        backend_requested == "auto" and _project_work_needs_llm_disambiguation(candidates)
+    )
+    if not should_try_llm:
+        return lexical_route
+
+    text = " ".join(
+        part
+        for part in (
+            str(args.get("intent") or "").strip(),
+            str(args.get("summary") or "").strip(),
+            str(args.get("raw_notes") or "").strip(),
+            str(args.get("state") or "").strip(),
+        )
+        if part
+    )
+    try:
+        decision = await _project_work_llm_disambiguate(text, args, candidates)
+    except Exception as exc:
+        lexical_route["scorer"] = {
+            "backend_requested": backend_requested,
+            "backend_used": "lexical",
+            "llm_attempted": True,
+            "fallback_reason": _format_tool_error_brief(exc, default="llm disambiguation failed"),
+        }
+        return lexical_route
+
+    if not decision:
+        lexical_route["scorer"] = {
+            "backend_requested": backend_requested,
+            "backend_used": "lexical",
+            "llm_attempted": True,
+            "fallback_reason": "LLM returned no valid project_work intent_type.",
+        }
+        return lexical_route
+
+    return _project_work_route(
+        args,
+        llm_decision=decision,
+        scorer_meta={
+            "backend_requested": backend_requested,
+            "backend_used": "llm",
+            "llm_attempted": True,
+            "fallback_reason": "",
+            "llm_reason": str(decision.get("reason") or "").strip(),
+        },
+    )
+
+
+async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
+    allow_mutation = bool(args.get("allow_mutation", False))
+    route = await _project_work_route_with_backend(args)
+    warnings: list[str] = []
+    executed = False
+    result: Any = None
+
+    if route["mutating"] and not allow_mutation:
+        warnings.append(
+            "Selected route is mutating; project_work returned a route plan. Set allow_mutation=true only after reviewing the payload and guardrails."
+        )
+    elif route["tool"] == "list_open_tasks":
+        query = build_list_open_tasks_query(route["payload"])
+        result = await _get(api_base, f"/artifacts?{query}")
+        executed = True
+    elif route["tool"] == "continue_task":
+        result = await _build_continue_task_payload(api_base, route["payload"])
+        executed = True
+    elif route["tool"] == "get_task_execution_context":
+        result = await _post(api_base, "/task-execution-context", build_task_execution_context_payload(route["payload"]))
+        executed = True
+    elif route["tool"] == "task_capture_review":
+        task_id = str(route["payload"].get("task_id") or "").strip()
+        if not task_id:
+            warnings.append("Task capture review requires task_id; call continue_task or provide task_id before reviewing drafts.")
+        else:
+            project = quote(str(route["payload"].get("project") or "mnemoforge"), safe="")
+            limit = max(1, min(100, int(route["payload"].get("limit") or 10)))
+            result = await _get(
+                api_base,
+                f"/project/tasks/{quote(task_id, safe='')}/capture-candidates?project={project}&limit={limit}",
+            )
+            executed = True
+    elif route["tool"] == "record_work_result":
+        result_text = await _execute_tool("record_work_result", route["payload"], api_base)
+        try:
+            result = json.loads(result_text)
+        except Exception:
+            result = result_text
+        executed = True
+    elif route["tool"] == "project_rules":
+        result_text = await _execute_tool("project_rules", route["payload"], api_base)
+        try:
+            result = json.loads(result_text)
+        except Exception:
+            result = result_text
+        executed = True
+    else:
+        warnings.append("No confident project-work route was found; use tool_recommend or clarify the intent.")
+
+    next_safe_action = "Review the selected route and execute the submit_payload if it matches the operator intent."
+    if executed:
+        next_safe_action = "Continue from the executed route result."
+    elif route["tool"] == "project_rules":
+        next_safe_action = "Use the project_rules/governance tools listed in submit_payload.suggested_first_tools."
+    action_card = _project_work_action_card(
+        route=route,
+        executed=executed,
+        result=result,
+        warnings=warnings,
+        args=args,
+    )
+    route_telemetry = _build_route_telemetry(
+        facade="project_work",
+        route=route,
+        executed=executed,
+        warnings=warnings,
+        args=args,
+    )
+    await _session_observe(session_id, "project_work:route", {"route_telemetry": route_telemetry})
+
+    return {
+        "status": "executed" if executed else "planned",
+        "action_status": action_card["action_status"],
+        "facade": "project_work",
+        "project": route["payload"].get("project") or route["payload"].get("project_id") or args.get("project") or "mnemoforge",
+        "intent": str(args.get("intent") or "").strip(),
+        "agent_action": action_card,
+        "selected_route": {
+            "tool": route["tool"],
+            "family": route["family"],
+            "intent_type": route["intent_type"],
+            "confidence": route["confidence"],
+            "mutating": route["mutating"],
+            "reason": route["reason"],
+            "matched_example": route.get("matched_example", ""),
+            "route_candidates": route.get("route_candidates", []),
+            "scorer": route.get("scorer", {}),
+        },
+        "routing_evidence": route["evidence"],
+        "executed": executed,
+        "submit_payload": route["payload"],
+        "result": result,
+        "route_telemetry": route_telemetry,
+        "compact_result": action_card["compact_result"],
+        "warnings": warnings,
+        "next_safe_action": next_safe_action,
+    }
+
+
 def _build_tool_recommendation(task: str, project_id: str = "", top_n: int = 3) -> dict[str, Any]:
     project_id = str(project_id or "").strip()
     top_n = max(1, min(5, int(top_n or 3)))
@@ -1406,6 +2634,11 @@ def _build_tool_recommendation(task: str, project_id: str = "", top_n: int = 3) 
         ])
     else:
         canonical_surface.extend([
+            {
+                "tool": "project_work",
+                "family": "project_knowledge",
+                "why": "Use as the thematic first-contact facade for project work before choosing specialized lifecycle tools.",
+            },
             {
                 "tool": "list_open_tasks",
                 "family": "project_knowledge",
@@ -1581,6 +2814,13 @@ async def _session_observe(session_id: str | None, tool_name: str, extra: dict |
         if query:
             skills.append(query[:200])
             context["skills_accessed"] = skills[-_MAX_SESSION_SKILLS:]
+
+    if extra and isinstance(extra.get("route_telemetry"), dict):
+        route_events = list(context.get("route_telemetry") or [])
+        route_event = dict(extra["route_telemetry"])
+        route_event.setdefault("ts", time.time())
+        route_events.append(route_event)
+        context["route_telemetry"] = route_events[-_MAX_SESSION_TOOLS:]
 
     snippets = _extract_dialogue_snippets(extra)
     if snippets:
@@ -2516,7 +3756,13 @@ TOOLS = [
                 "description": {"type": "string", "description": "Full description with context, steps to reproduce, expected behavior"},
                 "project": {"type": "string", "default": "mnemoforge", "description": "Which project this applies to"},
                 "agent_id": {"type": "string", "default": "llm", "description": "Who is reporting"},
-                "importance_score": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.7},
+                "importance_score": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "default": 0.7,
+                    "description": "Importance on 0..1 scale. Values >1 and <=10 are accepted as 1..10 shorthand and normalized.",
+                },
                 "stage": {
                     "type": "string",
                     "enum": ["proposal", "beta_test", "experimental", "stable", "deprecated"],
@@ -2574,6 +3820,127 @@ TOOLS = [
             "properties": {
                 "project": {"type": "string", "default": "mnemoforge"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 2000, "default": 500},
+            },
+        },
+    },
+    {
+        "name": "project_rules",
+        "description": (
+            "Thematic rule-governance facade. Use for intents such as 'this is a rule', "
+            "'why did you forget the rule?', 'check project laws', 'review rule candidates', "
+            "or 'promote/revise a law'. It routes to laws, candidates, review packets, promotion, "
+            "and revision tools while guarding all mutating governance actions unless allow_mutation=true."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["intent"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "intent": {"type": "string"},
+                "candidate_id": {"type": "string"},
+                "law_id": {"type": "string"},
+                "source_task_id": {"type": "string"},
+                "status": {
+                    "type": "string",
+                    "enum": ["active", "user_confirmed", "candidate", "needs_clarification", "trial", "revision_pending", "rejected", "suppressed", "all"],
+                    "default": "active",
+                },
+                "action": {"type": "string", "enum": ["reject", "suppress", "needs_clarification", "reopen"]},
+                "reason": {"type": "string"},
+                "title": {"type": "string"},
+                "statement": {"type": "string"},
+                "rationale": {"type": "string"},
+                "evidence": {"type": "array", "items": {"type": "string"}, "default": []},
+                "target_scope": {"type": "string", "enum": ["project", "family", "domain", "principle", "meta"]},
+                "target_status": {"type": "string", "enum": ["proposed", "user_confirmed", "active"], "default": "proposed"},
+                "confirmed_by": {"type": "string"},
+                "allow_mutation": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
+                "max_matches": {"type": "integer", "minimum": 0, "maximum": 20, "default": 5},
+                "acted_by": {"type": "string", "default": "codex"},
+            },
+        },
+    },
+    {
+        "name": "project_context",
+        "description": (
+            "Thematic project-context facade. Use for 'give context', 'what matters here', "
+            "'project constraints', 'readiness/bootstrap', and source-loss reconstruction context. "
+            "It routes to enrichment, laws, readiness, and reconstruction surfaces without requiring agents to choose from the full catalog."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["intent"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "project_id": {"type": "string"},
+                "intent": {"type": "string"},
+                "task": {"type": "string"},
+                "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
+                "context_profile": {"type": "string", "enum": ["default", "handoff_compact", "hot_path"], "default": "hot_path"},
+                "status": {"type": "string", "enum": ["active", "user_confirmed", "all"], "default": "active"},
+                "max_components": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20},
+                "max_items_per_layer": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+            },
+        },
+    },
+    {
+        "name": "project_verify",
+        "description": (
+            "Thematic verification facade. Use for tests, live validation, restarts, health checks, "
+            "and validation planning. It surfaces the project Docker test contour, live/test boundary, "
+            "and 120-second post-restart window instead of making agents hunt through verification tools."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["intent"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "intent": {"type": "string"},
+                "task": {"type": "string"},
+                "task_id": {"type": "string"},
+                "state": {
+                    "type": "string",
+                    "enum": ["planning", "implementation", "verification", "live_validation", "documentation", "checkpointing", "handoff", "operator_review"],
+                },
+                "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
+                "stage_evidence": {"type": "array", "items": {"type": "string"}, "default": []},
+                "prior_stage_recorded": {"type": "boolean"},
+            },
+        },
+    },
+    {
+        "name": "project_capture",
+        "description": (
+            "Thematic capture facade. Use for stenographer/clerk drafts, checkpoints, handoff, "
+            "and 'save the work' intents. Review-only drafts run directly; governed memory writes "
+            "and stenographer writes are guarded unless allow_mutation=true."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["intent"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "intent": {"type": "string"},
+                "task_id": {"type": "string"},
+                "artifact_key": {"type": "string"},
+                "work_id": {"type": "string"},
+                "task_title": {"type": "string"},
+                "summary": {"type": "string"},
+                "raw_notes": {"type": "string"},
+                "stage": {"type": "string", "default": "implementation"},
+                "status": {"type": "string", "default": "active"},
+                "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
+                "verification": {"type": "array", "items": {"type": "string"}, "default": []},
+                "next_step": {"type": "string"},
+                "next_step_scope": {"type": "string"},
+                "span_type": {"type": "string"},
+                "allow_mutation": {"type": "boolean", "default": False},
+                "use_llm": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+                "agent_id": {"type": "string", "default": "codex"},
+                "acted_by": {"type": "string", "default": "codex"},
             },
         },
     },
@@ -2773,6 +4140,7 @@ TOOLS = [
     tool_definition("list_artifacts"),
     tool_definition("list_open_tasks"),
     tool_definition("normalize_mcp_intent"),
+    tool_definition("project_work"),
     tool_definition("project_workflow"),
     tool_definition("project_workflow_submit"),
     tool_definition("continue_task"),
@@ -3340,6 +4708,7 @@ TOOLS = [
     },
     tool_definition("get_project_readiness"),
     tool_definition("get_project_bootstrap_checklist"),
+    tool_definition("get_project_reconstruction_bundle"),
     tool_definition("plan_remote_snapshot"),
     tool_definition("sync_remote_snapshot"),
     tool_definition("get_storage_trust_status"),
@@ -3374,6 +4743,7 @@ sync_tool_definitions(
     "enrich_task_with_context",
     "get_project_readiness",
     "get_project_bootstrap_checklist",
+    "get_project_reconstruction_bundle",
     "plan_remote_snapshot",
     "sync_remote_snapshot",
     "get_storage_trust_status",
@@ -4394,6 +5764,19 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
+    elif name == "project_rules":
+        data = await _build_project_rules_payload(api_base, args, session_id=session_id)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    elif name == "project_context":
+        data = await _build_project_context_payload(api_base, args, session_id=session_id)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    elif name == "project_verify":
+        data = await _build_project_verify_payload(api_base, args, session_id=session_id)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    elif name == "project_capture":
+        data = await _build_project_capture_payload(api_base, args, session_id=session_id)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
     elif name == "list_rule_candidates":
         params = [f"limit={int(args.get('limit', 100))}"]
         if args.get("project"):
@@ -5162,6 +6545,11 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
     elif name == "normalize_mcp_intent":
         payload = build_normalize_mcp_intent_payload(args)
         data = _normalize_mcp_intent(payload["intent"], project_id=payload["project_id"], top_n=payload["top_n"])
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    elif name == "project_work":
+        data = await _build_project_work_payload(api_base, args, session_id=session_id)
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
@@ -6308,6 +7696,9 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
     elif name == "get_project_bootstrap_checklist":
         data = await _post(api_base, "/project/bootstrap-checklist", build_project_bootstrap_payload(args))
         return format_project_bootstrap_response(data)
+    elif name == "get_project_reconstruction_bundle":
+        data = await _post(api_base, "/project/reconstruction-bundle", build_project_reconstruction_payload(args))
+        return format_project_reconstruction_response(data)
     elif name == "plan_remote_snapshot":
         data = await _post(api_base, "/project/remote-snapshot/plan", build_remote_snapshot_payload(args))
         return format_remote_snapshot_plan_response(data)
@@ -6379,8 +7770,9 @@ async def _auto_record_session(ctx: dict) -> None:
                       "ingest_file", "ingest_dir", "skill_search", "skill_install",
                       "crystallize_solution", "knowledge_hierarchy", "canonicals_by_scope",
                       "operational_tray",
-                      "list_project_laws", "get_project_law",
-                      "project_rule_candidates_from_stenography", "list_rule_candidates", "get_rule_candidate_review_packet", "review_rule_candidate", "promote_rule_candidate", "revise_law_from_rule_candidate",
+            "list_project_laws", "get_project_law",
+                      "project_context", "project_verify", "project_capture",
+                      "project_rules", "project_rule_candidates_from_stenography", "list_rule_candidates", "get_rule_candidate_review_packet", "review_rule_candidate", "promote_rule_candidate", "revise_law_from_rule_candidate",
                       "set_canonical_status", "merge_canonicals"}
         was_active = bool(tools_called & used_tools)
 

@@ -191,6 +191,152 @@ async def test_task_execution_context_allows_implementation_with_stage_evidence(
 
 
 @pytest.mark.asyncio
+async def test_task_execution_context_uses_project_local_testing_rule_from_tree(client):
+    parent = await client.post(
+        f"{PREFIX}/tree/upsert-by-path",
+        json={
+            "topic_path": "alpha/testing",
+            "title": "Alpha testing",
+            "type": "area",
+            "status": "active",
+        },
+    )
+    assert parent.status_code == 200, parent.text
+
+    child = await client.post(
+        f"{PREFIX}/tree/upsert-by-path",
+        json={
+            "topic_path": "alpha/testing/docker-test-contour",
+            "parent_topic_path": "alpha/testing",
+            "title": "Alpha Docker test contour",
+            "type": "leaf",
+            "status": "active",
+            "goal": "Run Alpha verification in its Docker test contour.",
+            "structured_fields": {
+                "rule_kind": "project_local_testing_rule",
+                "applies_to_project": "alpha",
+                "required_runner": "scripts/run_pytest_docker.ps1",
+                "runner_service": "alpha-test-runner",
+                "forbidden_default": "host pytest for Alpha verification",
+            },
+            "responsibility": "Use the Docker test contour, not host pytest, for Alpha verification.",
+            "tags": ["project-local", "testing-contour", "docker", "pytest"],
+        },
+    )
+    assert child.status_code == 200, child.text
+
+    response = await client.post(
+        f"{PREFIX}/task-execution-context",
+        json={
+            "project": "alpha",
+            "task": "Verify the server change with pytest.",
+            "state": "verification",
+            "changed_files": ["app/routers/example.py"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["readiness"]["ready_to_enter"] is True
+    assert "verification_contour_unknown" not in data["readiness"]["missing_prerequisites"]
+    assert any(item["title"] == "Alpha Docker test contour" for item in data["required_rules"])
+    assert any("project knowledge" in item for item in data["risk_controls"])
+    assert any("host pytest" in item for item in data["risk_controls"])
+
+
+@pytest.mark.asyncio
+async def test_task_execution_context_carries_project_testing_rule_outside_verification(client):
+    parent = await client.post(
+        f"{PREFIX}/tree/upsert-by-path",
+        json={
+            "topic_path": "beta/testing",
+            "title": "Beta testing",
+            "type": "area",
+            "status": "active",
+        },
+    )
+    assert parent.status_code == 200, parent.text
+
+    child = await client.post(
+        f"{PREFIX}/tree/upsert-by-path",
+        json={
+            "topic_path": "beta/testing/docker-test-contour",
+            "parent_topic_path": "beta/testing",
+            "title": "Beta Docker test contour",
+            "type": "leaf",
+            "status": "active",
+            "goal": "Run Beta verification in its Docker test contour.",
+            "structured_fields": {
+                "rule_kind": "project_local_testing_rule",
+                "applies_to_project": "beta",
+                "required_runner": "scripts/run_pytest_docker.ps1",
+                "forbidden_default": "host pytest for Beta verification",
+            },
+            "responsibility": "Use the Docker test contour, not host pytest, for Beta verification.",
+            "tags": ["project-local", "testing-contour", "docker", "pytest"],
+        },
+    )
+    assert child.status_code == 200, child.text
+
+    response = await client.post(
+        f"{PREFIX}/task-execution-context",
+        json={
+            "project": "beta",
+            "task": "Review why a new agent session missed project testing rules.",
+            "state": "operator_review",
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert not any(item["title"] == "Beta Docker test contour" for item in data["required_rules"])
+    assert any(item["title"] == "Beta Docker test contour" for item in data["recommended_rules"])
+
+
+@pytest.mark.asyncio
+async def test_task_execution_context_treats_user_confirmed_restart_window_as_effective(client):
+    created = await client.post(
+        f"{PREFIX}/laws",
+        json={
+            "project": "alpha",
+            "title": "Wait for runtime owner stale window after Docker restart",
+            "statement": (
+                "After restarting the MnemoForge Docker server, agents must allow for the runtime owner "
+                "stale window. If health checks fail immediately after restart and logs show "
+                "RuntimeOwnershipError for qdrant_data, wait up to MNEMOFORGE_RUNTIME_OWNER_STALE_SECONDS, "
+                "default 120 seconds, then retry health and MCP checks."
+            ),
+            "rationale": "The runtime owner guard protects qdrant_data from concurrent writers.",
+            "agent_id": "codex",
+            "scope": "project",
+            "status": "user_confirmed",
+            "confirmed_by": "user",
+            "tags": ["docker", "restart", "runtime-owner"],
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    response = await client.post(
+        f"{PREFIX}/task-execution-context",
+        json={
+            "project": "alpha",
+            "task": "Restart the Docker server and validate MCP after the restart.",
+            "state": "live_validation",
+            "prior_stage_recorded": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["coverage"]["active_laws_seen"] == 1
+    assert any(
+        item["title"] == "Wait for runtime owner stale window after Docker restart"
+        for item in data["recommended_rules"]
+    )
+    assert any("stale window" in item for item in data["risk_controls"])
+
+
+@pytest.mark.asyncio
 async def test_task_execution_context_verification_is_project_aware_when_contour_is_unknown(client):
     response = await client.post(
         f"{PREFIX}/task-execution-context",

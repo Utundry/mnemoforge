@@ -119,6 +119,22 @@ def _history_has_type(history: list[dict[str, Any]], change_type: str) -> bool:
     return any(str(item.get("change_type") or "") == change_type for item in history)
 
 
+def _history_has_stage(history: list[dict[str, Any]], stage: str) -> bool:
+    stage = stage.strip()
+    if not stage:
+        return False
+    stage_tag = f"task_stage:{stage}"
+    for item in history:
+        if str(item.get("stage") or "") == stage:
+            return True
+        if stage_tag in (item.get("tags") or []):
+            return True
+        content = str(item.get("content") or "")
+        if f"Checkpoint stage: {stage}" in content:
+            return True
+    return False
+
+
 def evaluate_execution_readiness(payload: dict[str, Any]) -> dict[str, Any]:
     bundle = payload.get("replay_bundle") or {}
     checkpoint = payload.get("latest_checkpoint") or {}
@@ -129,7 +145,7 @@ def evaluate_execution_readiness(payload: dict[str, Any]) -> dict[str, Any]:
     evidence = {
         "linked_improvement": bool(linked_improvement.get("available")),
         "decision_history": _history_has_type(history, "decision") or bool(checkpoint.get("decisions")),
-        "implementation_history": _history_has_type(history, "implementation"),
+        "implementation_history": _history_has_type(history, "implementation") or _history_has_stage(history, "in_progress"),
         "verification_evidence": bool(checkpoint.get("verification")),
         "risk_evidence": bool(checkpoint.get("remaining_risk")),
         "handoff_refs": bool(bundle.get("handoff_refs")),

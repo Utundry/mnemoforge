@@ -53,6 +53,26 @@ def test_task_enrichment_can_activate_sparse_knowledge_instinct(tmp_path: Path, 
     assert "unified_mcp_surface_first" in ids
 
 
+def test_ask_memory_before_code_names_mcp_first_order_and_failure_mode(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(service, "_DB_PATH", tmp_path / "operational_instincts.db")
+    items = service.get_active_operational_instincts(
+        context_type="task_enrichment",
+        project_id="alpha",
+        limit=20,
+    )
+    instinct = next(item for item in items if item["instinct_id"] == "ask_memory_before_code")
+
+    action = instinct["action"]
+    assert "enrich_task_with_context" in action
+    assert "explicit project_id" in action
+    assert "list_open_tasks" in action
+    assert "list_artifacts" in action
+    assert "continue_task" in action
+    assert "get_project_readiness" in action
+    assert "Inspect repository files only after MnemoForge narrows the question" in action
+    assert "markdown/status files alone while MCP is available" in instinct["failure_if_missing"]
+
+
 def test_task_enrichment_includes_unified_mcp_surface_instinct(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(service, "_DB_PATH", tmp_path / "operational_instincts.db")
     items = service.get_active_operational_instincts(
@@ -76,7 +96,7 @@ def test_unified_mcp_surface_instinct_mentions_list_artifacts_and_no_sql(tmp_pat
 
     assert "list_artifacts" in instinct["action"]
     assert "do not read project tables directly" in instinct["action"].lower()
-    assert "report the outcome back to mnemoforge" in instinct["action"]
+    assert "report the outcome back to mnemoforge" in instinct["action"].lower()
 
 
 def test_render_operational_instincts_block_is_human_and_llm_readable(tmp_path: Path, monkeypatch):

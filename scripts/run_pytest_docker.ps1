@@ -48,10 +48,39 @@ function Test-DockerAccess {
     Write-Host "[pytest-docker] Docker preflight failed before test setup."
     Write-Host "[pytest-docker] This usually means the agent cannot access Docker from the current Windows security context."
     Write-Host "[pytest-docker] Use the approved Docker pytest contour with elevated permissions instead of retrying host pytest."
+    Write-Host "[pytest-docker] Codex hint: rerun this same script with sandbox_permissions=require_escalated; do not run host python -m pytest for this project."
     if ($message) {
         Write-Host "[pytest-docker] docker version output: $message"
     }
     throw "Docker daemon is not accessible from this shell; rerun the Docker test wrapper with elevated permissions."
+}
+
+function Convert-PytestArgForContainer {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Arg,
+        [Parameter(Mandatory = $true)]
+        [string]$RootPath
+    )
+
+    if (-not $Arg -or $Arg.StartsWith("-") -or -not $Arg.Contains("\")) {
+        return $Arg
+    }
+
+    $candidate = $Arg
+    $rootPrefix = [Regex]::Escape($RootPath.TrimEnd("\", "/"))
+    if ($candidate -match "^$rootPrefix[\\/](.+)$") {
+        $candidate = $Matches[1]
+    }
+    elseif ($candidate.StartsWith(".\")) {
+        $candidate = $candidate.Substring(2)
+    }
+
+    if ($candidate -match "^(tests|app|scripts|mcp|cli|docs|demo)[\\/]" -or $candidate -match "\.py(::.*)?$") {
+        return ($candidate -replace "\\", "/")
+    }
+
+    return $Arg
 }
 
 Write-Host "[pytest-docker] project root: $Root"
@@ -97,8 +126,17 @@ $runArgs = @(
     "pytest"
 )
 
-if ($PytestArgs -and $PytestArgs.Count -gt 0) {
-    $runArgs += $PytestArgs
+$normalizedPytestArgs = @()
+foreach ($arg in $PytestArgs) {
+    $normalized = Convert-PytestArgForContainer -Arg $arg -RootPath $Root
+    if ($normalized -ne $arg) {
+        Write-Host "[pytest-docker] normalized container path: $arg -> $normalized"
+    }
+    $normalizedPytestArgs += $normalized
+}
+
+if ($normalizedPytestArgs -and $normalizedPytestArgs.Count -gt 0) {
+    $runArgs += $normalizedPytestArgs
     Write-Host "[pytest-docker] running: docker $($runArgs -join ' ')"
 }
 else {

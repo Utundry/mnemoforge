@@ -12,7 +12,8 @@ from app.models.task_execution_context import (
     TaskExecutionRuleRef,
     TaskExecutionToolSuggestion,
 )
-from app.services.law_service import list_project_laws
+from app.services.law_service import CONFIRMED_STATUSES, list_project_laws
+from app.services.project_tree_store import get_tree_store
 
 
 @dataclass(frozen=True)
@@ -117,7 +118,17 @@ _STATE_POLICIES: dict[str, StatePolicy] = {
         diagnostic_tools=("reconcile_completed_checkpoints", "review_completed_checkpoint_scopes"),
         guarded_tools=("review_completed_checkpoint_scopes",),
         required_terms=_COMMON_REQUIRED_TERMS + ("dev server restart", "memory-server-dev"),
-        recommended_terms=("docker test", "pytest", "lifecycle", "report-only"),
+        recommended_terms=(
+            "docker restart",
+            "runtime owner",
+            "stale window",
+            "runtime_owner",
+            "120 seconds",
+            "docker test",
+            "pytest",
+            "lifecycle",
+            "report-only",
+        ),
         risk_controls=(
             "Restart memory-server-dev when needed to load server-side changes.",
             "Keep test execution separate from live validation.",
@@ -289,10 +300,60 @@ def _verification_contour_rules(laws: list[ProjectLawRecord]) -> list[ProjectLaw
     return [law for law in laws if _looks_like_verification_contour(law)]
 
 
+def _looks_like_restart_stale_window(law: ProjectLawRecord) -> bool:
+    text = _haystack(law)
+    return any(
+        term in text
+        for term in (
+            "runtime owner",
+            "runtimeownershiperror",
+            "runtime_owner",
+            "stale window",
+            "120 seconds",
+            "mnemoforge_runtime_owner_stale_seconds",
+        )
+    )
+
+
+def _project_testing_rule_refs(project: str) -> list[TaskExecutionRuleRef]:
+    if not project:
+        return []
+    try:
+        nodes = get_tree_store().list_nodes(
+            status="active",
+            topic_prefix=f"{project}/testing",
+            limit=50,
+        )
+    except Exception:
+        return []
+
+    refs: list[TaskExecutionRuleRef] = []
+    for node in nodes:
+        meta = node.get("meta_json") or {}
+        structured = meta.get("structured_knowledge") or {}
+        if structured.get("rule_kind") != "project_local_testing_rule":
+            continue
+        if str(structured.get("applies_to_project") or project) != project:
+            continue
+        refs.append(
+            TaskExecutionRuleRef(
+                id=str(node.get("id") or ""),
+                title=str(node.get("title") or "Project-local testing rule"),
+                scope="project",
+                status=str(node.get("status") or "active"),
+                topic_path=str(node.get("topic_path") or ""),
+                rationale=str(structured.get("responsibility") or node.get("goal") or node.get("description") or ""),
+                reason="Matched project-local testing rule from the knowledge tree.",
+            )
+        )
+    return refs
+
+
 def _build_readiness(
     body: TaskExecutionContextRequest,
     *,
     laws: list[ProjectLawRecord],
+    project_testing_rules: list[TaskExecutionRuleRef],
 ) -> TaskExecutionReadiness:
     missing: list[str] = []
     required: list[str] = []
@@ -311,7 +372,7 @@ def _build_readiness(
         if not body.changed_files and not _has_recorded_stage_evidence(body):
             missing.append("implementation_evidence_missing")
             required.append("Record or provide implementation evidence before verification.")
-        if not _verification_contour_rules(laws):
+        if not _verification_contour_rules(laws) and not project_testing_rules:
             missing.append("verification_contour_unknown")
             required.append("Identify the project-approved verification contour before running tests.")
 
@@ -414,14 +475,27 @@ async def build_task_execution_context(qdrant, body: TaskExecutionContextRequest
     laws = await list_project_laws(
         qdrant,
         project=body.project,
-        status="active",
+        status="all",
         include_promoted=True,
         limit=100,
     )
+    laws = [law for law in laws if law.status in CONFIRMED_STATUSES]
     task_terms = _task_terms(body)
     required: list[TaskExecutionRuleRef] = []
     recommended: list[TaskExecutionRuleRef] = []
+    project_testing_rules = _project_testing_rule_refs(body.project)
     if body.include_rules:
+        if body.state == "verification":
+            required.extend(project_testing_rules)
+        else:
+            recommended.extend(
+                rule.model_copy(
+                    update={
+                        "reason": "Project-local testing rule is carried as durable project context for this task state."
+                    }
+                )
+                for rule in project_testing_rules
+            )
         for law in laws:
             text = _haystack(law)
             if _term_matches(text, policy.required_terms):
@@ -432,19 +506,38 @@ async def build_task_execution_context(qdrant, body: TaskExecutionContextRequest
     required = required[: body.max_required_rules]
     recommended = recommended[: body.max_recommended_rules]
     tools = list(policy.tool_suggestions) if body.include_tools else []
-    readiness = _build_readiness(body, laws=laws)
+    readiness = _build_readiness(body, laws=laws, project_testing_rules=project_testing_rules)
     risk_controls = list(policy.risk_controls)
     if body.state == "verification":
         contour_rules = _verification_contour_rules(laws)
-        if contour_rules:
+        if contour_rules or project_testing_rules:
             titles = ", ".join(law.title for law in contour_rules[:3])
-            risk_controls.append(f"Project-approved verification contour is defined by active law(s): {titles}.")
+            if titles:
+                risk_controls.append(f"Project-approved verification contour is defined by active law(s): {titles}.")
+            tree_titles = ", ".join(rule.title for rule in project_testing_rules[:3])
+            if tree_titles:
+                risk_controls.append(f"Project-approved verification contour is defined by project knowledge: {tree_titles}.")
             if any("host pytest" in _haystack(law) for law in contour_rules):
                 risk_controls.append("For this project, do not run host pytest when the approved contour forbids it.")
             if any("docker" in _haystack(law) for law in contour_rules):
                 risk_controls.append("For this project, use the Docker-based verification contour described by project law.")
+            tree_text = " ".join(
+                f"{rule.title} {rule.rationale} {rule.topic_path or ''}"
+                for rule in project_testing_rules
+            ).casefold()
+            if "host pytest" in tree_text:
+                risk_controls.append("For this project, do not run host pytest when the approved contour forbids it.")
+            if "docker" in tree_text:
+                risk_controls.append("For this project, use the Docker-based verification contour described by project knowledge.")
         else:
             risk_controls.append("Verification contour unknown for this project; clarify or inspect before executing tests.")
+    if body.state == "live_validation":
+        restart_rules = [law for law in laws if _looks_like_restart_stale_window(law)]
+        if restart_rules:
+            titles = ", ".join(law.title for law in restart_rules[:3])
+            risk_controls.append(
+                f"Project restart validation is constrained by confirmed law(s): {titles}; wait the configured stale window before declaring startup broken."
+            )
     operation_tray = _build_operation_tray(body, policy, tools, readiness, risk_controls) if body.include_tools else None
     return TaskExecutionContextResponse(
         project=body.project,

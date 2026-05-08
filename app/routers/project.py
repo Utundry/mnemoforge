@@ -33,6 +33,7 @@ from app.services.project_context_service import (
     build_handoff_compact_enrich_context,
     build_task_triage,
     build_project_bootstrap_checklist,
+    build_project_reconstruction_bundle,
 )
 from app.services.replay_completeness_service import build_token_budget
 from app.services.project_bootstrap_service import (
@@ -276,6 +277,12 @@ class ProjectReadinessRequest(BaseModel):
         True,
         description="When readiness finds no components, try bootstrapping components from project-scoped client-scan memories.",
     )
+
+
+class ProjectReconstructionBundleRequest(BaseModel):
+    project_id: str = Field(..., min_length=1, max_length=128)
+    detail: str = Field("compact", pattern="^(compact|full)$")
+    max_items_per_layer: int = Field(5, ge=1, le=50)
 
 
 class BootstrapFromMemoriesRequest(BaseModel):
@@ -1628,6 +1635,24 @@ async def project_bootstrap_checklist(body: ProjectReadinessRequest, qdrant: Qdr
         "operational_instincts": checklist.operational_instincts,
         "summary": checklist.summary,
     }
+
+
+@router.post("/reconstruction-bundle")
+async def project_reconstruction_bundle(body: ProjectReconstructionBundleRequest, qdrant: QdrantDep, ollama: OllamaDep) -> dict:
+    """
+    Assemble a read-only source-loss reconstruction bundle from governed project memory.
+
+    The bundle is project-agnostic: it targets the requested project_id and uses
+    that project's components, tasks, improvements, laws, docs, memoirs, and
+    runtime hints as the recovery substrate.
+    """
+    return await build_project_reconstruction_bundle(
+        project_id=body.project_id,
+        qdrant=qdrant,
+        ollama=ollama,
+        detail=body.detail,
+        max_items_per_layer=body.max_items_per_layer,
+    )
 
 
 @router.post("/bootstrap-from-memories")

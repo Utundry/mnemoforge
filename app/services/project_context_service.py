@@ -1489,6 +1489,216 @@ def _readiness_coverage(snapshot: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _compact_reconstruction_item(layer: str, item: dict[str, Any]) -> dict[str, Any]:
+    if layer == "components":
+        return {
+            "component_id": item.get("component_id"),
+            "name": item.get("name"),
+            "purpose": item.get("purpose"),
+            "implementation": item.get("implementation"),
+            "key_files": list(item.get("key_files") or [])[:10],
+            "status": item.get("status"),
+            "snapshot": item.get("snapshot"),
+        }
+    if layer == "tasks":
+        return {
+            "task_id": item.get("task_id"),
+            "title": item.get("title"),
+            "status": item.get("status"),
+            "latest_change_type": item.get("latest_change_type"),
+            "latest_change_summary": item.get("latest_change_summary"),
+        }
+    if layer == "improvements":
+        return {
+            "id": item.get("id"),
+            "title": item.get("title"),
+            "status": item.get("status"),
+            "stage": item.get("stage"),
+            "verdict": item.get("verdict"),
+            "description": item.get("description"),
+        }
+    if layer == "laws":
+        return {
+            "id": item.get("id"),
+            "title": item.get("title"),
+            "scope": item.get("scope"),
+            "status": item.get("status"),
+            "content": item.get("content") or item.get("law"),
+        }
+    if layer == "docs_sections":
+        return {
+            "id": item.get("id"),
+            "title": item.get("title"),
+            "status": item.get("status"),
+            "content": str(item.get("content") or "")[:1200],
+        }
+    return {
+        key: value
+        for key, value in item.items()
+        if key in {"id", "title", "label", "content", "summary", "status", "timestamp", "confidence"}
+    }
+
+
+def _reconstruction_layer(
+    *,
+    layer: str,
+    role: str,
+    items: list[dict[str, Any]],
+    limit: int,
+) -> dict[str, Any]:
+    return {
+        "layer": layer,
+        "count": len(items),
+        "role": role,
+        "items": [_compact_reconstruction_item(layer, item) for item in items[:limit]],
+    }
+
+
+def _source_loss_reconstruction_readiness(coverage: dict[str, int]) -> tuple[str, list[str], list[str]]:
+    missing: list[str] = []
+    warnings: list[str] = []
+    if coverage.get("tasks", 0) == 0 and coverage.get("improvements", 0) == 0:
+        missing.append("work_state")
+    if coverage.get("components", 0) == 0:
+        missing.append("components")
+    if coverage.get("docs_sections", 0) == 0:
+        warnings.append("docs_sections")
+    if coverage.get("laws", 0) == 0:
+        warnings.append("laws")
+    if coverage.get("memoirs", 0) == 0:
+        warnings.append("decision_memoirs")
+    if missing:
+        return "not_ready", missing, warnings
+    if warnings:
+        return "partial", missing, warnings
+    return "ready", missing, warnings
+
+
+async def build_project_reconstruction_bundle(
+    *,
+    project_id: str,
+    qdrant,
+    ollama,
+    detail: str = "compact",
+    max_items_per_layer: int = 5,
+) -> dict[str, Any]:
+    """Assemble governed project-memory layers for source-loss reconstruction.
+
+    The bundle is intentionally read-only and project-agnostic: it describes what
+    can be reconstructed from the target project's governed memory, not from this
+    repository's source tree.
+    """
+    detail = str(detail or "compact").strip().lower()
+    if detail not in {"compact", "full"}:
+        detail = "compact"
+    item_limit = max(1, min(50, int(max_items_per_layer or 5)))
+    snapshot = await gather_project_knowledge_snapshot(
+        project_id=project_id,
+        qdrant=qdrant,
+        ollama=ollama,
+        max_runtime_hints=50,
+        max_memoirs=50,
+        max_tasks=100,
+        max_improvements=500,
+    )
+    coverage = _readiness_coverage(snapshot)
+    readiness, missing_layers, warning_layers = _source_loss_reconstruction_readiness(coverage)
+    snapshot_info = _latest_snapshot_info(snapshot)
+    full_limit = item_limit if detail == "compact" else 50
+    layers = [
+        _reconstruction_layer(
+            layer="components",
+            role="Recover implementation boundaries, key files, endpoints, and component contracts.",
+            items=list(snapshot.get("components") or []),
+            limit=full_limit,
+        ),
+        _reconstruction_layer(
+            layer="tasks",
+            role="Recover current and historical work state, checkpoints, verification, and handoff trails.",
+            items=list(snapshot.get("tasks") or []),
+            limit=full_limit,
+        ),
+        _reconstruction_layer(
+            layer="improvements",
+            role="Recover product intent, backlog, accepted/rejected ideas, and unresolved capability gaps.",
+            items=list(snapshot.get("improvements") or []),
+            limit=full_limit,
+        ),
+        _reconstruction_layer(
+            layer="laws",
+            role="Recover project/canonical constraints that guide regenerated design and agent behavior.",
+            items=list(snapshot.get("laws") or []),
+            limit=full_limit,
+        ),
+        _reconstruction_layer(
+            layer="docs_sections",
+            role="Recover effective documentation sections projected from governed project knowledge.",
+            items=list(snapshot.get("docs_sections") or []),
+            limit=full_limit,
+        ),
+        _reconstruction_layer(
+            layer="memoirs",
+            role="Recover decision summaries and rationale for major historical choices.",
+            items=list(snapshot.get("memoirs") or []),
+            limit=full_limit,
+        ),
+        _reconstruction_layer(
+            layer="runtime_hints",
+            role="Recover reviewed operational hints and recurring runtime observations.",
+            items=list(snapshot.get("runtime_hints") or []),
+            limit=full_limit,
+        ),
+    ]
+    next_actions = []
+    if "components" in missing_layers:
+        next_actions.append("Ingest or bootstrap component knowledge for this project before attempting source-loss regeneration.")
+    if "work_state" in missing_layers:
+        next_actions.append("Create or import project tasks/improvements so reconstruction has product and workflow intent.")
+    if "docs_sections" in warning_layers:
+        next_actions.append("Generate effective docs sections from governed knowledge to improve human-readable recovery output.")
+    if "laws" in warning_layers:
+        next_actions.append("Promote project-specific laws or constraints so regenerated work preserves local rules.")
+    if not next_actions:
+        next_actions.append("Run a dry reconstruction drill against this bundle and compare regenerated behavior with recorded tests/contracts.")
+    return {
+        "project_id": project_id,
+        "capability": "source_loss_reconstruction",
+        "detail": detail,
+        "source_policy": {
+            "project_agnostic": True,
+            "source_code_required": False,
+            "uses_governed_memory_layers": True,
+            "raw_memories_are_not_primary_knowledge": True,
+        },
+        "reconstruction_readiness": {
+            "status": readiness,
+            "missing_layers": missing_layers,
+            "warning_layers": warning_layers,
+            "snapshot": snapshot_info,
+        },
+        "coverage": coverage,
+        "layers": layers,
+        "reconstruction_sequence": [
+            "Assess storage trust and project readiness before using the bundle.",
+            "Recover product intent from improvements, tasks, and decision memoirs.",
+            "Recover architecture from components, docs sections, and promoted laws.",
+            "Regenerate source in bounded component slices with task checkpoints after each slice.",
+            "Verify regenerated behavior using recorded tests, contracts, handoffs, and live-validation rules.",
+        ],
+        "validation_plan": [
+            "Use Docker/test-contour rules stored for the target project.",
+            "Compare generated behavior against task verification records and component contracts.",
+            "Record reconstruction gaps as follow-up improvements instead of filling them from unstated assumptions.",
+        ],
+        "limitations": [
+            "This bundle is a recovery substrate, not an automatic code generator.",
+            "Low component/doc/law coverage lowers reconstruction fidelity.",
+            "Projects must keep governed memory current for source-loss recovery to be meaningful.",
+        ],
+        "next_actions": next_actions,
+    }
+
+
 def _latest_snapshot_info(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     components = snapshot.get("components") or []
     with_snapshot = [item for item in components if item.get("snapshot")]

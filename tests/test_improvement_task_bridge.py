@@ -118,3 +118,26 @@ async def test_improvement_review_sets_stage_and_verdict(client_with_fake_queue_
     assert artifact_body["stage"] == "beta_test"
     assert artifact_body["verdict"] == "effective"
     assert artifact_body["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_improvement_create_accepts_one_to_ten_importance_shorthand(
+    client_with_fake_queue_and_tasks,
+) -> None:
+    client, _ = client_with_fake_queue_and_tasks
+
+    create = await client.post(
+        "/api/v1/improvements",
+        json={
+            "title": "Accept human priority scale",
+            "description": "Agents often report issue importance on a 1-10 scale.",
+            "project": "proj-knowledge",
+            "agent_id": "architect",
+            "importance_score": 9,
+            "tags": ["agent-ux"],
+        },
+    )
+
+    assert create.status_code == 201, create.text
+    body = create.json()
+    assert body["importance_score"] == 0.9
