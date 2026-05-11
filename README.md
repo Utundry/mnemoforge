@@ -47,6 +47,18 @@ Claude returns for final review
 → No recap needed. Full continuity preserved.
 ```
 
+Whether you switch models for cost, hit limits, restart your IDE, or work across machines — Mnemoforge keeps the agent’s operational state alive.
+
+### Why It's cool
+
+- Turns fragmented AI usage into a reliable engineering process
+- Significantly reduces context loss and repeated mistakes
+- Works with your existing tools (Claude Desktop, Cursor, Roo Code, etc.)
+- Fully local-first with MCP support
+
+Stop restarting agent cognition from scratch.
+Start building with true operational continuity.
+
 ## Architecture
 
 MnemoForge is built around a FastAPI service with Qdrant for vector search and
