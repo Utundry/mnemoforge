@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import uuid
 from copy import deepcopy
@@ -521,12 +522,18 @@ def _tool_catalog() -> list[dict[str, Any]]:
 
 
 _COMPACT_TOOL_NAMES = (
+    "project_work",
+    "project_rules",
+    "project_context",
+    "project_verify",
+    "project_capture",
     "operational_tray",
     "list_tool_families",
     "tool_recommend",
     "tool_family_tools",
+    "memory_search",
+    "memory_store",
     "memory_health",
-    "get_task_status",
 )
 
 
@@ -574,9 +581,13 @@ def _compact_tool_catalog(*, limit: int = 12, schema_mode: str = "summary") -> l
     return tools
 
 
+def _default_tool_catalog_mode() -> str:
+    return _normalize_tool_catalog_mode(os.getenv("MCP_TOOL_CATALOG_DEFAULT", "compact")) or "compact"
+
+
 def _tools_list_payload(params: dict[str, Any] | None = None) -> dict[str, Any]:
     params = params or {}
-    mode = str(params.get("mode") or params.get("catalog_mode") or "full").strip().lower()
+    mode = str(params.get("mode") or params.get("catalog_mode") or _default_tool_catalog_mode()).strip().lower()
     if mode in {"compact", "staged", "tray"}:
         limit = int(params.get("limit") or 12)
         schema_mode = str(params.get("schema_mode") or params.get("tool_schema_mode") or "summary").strip().lower()
@@ -589,8 +600,8 @@ def _tools_list_payload(params: dict[str, Any] | None = None) -> dict[str, Any]:
             "full_catalog_available": True,
             "full_catalog_request": {"method": "tools/list", "params": {"mode": "full"}},
             "full_schema_request": {"method": "tools/list", "params": {"mode": "compact", "schema_mode": "full"}},
-            "recommended_first_tool": "operational_tray",
-            "reason": "Compact mode exposes the state-aware facade and staged discovery tools before the full flat catalog.",
+            "recommended_first_tool": "project_work",
+            "reason": "Compact mode exposes thematic facades and staged discovery tools before the full flat catalog.",
             "total_tools_available": len(_tool_catalog()),
             "returned_tools": len(tools),
         }
@@ -1160,8 +1171,18 @@ def _build_tool_explanation(tool_name: str, task_context: str = "") -> dict[str,
 def _tool_input_schema(tool_name: str) -> dict[str, Any]:
     tool = _find_tool_definition(tool_name)
     if not tool:
-        return {}
-    return deepcopy(tool.get("inputSchema") or {})
+        return {"type": "object", "properties": {}}
+    schema = tool.get("inputSchema")
+    if not isinstance(schema, dict):
+        # Some clients are strict about inputSchema being an object.
+        # Fall back to a safe empty object schema.
+        return {"type": "object", "properties": {}}
+    # Ensure required/properties shape exists (some loaders assume these keys exist).
+    schema.setdefault("type", "object")
+    schema.setdefault("properties", {})
+    schema.setdefault("required", [])
+    return deepcopy(schema)
+
 
 
 def _tool_example_payload(tool_name: str, *, intent: str, project_id: str = "") -> dict[str, Any]:
@@ -7862,7 +7883,7 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
         inferred_modes = _infer_small_context_modes(init_params)
         requested_tool_catalog_mode = _extract_requested_tool_catalog_mode(init_params)
         requested_context_hygiene_mode = _extract_requested_context_hygiene_mode(init_params)
-        negotiated_tool_catalog_mode = requested_tool_catalog_mode or str(inferred_modes.get("tool_catalog_mode") or "")
+        negotiated_tool_catalog_mode = requested_tool_catalog_mode or str(inferred_modes.get("tool_catalog_mode") or "") or _default_tool_catalog_mode()
         negotiated_context_hygiene_mode = requested_context_hygiene_mode or str(inferred_modes.get("context_hygiene_mode") or "")
         inferred_context_mode = bool(inferred_modes.get("reason")) and (
             not requested_tool_catalog_mode or not requested_context_hygiene_mode

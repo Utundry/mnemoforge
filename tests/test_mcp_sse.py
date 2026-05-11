@@ -32,15 +32,44 @@ class TestMcpDiscovery:
 
 
 class TestMcpToolExecution:
-    async def test_tools_list_defaults_to_full_catalog_for_compatibility(self):
+    async def test_tools_list_defaults_to_compact_thematic_catalog(self):
         response = await mcp_sse._handle(
             {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
             "http://test",
         )
 
+        result = response["result"]
+        names = [tool["name"] for tool in result["tools"]]
+        assert names[:5] == ["project_work", "project_rules", "project_context", "project_verify", "project_capture"]
+        assert len(names) <= 12
+        assert len(names) < len(mcp_sse.TOOLS)
+        assert "report_issue" not in names
+        assert "record_work_result" not in names
+        assert "get_task_execution_context" not in names
+        assert result["_mnemoforge"]["catalog_mode"] == "compact"
+        assert result["_mnemoforge"]["full_catalog_request"] == {"method": "tools/list", "params": {"mode": "full"}}
+
+    async def test_tools_list_full_mode_returns_full_catalog(self):
+        response = await mcp_sse._handle(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"mode": "full"}},
+            "http://test",
+        )
+
         tools = response["result"]["tools"]
+        names = [tool["name"] for tool in tools]
         assert len(tools) == len(mcp_sse.TOOLS)
-        assert any(tool["name"] == "operational_tray" for tool in tools)
+        assert "report_issue" in names
+        assert "_mnemoforge" not in response["result"]
+
+    async def test_tools_list_env_can_restore_full_default(self, monkeypatch):
+        monkeypatch.setenv("MCP_TOOL_CATALOG_DEFAULT", "full")
+        response = await mcp_sse._handle(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            "http://test",
+        )
+
+        assert len(response["result"]["tools"]) == len(mcp_sse.TOOLS)
+        assert "_mnemoforge" not in response["result"]
 
     async def test_tools_list_compact_catalog_surfaces_operational_tray_first(self):
         response = await mcp_sse._handle(
@@ -50,12 +79,12 @@ class TestMcpToolExecution:
 
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
-        assert names[0] == "operational_tray"
+        assert names[0] == "project_work"
         assert len(names) == 4
         assert len(names) < len(mcp_sse.TOOLS)
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["schema_mode"] == "summary"
-        assert result["_mnemoforge"]["recommended_first_tool"] == "operational_tray"
+        assert result["_mnemoforge"]["recommended_first_tool"] == "project_work"
         assert result["_mnemoforge"]["full_catalog_available"] is True
         assert "inputSummary" in result["tools"][0]
         assert "inputSchema" not in result["tools"][0]
@@ -101,7 +130,7 @@ class TestMcpToolExecution:
         )
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
-        assert names[0] == "operational_tray"
+        assert names[0] == "project_work"
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["schema_mode"] == "summary"
         assert "inputSummary" in result["tools"][0]
@@ -2934,12 +2963,13 @@ class TestMcpToolExecution:
         info = response["result"]["_mnemoforge"]
         assert info["agent_id"] == "codex-cli"
         assert "get_onboarding" in info["tip"]
-        assert "operational_tray" in info["tip"]
+        assert "project_work" in info["tip"]
         assert "pickup_coordination_messages" in info["tip"]
         assert info["tool_catalog"]["preferred_mode"] == "compact"
         assert info["tool_catalog"]["compact_request"] == {"method": "tools/list", "params": {"mode": "compact"}}
         assert info["tool_catalog"]["full_request"] == {"method": "tools/list", "params": {"mode": "full"}}
-        assert info["tool_catalog"]["recommended_first_tool"] == "operational_tray"
+        assert info["tool_catalog"]["recommended_first_tool"] == "project_work"
+        assert "Default tools/list" in info["tool_catalog"]["reason"]
         assert any("/api/v1/coordination/" in line for line in info["semantic_defaults"])
 
     async def test_get_onboarding_includes_mnemoforge_basics(self, monkeypatch):

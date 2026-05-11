@@ -2776,7 +2776,7 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
         "tip": (
             "Call get_onboarding at the start of a session or when you are lost. "
             "If you collaborate on a project, call pickup_coordination_messages for your agent_id and project. "
-            "Prefer tools/list mode=compact and operational_tray for state-aware work before loading the full tool catalog. "
+            "The default tools/list response is compact; start with project_work for project work and only request mode=full for deep/debug access. "
             "If you need to choose a MCP path, call normalize_mcp_intent before you guess at tools. "
             "If you need to resume a task, call reopen_task before you do anything else. "
             "If you are working on a task, record a checkpoint at planning and after every meaningful stage transition with report_task_checkpoint. "
@@ -2792,8 +2792,8 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
             "preferred_mode": "compact",
             "compact_request": {"method": "tools/list", "params": {"mode": "compact"}},
             "full_request": {"method": "tools/list", "params": {"mode": "full"}},
-            "recommended_first_tool": "operational_tray",
-            "reason": "Use compact discovery and the state-aware facade to avoid loading the full flat MCP catalog unless a task requires deeper/debug access.",
+            "recommended_first_tool": "project_work",
+            "reason": "Default tools/list is the compact thematic public surface; request the full flat catalog only for deeper/debug access.",
         },
         "l0_policy": build_l0_policy(),
         "instruction_layers": {
