@@ -1,40 +1,51 @@
-# MnemoForge
+# Mnemoforge
 
-Local-first memory, knowledge, and coordination server for AI coding agents.
+**Operational Continuity Infrastructure for AI Coding Agents**
 
-MnemoForge helps agents keep durable project context across sessions. It is not
-just a larger chat history: it stores project-scoped memory, governed knowledge,
-task evidence, reusable rules, and MCP-accessible workflows so an agent can pick
-up real work without asking the user to reconstruct the whole project again.
+**AI agents stop failing when operational continuity survives interruption.**
 
-> Public alpha: the core server works, but packaging, documentation, and external
-> project bootstrap are still being hardened.
+---
 
-## What It Is For
+### The Real Problem
 
-Use MnemoForge when you want AI coding agents to:
+Powerful AI agents like Claude, Cursor, and Codex work great… until something breaks:
 
-- remember project decisions, tasks, verification results, and follow-up work;
-- retrieve project context semantically instead of relying only on prompt text;
-- maintain governed knowledge such as project laws, runtime hints, and
-  improvement records;
-- coordinate through MCP tools rather than ad hoc chat summaries;
-- keep storage health, integrity, and data hygiene visible;
-- work with local LLM providers when available and cloud fallback when configured.
+- Session ends or crashes
+- You hit subscription limits
+- You switch between models
+- You come back to the project after a few days
+- Requirements evolve during development
 
-## Core Capabilities
+Result? Lost context, duplicated work, broken assumptions, and hours of re-explanation.
 
-- **Project memory**: semantic memories, task checkpoints, decisions, and
-  evidence records scoped by project.
-- **MCP server**: SSE and stdio transports for agent clients.
-- **Work-session closeout**: stenographer spans, clerk/scribe draft reports, and
-  approve-by-reference checkpoints before governed memory mutation.
-- **Project governance**: project laws, improvements, task artifacts, readiness
-  checks, and operational guidance.
-- **Storage trust**: integrity audits, hygiene reports, runtime ownership guards,
-  backup/restore helpers, and remediation surfaces.
-- **Provider-flexible LLM path**: local Ollama and LM Studio support, plus cloud
-  LLM fallback through configurable provider profiles.
+### The Solution
+
+**Mnemoforge** is a **distributed operational cognition layer** that gives your AI agents true continuity across sessions, models, machines, and time.
+
+It doesn’t just remember — it keeps the agent’s **ability to execute** alive.
+
+### Key Capabilities
+
+- **Project Bootstrap** — Instantly inject deep understanding into any existing repository (no more cold starts)
+- **Evolving Task Intelligence** — Automatically captures and refines requirements as your conversation evolves
+- **Operational Tray** — Dynamic workspace that gives the agent exactly what it needs right now (tools, rules, context, artifacts)
+- **Interruption-Resilient Continuity** — Smart checkpoints let agents resume exactly where they left off
+- **Multi-Agent & Multi-Model Support** — Seamless handoff between Claude, Codex, GLM, and others
+- **Cross-Machine Continuity** — Work across Windows and Linux with shared operational knowledge
+
+### Real Workflows That Just Work
+
+```text
+Claude plans the architecture
+   ↓
+Codex implements it efficiently
+   ↓
+GLM continues after Claude limits expire
+   ↓
+Claude returns for final review
+
+→ No recap needed. Full continuity preserved.
+```
 
 ## Architecture
 
