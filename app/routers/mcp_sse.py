@@ -2195,6 +2195,12 @@ def _format_route_answer(data: dict[str, Any]) -> str:
             lines.append(f"Answer: Found task {task_id}.")
         else:
             lines.append("Answer: No exact task was found in the first result.")
+    elif data.get("facade") == "project_work" and intent_type == "next_priority":
+        title = str(first.get("title") or "").strip()
+        if title:
+            lines.append(f"Answer: Next useful project action is {title}.")
+        else:
+            lines.append("Answer: No open project task was found.")
     elif intent_type == "project_readiness":
         lines.append("Answer: Project readiness route executed.")
     elif data.get("executed"):
@@ -2210,6 +2216,8 @@ def _format_route_answer(data: dict[str, Any]) -> str:
         lines.append(f"task_status={_diagnostic_value(first.get('status'))}")
     if first.get("artifact_key"):
         lines.append(f"artifact_key={_diagnostic_value(first.get('artifact_key'))}")
+    if data.get("facade") == "project_work" and intent_type == "next_priority":
+        lines.append(f"why={_diagnostic_value(selected.get('reason'))}")
     lines.extend(
         [
             f"route={_diagnostic_value(selected.get('tool'))}",

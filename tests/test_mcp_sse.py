@@ -811,6 +811,37 @@ class TestMcpToolExecution:
         assert requested[0].startswith("/artifacts?project=alpha&status=open&type=task&limit=5")
         assert data["result"]["items"][0]["artifact_key"] == "task:alpha:task-1"
 
+    async def test_project_work_next_priority_answer_is_final_answer_shaped(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            return {
+                "items": [
+                    {
+                        "artifact_key": "task:alpha:task-1",
+                        "task_id": "task-1",
+                        "title": "First task",
+                        "status": "open",
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        text = await mcp_sse._execute_tool(
+            "project_work",
+            {"project": "alpha", "intent": "what is the next priority?", "response_format": "answer"},
+            "http://test",
+        )
+
+        assert text.startswith("Mnemoforge answer\n")
+        assert "Answer: Next useful project action is First task." in text
+        assert "task_id=task-1" in text
+        assert "title=First task" in text
+        assert "task_status=open" in text
+        assert "artifact_key=task:alpha:task-1" in text
+        assert "route=list_open_tasks" in text
+        assert "intent_type=next_priority" in text
+        assert "why=" in text
+        assert "selected_route" not in text
+
     async def test_project_work_catalog_matches_priority_paraphrase(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
             return {"items": []}
