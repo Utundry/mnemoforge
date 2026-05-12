@@ -141,6 +141,43 @@ This mode is available on the thematic facades (`project_work`,
 routes, telemetry, warnings, useful IDs, and the next safe action without
 having to parse deep JSON.
 
+## Example: Natural Interaction With A Local Model
+
+The next step is removing the need for users to know the internal MCP surface.
+Instead of asking a local model to call `project_context` with
+`response_format="answer"`, the user can ask a natural project question through
+`ask_project`:
+
+```text
+User:
+what is task 382e7306?
+
+Local model via LM Studio:
+ask_project(project="mnemoforge", question="what is task 382e7306?")
+```
+
+Mnemoforge chooses the underlying route and returns a short answer:
+
+```text
+Mnemoforge answer
+Answer: Found task 382e7306-cb61-46ee-8398-bc0a9bdfd9ef.
+task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef
+title=Add shared semantic or LLM route matching for thematic MCP facades
+task_status=done
+route=list_artifacts
+warnings=Partial task_id detected; resolve the exact task_id...
+next_safe_action=Continue from the executed route result.
+```
+
+In live LM Studio testing, a small Gemma model printed the returned answer
+block instead of failing with an empty response. The client also passed an
+imperfect extra argument (`project_id=382e7306`), but Mnemoforge recovered the
+intent from the question and returned the correct task.
+
+Mnemoforge lets small local models interact naturally with complex project
+state, even when clients pass imperfect arguments and users do not know the
+internal tool API.
+
 ## Example: Working With Real Project State
 
 Mnemoforge is not just a place to store notes. It represents project work as
