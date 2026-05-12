@@ -83,6 +83,39 @@ That last line is the important part: Mnemoforge helps synchronize reality and
 project cognition. It detects when code, verification, task records, and memory
 state no longer agree, then helps the agent choose the next useful action.
 
+## Example: Closing A Real Task
+
+The same state can be acted on through MCP-governed workflows. After the agent
+identified the stale `50b5c81a...` task above, it closed the lifecycle loop:
+
+```text
+Live MCP verification succeeded:
+- memory_store created memory b0644791...
+
+Completion checkpoint recorded:
+- checkpoint 93a79116...
+
+Task state synchronized:
+- resolve_artifact marked task 50b5c81a... as done
+
+Backlog checked again:
+- task 50b5c81a... no longer appears in open tasks
+
+Next task selected:
+- 382e7306... shared semantic/LLM route matching
+```
+
+Some old capture drafts still remained, but the lifecycle state was synchronized:
+
+```text
+task status: done
+replay completeness: complete
+```
+
+Mnemoforge does not just track tasks. It helps agents verify work, checkpoint
+outcomes, transition task state, reconcile noisy memory, and continue from the
+next useful project action.
+
 ## Core Idea
 
 Traditional memory systems store information. Mnemoforge preserves operational
