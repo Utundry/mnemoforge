@@ -46,6 +46,43 @@ Claude Code returns for final review.
 No manual recap. No "here is what we did so far." The operational state is
 preserved across agents, models, tools, operating systems, and sessions.
 
+## Example: Working With Real Project State
+
+Mnemoforge is not just a place to store notes. It represents project work as
+structured state: task IDs, statuses, checkpoints, pending drafts, incomplete
+framing, and lifecycle signals. Agents can reason over that state and suggest
+the next operational move.
+
+For example, asking an agent to find the latest unfinished tasks can produce a
+project-state summary like this:
+
+```text
+50b5c81a...
+MCP compact mode: memory_store declared but not routed
+Status: open
+12 pending capture drafts
+Likely partially completed, but not formally closed.
+
+382e7306...
+Shared semantic/LLM route matching for thematic MCP facades
+Status: open
+Specification is complete.
+
+8d52ce46...
+Reconstruct any memory-backed project, not only Mnemoforge itself
+Status: open
+88 pending drafts
+Specification is noisy and incomplete.
+
+Suggested next step:
+Close or refine task 50b5c81a...
+The implementation appears to be done, but project memory still shows it open.
+```
+
+That last line is the important part: Mnemoforge helps synchronize reality and
+project cognition. It detects when code, verification, task records, and memory
+state no longer agree, then helps the agent choose the next useful action.
+
 ## Core Idea
 
 Traditional memory systems store information. Mnemoforge preserves operational
