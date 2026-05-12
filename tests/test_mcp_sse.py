@@ -87,7 +87,7 @@ class TestMcpToolExecution:
         assert result["_mnemoforge"]["recommended_first_tool"] == "project_work"
         assert result["_mnemoforge"]["full_catalog_available"] is True
         assert "inputSummary" in result["tools"][0]
-        assert "inputSchema" not in result["tools"][0]
+        assert result["tools"][0]["inputSchema"]["type"] == "object"
 
     async def test_tools_list_compact_can_request_full_schemas(self):
         response = await mcp_sse._handle(
@@ -134,7 +134,7 @@ class TestMcpToolExecution:
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["schema_mode"] == "summary"
         assert "inputSummary" in result["tools"][0]
-        assert "inputSchema" not in result["tools"][0]
+        assert result["tools"][0]["inputSchema"]["type"] == "object"
         assert len(names) < len(mcp_sse.TOOLS)
 
         full = await mcp_sse._handle(
@@ -227,7 +227,7 @@ class TestMcpToolExecution:
         assert listed["result"]["_mnemoforge"]["catalog_mode"] == "compact"
         assert listed["result"]["_mnemoforge"]["schema_mode"] == "summary"
         assert "inputSummary" in listed["result"]["tools"][0]
-        assert "inputSchema" not in listed["result"]["tools"][0]
+        assert listed["result"]["tools"][0]["inputSchema"]["type"] == "object"
 
     async def test_initialize_infers_small_context_from_model_profile(self):
         initialized = await mcp_sse._handle(

@@ -576,8 +576,11 @@ def _compact_tool_catalog(*, limit: int = 12, schema_mode: str = "summary") -> l
     if str(schema_mode or "summary").strip().lower() in {"full", "raw", "debug"}:
         return tools
     for tool in tools:
-        schema = tool.pop("inputSchema", {})
-        tool["inputSummary"] = _summarize_input_schema(schema if isinstance(schema, dict) else {})
+        schema = tool.get("inputSchema")
+        if not isinstance(schema, dict):
+            schema = {"type": "object", "properties": {}}
+            tool["inputSchema"] = schema
+        tool["inputSummary"] = _summarize_input_schema(schema)
     return tools
 
 
