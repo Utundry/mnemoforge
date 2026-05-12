@@ -2334,11 +2334,22 @@ def _format_ask_project_diagnostic(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _ask_project_evaluation_footer(args: dict[str, Any], result_text: str) -> str:
+    footer = str(args.get("evaluation_footer") or "").strip().lower()
+    if footer not in {"routine_reduction"}:
+        return result_text
+    ok = "yes" if str(result_text or "").strip() else "no"
+    if "ROUTINE_REDUCTION_OK =" in result_text:
+        return result_text
+    return f"{result_text.rstrip()}\nROUTINE_REDUCTION_OK = {ok}"
+
+
 async def _build_ask_project_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
     route = _ask_project_select_route(args)
     tool_name = str(route["facade"])
     payload = dict(route["payload"])
     result_text = await _execute_tool(tool_name, payload, api_base, session_id=session_id)
+    result_text = _ask_project_evaluation_footer(args, result_text)
     return {
         "status": "executed",
         "facade": "ask_project",
@@ -4448,6 +4459,15 @@ TOOLS = [
                 "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
                 "client_profile": {"type": "string", "enum": ["default", "local", "small_context", "agent"], "default": "default"},
                 "response_format": {"type": "string", "enum": ["auto", "answer", "diagnostic", "json"], "default": "auto"},
+                "evaluation_footer": {
+                    "type": "string",
+                    "enum": ["none", "routine_reduction"],
+                    "default": "none",
+                    "description": (
+                        "Optional self-contained test footer for weak local models; "
+                        "routine_reduction appends ROUTINE_REDUCTION_OK."
+                    ),
+                },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20},
             },
         },

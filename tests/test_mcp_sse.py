@@ -407,6 +407,7 @@ class TestMcpToolExecution:
         props = schema["properties"]
         assert props["response_format"]["enum"] == ["auto", "answer", "diagnostic", "json"]
         assert props["client_profile"]["enum"] == ["default", "local", "small_context", "agent"]
+        assert props["evaluation_footer"]["enum"] == ["none", "routine_reduction"]
         assert props["project"]["default"] == "mnemoforge"
         assert "Human-facing" in tool["description"]
 
@@ -1436,6 +1437,30 @@ class TestMcpToolExecution:
         assert calls[0][0] == "project_work"
         assert calls[0][1]["allow_mutation"] is False
         assert calls[0][1]["response_format"] == "answer"
+
+    async def test_ask_project_routine_reduction_footer_is_self_contained(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            return (
+                "Mnemoforge answer\n"
+                "Answer: Next useful project action is First task.\n"
+                "task_id=task-1"
+            )
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {
+                "project": "alpha",
+                "question": "what should I do next?",
+                "evaluation_footer": "routine_reduction",
+            },
+            "http://test",
+        )
+
+        assert text.startswith("Mnemoforge answer\n")
+        assert text.rstrip().endswith("ROUTINE_REDUCTION_OK = yes")
 
     async def test_ask_project_mutating_request_stays_guarded(self, monkeypatch):
         original_execute = mcp_sse._execute_tool
