@@ -2088,6 +2088,69 @@ def _selected_route_public(route: dict[str, Any]) -> dict[str, Any]:
     return selected
 
 
+def _wants_route_diagnostic(args: dict[str, Any]) -> bool:
+    return bool(args.get("diagnostic")) or str(args.get("response_format") or "").strip().lower() == "diagnostic"
+
+
+def _diagnostic_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return "; ".join(str(item) for item in value if str(item).strip())
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))[:500]
+    return str(value)
+
+
+def _first_route_diagnostic_task_id(result: Any) -> str:
+    if isinstance(result, dict):
+        if result.get("task_id"):
+            return str(result["task_id"])
+        items = result.get("items")
+        if isinstance(items, list) and items:
+            first = items[0]
+            if isinstance(first, dict) and first.get("task_id"):
+                return str(first["task_id"])
+    return ""
+
+
+def _format_route_diagnostic(data: dict[str, Any]) -> str:
+    selected = data.get("selected_route") or {}
+    scorer = selected.get("scorer") if isinstance(selected.get("scorer"), dict) else {}
+    telemetry = data.get("route_telemetry") if isinstance(data.get("route_telemetry"), dict) else {}
+    result = data.get("result")
+    lines = [
+        "Mnemoforge route diagnostic",
+        f"facade={_diagnostic_value(data.get('facade'))}",
+        f"project={_diagnostic_value(data.get('project'))}",
+        f"intent={_diagnostic_value(data.get('intent'))}",
+        f"status={_diagnostic_value(data.get('status'))}",
+        f"action_status={_diagnostic_value(data.get('action_status'))}",
+        f"route.tool={_diagnostic_value(selected.get('tool'))}",
+        f"route.intent_type={_diagnostic_value(selected.get('intent_type'))}",
+        f"route.mutating={_diagnostic_value(selected.get('mutating'))}",
+        f"route.confidence={_diagnostic_value(selected.get('confidence'))}",
+        f"scorer.backend_requested={_diagnostic_value(scorer.get('backend_requested'))}",
+        f"scorer.backend_used={_diagnostic_value(scorer.get('backend_used'))}",
+        f"scorer.llm_attempted={_diagnostic_value(scorer.get('llm_attempted'))}",
+        f"scorer.fallback_reason={_diagnostic_value(scorer.get('fallback_reason'))}",
+        f"scorer.learned_pattern_id={_diagnostic_value(scorer.get('learned_pattern_id'))}",
+        f"scorer.matched_pattern_id={_diagnostic_value(scorer.get('matched_pattern_id'))}",
+        f"telemetry.scorer_backend={_diagnostic_value(telemetry.get('scorer_backend'))}",
+        f"telemetry.fallback_used={_diagnostic_value(telemetry.get('fallback_used'))}",
+        f"telemetry.fallback_reason={_diagnostic_value(telemetry.get('fallback_reason'))}",
+        f"telemetry.matched_pattern_id={_diagnostic_value(telemetry.get('matched_pattern_id'))}",
+        f"telemetry.matched_pattern_score={_diagnostic_value(telemetry.get('matched_pattern_score'))}",
+        f"telemetry.matched_by={_diagnostic_value(telemetry.get('matched_by'))}",
+        f"warnings={_diagnostic_value(data.get('warnings') or telemetry.get('warnings') or [])}",
+        f"first_task_id={_diagnostic_value(_first_route_diagnostic_task_id(result))}",
+        f"next_safe_action={_diagnostic_value(data.get('next_safe_action'))}",
+    ]
+    return "\n".join(lines)
+
+
 async def _run_facade_route(
     *,
     facade: str,
@@ -4590,6 +4653,8 @@ TOOLS = [
                 "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
                 "context_profile": {"type": "string", "enum": ["default", "handoff_compact", "hot_path"], "default": "hot_path"},
                 "status": {"type": "string", "enum": ["active", "user_confirmed", "all"], "default": "active"},
+                "diagnostic": {"type": "boolean", "default": False, "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients."},
+                "response_format": {"type": "string", "enum": ["json", "diagnostic"], "default": "json"},
                 "scorer_backend": {
                     "type": "string",
                     "enum": ["lexical", "auto", "llm"],
@@ -4626,6 +4691,8 @@ TOOLS = [
                 "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
                 "stage_evidence": {"type": "array", "items": {"type": "string"}, "default": []},
                 "prior_stage_recorded": {"type": "boolean"},
+                "diagnostic": {"type": "boolean", "default": False, "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients."},
+                "response_format": {"type": "string", "enum": ["json", "diagnostic"], "default": "json"},
                 "scorer_backend": {
                     "type": "string",
                     "enum": ["lexical", "auto", "llm"],
@@ -4663,6 +4730,8 @@ TOOLS = [
                 "span_type": {"type": "string"},
                 "allow_mutation": {"type": "boolean", "default": False},
                 "use_llm": {"type": "boolean", "default": False},
+                "diagnostic": {"type": "boolean", "default": False, "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients."},
+                "response_format": {"type": "string", "enum": ["json", "diagnostic"], "default": "json"},
                 "scorer_backend": {
                     "type": "string",
                     "enum": ["lexical", "auto", "llm"],
@@ -6500,12 +6569,18 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         return json.dumps(data, indent=2, ensure_ascii=False)
     elif name == "project_context":
         data = await _build_project_context_payload(api_base, args, session_id=session_id)
+        if _wants_route_diagnostic(args):
+            return _format_route_diagnostic(data)
         return json.dumps(data, indent=2, ensure_ascii=False)
     elif name == "project_verify":
         data = await _build_project_verify_payload(api_base, args, session_id=session_id)
+        if _wants_route_diagnostic(args):
+            return _format_route_diagnostic(data)
         return json.dumps(data, indent=2, ensure_ascii=False)
     elif name == "project_capture":
         data = await _build_project_capture_payload(api_base, args, session_id=session_id)
+        if _wants_route_diagnostic(args):
+            return _format_route_diagnostic(data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name == "list_rule_candidates":
@@ -7282,6 +7357,8 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
     elif name == "project_work":
         data = await _build_project_work_payload(api_base, args, session_id=session_id)
         data = _annotate_structured_tool_payload(name, data)
+        if _wants_route_diagnostic(args):
+            return _format_route_diagnostic(data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name == "project_workflow":

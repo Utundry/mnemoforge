@@ -411,6 +411,8 @@ class TestMcpToolExecution:
         assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
         assert props["scorer_backend"]["default"] == "auto"
         assert props["allow_mutation"]["default"] is False
+        assert props["diagnostic"]["default"] is False
+        assert props["response_format"]["enum"] == ["json", "diagnostic"]
         assert "verification" in props["state"]["enum"]
         assert "live_validation" in props["state"]["enum"]
 
@@ -441,6 +443,8 @@ class TestMcpToolExecution:
         props = schema["properties"]
         assert props["detail"]["enum"] == ["compact", "full"]
         assert props["context_profile"]["default"] == "hot_path"
+        assert props["diagnostic"]["default"] is False
+        assert props["response_format"]["enum"] == ["json", "diagnostic"]
         assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
         assert props["scorer_backend"]["default"] == "auto"
         assert "project-context facade" in tool["description"]
@@ -452,6 +456,8 @@ class TestMcpToolExecution:
         props = schema["properties"]
         assert "verification" in props["state"]["enum"]
         assert "live_validation" in props["state"]["enum"]
+        assert props["diagnostic"]["default"] is False
+        assert props["response_format"]["enum"] == ["json", "diagnostic"]
         assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
         assert props["scorer_backend"]["default"] == "auto"
         assert "120-second post-restart window" in tool["description"]
@@ -462,6 +468,8 @@ class TestMcpToolExecution:
         assert schema["required"] == ["intent"]
         props = schema["properties"]
         assert props["allow_mutation"]["default"] is False
+        assert props["diagnostic"]["default"] is False
+        assert props["response_format"]["enum"] == ["json", "diagnostic"]
         assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
         assert props["scorer_backend"]["default"] == "auto"
         assert "raw_notes" in props
@@ -1265,6 +1273,59 @@ class TestMcpToolExecution:
         assert result["selected_route"]["intent_type"] == "task_lookup"
         assert "Partial task_id detected" in result["warnings"][0]
         assert called[0] == ("list_artifacts", {"project": "alpha", "type": "task", "limit": 50})
+
+    async def test_project_context_diagnostic_response_is_plain_text_route_block(self, monkeypatch):
+        async def fake_project_context(api_base: str, args: dict, session_id=None):
+            return {
+                "status": "executed",
+                "facade": "project_context",
+                "project": "alpha",
+                "intent": "382e7306",
+                "action_status": "executed",
+                "selected_route": {
+                    "tool": "list_artifacts",
+                    "intent_type": "task_lookup",
+                    "mutating": False,
+                    "confidence": 0.8,
+                    "reason": "A partial task-id-like token was provided.",
+                    "scorer": {
+                        "backend_requested": "auto",
+                        "backend_used": "lexical",
+                        "llm_attempted": False,
+                        "fallback_reason": "",
+                    },
+                },
+                "result": {"items": [{"task_id": "382e7306-cb61-46ee-8398-bc0a9bdfd9ef"}]},
+                "route_telemetry": {
+                    "scorer_backend": "lexical",
+                    "fallback_used": False,
+                    "fallback_reason": "",
+                    "matched_pattern_id": "",
+                    "matched_pattern_score": None,
+                    "matched_by": "",
+                    "warnings": ["Partial task_id detected"],
+                },
+                "warnings": ["Partial task_id detected"],
+                "next_safe_action": "Continue from the executed route result.",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_project_context_payload", fake_project_context)
+        text = await mcp_sse._execute_tool(
+            "project_context",
+            {"project": "alpha", "intent": "382e7306", "diagnostic": True},
+            "http://test",
+        )
+
+        assert text.startswith("Mnemoforge route diagnostic\n")
+        assert "facade=project_context" in text
+        assert "route.tool=list_artifacts" in text
+        assert "route.intent_type=task_lookup" in text
+        assert "scorer.backend_requested=auto" in text
+        assert "scorer.backend_used=lexical" in text
+        assert "scorer.llm_attempted=false" in text
+        assert "telemetry.scorer_backend=lexical" in text
+        assert "warnings=Partial task_id detected" in text
+        assert "first_task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef" in text
 
     async def test_project_context_executes_reconstruction_bundle(self, monkeypatch):
         called: list[tuple[str, dict]] = []

@@ -1315,6 +1315,17 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "default": False,
                     "description": "When false, mutating routes return a plan instead of writing memory or changing lifecycle state.",
                 },
+                "diagnostic": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients.",
+                },
+                "response_format": {
+                    "type": "string",
+                    "enum": ["json", "diagnostic"],
+                    "default": "json",
+                    "description": "Use diagnostic for a short plain-text route/scorer/telemetry block instead of nested JSON.",
+                },
                 "scorer_backend": {
                     "type": "string",
                     "enum": ["lexical", "auto", "llm"],
