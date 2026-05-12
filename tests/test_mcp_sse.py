@@ -3395,14 +3395,16 @@ class TestMcpToolExecution:
         info = response["result"]["_mnemoforge"]
         assert info["agent_id"] == "codex-cli"
         assert "get_onboarding" in info["tip"]
+        assert "expert helpers" in info["tip"]
         assert "project_work" in info["tip"]
         assert "pickup_coordination_messages" in info["tip"]
         assert info["tool_catalog"]["preferred_mode"] == "compact"
         assert info["tool_catalog"]["compact_request"] == {"method": "tools/list", "params": {"mode": "compact"}}
         assert info["tool_catalog"]["full_request"] == {"method": "tools/list", "params": {"mode": "full"}}
         assert info["tool_catalog"]["recommended_first_tool"] == "ask_project"
-        assert "Default tools/list" in info["tool_catalog"]["reason"]
+        assert "compact expert-helper surface" in info["tool_catalog"]["reason"]
         assert any("/api/v1/coordination/" in line for line in info["semantic_defaults"])
+        assert any("project-specific hints" in line for line in info["semantic_defaults"])
 
     async def test_get_onboarding_includes_mnemoforge_basics(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
@@ -3454,6 +3456,9 @@ class TestMcpToolExecution:
         assert "pickup_coordination_messages" in result
         assert "coordination_is_not_truth" in result
         assert "INTEGRITY WARNING:" in result
+        assert "EXPERT HELPER GUIDANCE:" in result
+        assert "Start with ask_project" in result
+        assert "project-specific hints" in result
 
     async def test_get_onboarding_degrades_gracefully_when_skill_pack_http500(self, monkeypatch):
         async def fake_get(api_base: str, path: str):

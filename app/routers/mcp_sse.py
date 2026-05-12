@@ -8431,6 +8431,13 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             pass
 
         sections.append(
+            "EXPERT HELPER GUIDANCE:\n"
+            "  Start with ask_project for natural human/project questions, then use thematic facades for explicit workflows.\n"
+            "  Prefer expert helpers over low-level tools when they can express the request.\n"
+            "  Treat runtime details such as Docker test contours as project-specific hints from project context, not universal rules."
+        )
+
+        sections.append(
             render_onboarding_instincts_block(
                 get_active_operational_instincts(
                     context_type="onboarding",

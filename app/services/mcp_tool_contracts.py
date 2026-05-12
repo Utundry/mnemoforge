@@ -2793,13 +2793,16 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
             "Call get_onboarding at the start of a session or when you are lost. "
             "If you collaborate on a project, call pickup_coordination_messages for your agent_id and project. "
             "The default tools/list response is compact; start with ask_project for human project questions or project_work for explicit project work, and only request mode=full for deep/debug access. "
-            "If you need to choose a MCP path, call normalize_mcp_intent before you guess at tools. "
+            "Prefer expert helpers over operating low-level tools directly; helpers should read project-specific runtime hints instead of assuming one universal test or deployment contour. "
+            "If you still need to choose a MCP path manually, call normalize_mcp_intent before you guess at tools. "
             "If you need to resume a task, call reopen_task before you do anything else. "
             "If you are working on a task, record a checkpoint at planning and after every meaningful stage transition with report_task_checkpoint. "
             "If storage health may affect retrieval, call get_storage_trust_status."
         ),
         "semantic_defaults": [
             "Prefer project-scoped operations and keep project_id consistent.",
+            "Start with expert helpers such as ask_project for human questions, then thematic facades for explicit workflows, before falling back to specialized tools.",
+            "Treat runtime details such as Docker test contours as project-specific hints, not global rules for every project.",
             "Use coordination messages for requests, replies, and handoff status; they do not become project truth automatically.",
             "Prefer semantic routes such as /api/v1/coordination/... over internal module topology.",
             "Treat degraded storage trust as an operational constraint: affected retrieval or learning paths may require caution or operator review.",
@@ -2809,7 +2812,7 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
             "compact_request": {"method": "tools/list", "params": {"mode": "compact"}},
             "full_request": {"method": "tools/list", "params": {"mode": "full"}},
             "recommended_first_tool": "ask_project",
-            "reason": "Default tools/list is the compact thematic public surface; request the full flat catalog only for deeper/debug access.",
+            "reason": "Default tools/list is the compact expert-helper surface; request the full flat catalog only for deeper/debug access.",
         },
         "l0_policy": build_l0_policy(),
         "instruction_layers": {

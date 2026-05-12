@@ -25,6 +25,8 @@ agent can resume work instead of starting from zero.
   conversation evolves, not only from a single initial prompt.
 - **Operational Tray**: expose the tools, rules, context, and artifacts an agent
   needs for the current task.
+- **Expert Helpers**: let humans and agents ask natural operational questions
+  without choosing low-level MCP tools, response formats, or task lookup paths.
 - **Checkpoints**: save and restore task state across interruptions, model
   switches, subscription limits, or machine changes.
 - **Clerk and Stenographer flows**: turn raw dialogue and agent notes into
@@ -374,7 +376,10 @@ Mnemoforge exposes two MCP transports:
 
 Recommended first tools for agents:
 
-- `project_work` for next priority, continuation, checkpointing, and closeout;
+- `ask_project` for natural human/project questions when the caller should not
+  need to know internal MCP tools or response formats;
+- `project_work` for explicit next priority, continuation, checkpointing, and
+  closeout workflows;
 - `project_rules` for project laws and rule governance;
 - `project_context` for task and project context;
 - `project_verify` for verification, restart, and health workflows;
@@ -383,6 +388,12 @@ Recommended first tools for agents:
 Mnemoforge also supports explicit full-catalog discovery for clients that need
 debug or deep access. Start with the compact thematic catalog unless you are
 building or debugging a specialized integration.
+
+Expert helpers should reduce routine tool operation, not hardcode one project's
+runtime. For example, this repository uses Docker-backed verification, but that
+is Mnemoforge project knowledge; helpers should obtain such details from project
+rules, readiness, runtime hints, or context rather than treating Docker as a
+universal testing rule.
 
 ## LLM Providers
 
