@@ -1,67 +1,95 @@
 # Mnemoforge
 
-**Operational Continuity Infrastructure for AI Coding Agents**
+**Operational continuity infrastructure for AI coding agents.**
 
-**AI agents stop failing when operational continuity survives interruption.**
+AI agents stop failing when operational continuity survives interruption.
 
----
+## Why Mnemoforge Exists
 
-### The Real Problem
+AI coding agents are powerful until the session ends, the IDE restarts, a
+subscription limit is reached, the user switches models, or the project resumes
+days later. The usual result is lost context, duplicated work, broken
+assumptions, and long manual recaps.
 
-Powerful AI agents like Claude, Cursor, and Codex work great… until something breaks:
+Existing memory tools often treat the symptom by storing facts or chat history.
+Mnemoforge focuses on the deeper problem: preserving the agent's ability to
+continue execution. It keeps task state, decisions, checkpoints, governed
+knowledge, and project-specific operating rules available through MCP so an
+agent can resume work instead of starting from zero.
 
-- Session ends or crashes
-- You hit subscription limits
-- You switch between models
-- You come back to the project after a few days
-- Requirements evolve during development
+## What Mnemoforge Provides
 
-Result? Lost context, duplicated work, broken assumptions, and hours of re-explanation.
+- **Project Bootstrap**: build useful project memory and context for an existing
+  repository without manual data entry.
+- **Task Intent Accumulation**: capture and refine the task definition as the
+  conversation evolves, not only from a single initial prompt.
+- **Operational Tray**: expose the tools, rules, context, and artifacts an agent
+  needs for the current task.
+- **Checkpoints**: save and restore task state across interruptions, model
+  switches, subscription limits, or machine changes.
+- **Clerk and Stenographer flows**: turn raw dialogue and agent notes into
+  reviewable, governed records.
+- **Task Closure**: help agents summarize results, record verification, document
+  remaining risks, and choose the next task.
+- **Compact MCP discovery**: present a small thematic public tool surface first,
+  with the full catalog available by explicit opt-in.
 
-### The Solution
-
-**Mnemoforge** is a **distributed operational cognition layer** that gives your AI agents true continuity across sessions, models, machines, and time.
-
-It doesn’t just remember — it keeps the agent’s **ability to execute** alive.
-
-### Key Capabilities
-
-- **Project Bootstrap** — Instantly inject deep understanding into any existing repository (no more cold starts)
-- **Evolving Task Intelligence** — Automatically captures and refines requirements as your conversation evolves
-- **Operational Tray** — Dynamic workspace that gives the agent exactly what it needs right now (tools, rules, context, artifacts)
-- **Interruption-Resilient Continuity** — Smart checkpoints let agents resume exactly where they left off
-- **Multi-Agent & Multi-Model Support** — Seamless handoff between Claude, Codex, GLM, and others
-- **Cross-Machine Continuity** — Work across Windows and Linux with shared operational knowledge
-
-### Real Workflows That Just Work
+## Real-World Workflow
 
 ```text
-Claude plans the architecture
-   ↓
-Codex implements it efficiently
-   ↓
-GLM continues after Claude limits expire
-   ↓
-Claude returns for final review
-
-→ No recap needed. Full continuity preserved.
+Claude Code plans the task.
+Codex implements it.
+GLM via Roo Code continues when limits are reached.
+Claude Code returns for final review.
 ```
 
-Whether you switch models for cost, hit limits, restart your IDE, or work across machines — Mnemoforge keeps the agent’s operational state alive.
+No manual recap. No "here is what we did so far." The operational state is
+preserved across agents, models, tools, operating systems, and sessions.
 
-### Why It's cool
+## Core Idea
 
-- Turns fragmented AI usage into a reliable engineering process
-- Significantly reduces context loss and repeated mistakes
-- Works with your existing tools (Claude Desktop, Cursor, Roo Code, etc.)
-- Fully local-first with MCP support
+Traditional memory systems store information. Mnemoforge preserves operational
+continuity.
 
-Stop restarting agent cognition from scratch.
-Start building with true operational continuity.
+Information is static. Operational continuity carries the execution path, open
+questions, verification state, unresolved issues, and next action. It is the
+difference between an agent remembering a fact and an agent being able to keep
+working.
+
+```text
+Idea -> Task Intent -> Operational Tray -> Execution -> Checkpoint
+                                                    |
+                                             Interruption
+                                                    |
+                                           Resume Execution
+                                                    |
+                                              Task Closure
+```
+
+Governed knowledge flows through a separate review path:
+
+```text
+Dialogue -> Stenographer -> Clerk -> Agent Approval -> Chronicle
+```
+
+The execution path is about doing work. The knowledge path is about preserving
+what matters after review.
+
+## Proven Scenarios
+
+These scenarios have been used during Mnemoforge development:
+
+| Scenario | Details |
+| --- | --- |
+| Claude -> Codex -> GLM -> Claude | Work moved across multiple models without manual context handoff. |
+| Session interruption recovery | Task state resumed after timeout, subscription limit, or manual session close. |
+| Windows <-> Linux continuity | The same task continued across machines and operating systems. |
+| Existing project bootstrap | Project memory and understanding were built for work already in progress. |
+| Local SLM via LM Studio MCP | Small local models produced better results because operational context was preserved. |
 
 ## Architecture
 
-MnemoForge is built around a FastAPI service with Qdrant for vector search and
+Mnemoforge is built around a FastAPI service with Qdrant for vector search and
 SQLite stores for durable project metadata. Agents interact with it over HTTP or
 MCP.
 
@@ -70,7 +98,7 @@ AI agent / MCP client
         |
         |  MCP SSE or stdio
         v
-MnemoForge FastAPI server
+Mnemoforge FastAPI server
         |
         +-- Qdrant vector index
         +-- SQLite governed stores
@@ -133,36 +161,36 @@ python scripts/mcp_smoke.py --server http://localhost:8000
 
 ## MCP Usage
 
-MnemoForge exposes two MCP transports:
+Mnemoforge exposes two MCP transports:
 
 - **SSE**: `http://localhost:8000/mcp/sse`
 - **STDIO**: `python -m mcp.server`
 
 Recommended first tools for agents:
 
-- `get_onboarding` for session-specific operating guidance;
-- `operational_tray` for state-aware project workflow actions;
-- `get_task_execution_context` before implementation or closeout;
-- `clerk_draft_report` for review-only closeout drafts from raw notes or
-  stenographer spans;
-- `approve_checkpoint_draft` to persist an approved draft canonically.
+- `project_work` for next priority, continuation, checkpointing, and closeout;
+- `project_rules` for project laws and rule governance;
+- `project_context` for task and project context;
+- `project_verify` for verification, restart, and health workflows;
+- `project_capture` for checkpoints, drafts, handoff notes, and work results.
 
-MnemoForge also supports compact MCP tool discovery for clients that should not
-load the full tool catalog immediately. See [SETUP.md](SETUP.md) for client
-configuration examples.
+Mnemoforge also supports explicit full-catalog discovery for clients that need
+debug or deep access. Start with the compact thematic catalog unless you are
+building or debugging a specialized integration.
 
 ## LLM Providers
 
-MnemoForge is local-first but not locked to one local service.
+Mnemoforge is local-first but not locked to one local service.
 
 Supported provider paths include:
 
-- Ollama for local embeddings/generation;
+- Ollama for local embeddings and generation;
 - LM Studio as a local fallback;
-- configurable cloud LLM providers such as DeepSeek through the cloud gateway.
+- configurable cloud LLM providers such as DeepSeek, Gemini, and GLM through the
+  cloud gateway.
 
-If a local provider is unavailable, the server should surface degraded provider
-state while continuing through configured fallbacks where possible. See
+If a local provider is unavailable, the server surfaces degraded provider state
+while continuing through configured fallbacks where possible. See
 [docs/CLOUD_LLM_PROVIDERS.md](docs/CLOUD_LLM_PROVIDERS.md).
 
 ## Public Alpha Defaults
@@ -207,8 +235,8 @@ do not pollute live `qdrant_data`.
 - [STATUS.md](STATUS.md): current alpha status and known rough edges
 - [docs/CLOUD_LLM_PROVIDERS.md](docs/CLOUD_LLM_PROVIDERS.md): cloud LLM setup
 - [docs/I18N_POLICY.md](docs/I18N_POLICY.md): documentation language policy
-- [docs/EXTERNAL_PROJECT_ROADMAP.md](docs/EXTERNAL_PROJECT_ROADMAP.md):
-  roadmap for non-self projects
+- [docs/EXTERNAL_PROJECT_ROADMAP.md](docs/EXTERNAL_PROJECT_ROADMAP.md): roadmap
+  for non-self projects
 - [docs/USAGE_CONDITIONS.md](docs/USAGE_CONDITIONS.md): intended use and limits
 - [docs/PUBLIC_RELEASE_CHECKLIST.md](docs/PUBLIC_RELEASE_CHECKLIST.md): release
   checklist
@@ -223,20 +251,22 @@ Set these in `.env` for non-local deployments:
 - `MAX_REQUEST_SIZE_MB`: reject oversized request bodies;
 - `LLM_RATE_LIMIT_PER_MIN`: rate-limit LLM-heavy routes.
 
-Do not expose MnemoForge publicly without authentication and a deliberate data
+Do not expose Mnemoforge publicly without authentication and a deliberate data
 boundary.
 
 ## Author And Contact
 
-MnemoForge is created and maintained by Codex as the programmer, MnemoForge as the taskmaster, and Nikolay Laptev as the questioner.
+Mnemoforge is created and maintained by Nikolay Laptev.
 
 - Email: `caveboy@yandex.ru`
 - Docker Hub: `caveboy/mnemoforge`
 - GitHub repository: `Utundry/mnemoforge`
 
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
+
 ## Project Name
 
-`MnemoForge` is the public release name. The internal project id remains
+`Mnemoforge` is the public release name. The internal project id remains
 `mnemoforge` in task history, storage metadata, and compatibility paths.
-
-P.S. НакУй проект c КузницейПамяти!
