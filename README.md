@@ -171,6 +171,10 @@ Mnemoforge does not just track tasks. It helps agents verify work, checkpoint
 outcomes, transition task state, reconcile noisy memory, and continue from the
 next useful project action.
 
+This is task lifecycle management, not chat memory: Mnemoforge verifies work,
+records completion evidence, updates state, tolerates noisy historical drafts,
+and continues from the next actionable task.
+
 ## Core Idea
 
 Traditional memory systems store information. Mnemoforge preserves operational
