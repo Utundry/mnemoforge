@@ -17,6 +17,20 @@ continue execution. It keeps task state, decisions, checkpoints, governed
 knowledge, and project-specific operating rules available through MCP so an
 agent can resume work instead of starting from zero.
 
+## Evolving Task Definition
+
+Most tools assume a task is fully specified before work begins. Real
+engineering rarely works that way. Ideas start incomplete, constraints appear
+during implementation, and the real shape of the task emerges through dialogue,
+code, tests, failures, and decisions.
+
+Mnemoforge captures that evolution instead of forcing a static spec upfront. It
+records the initial intent, detects gaps, preserves decisions, absorbs
+corrections, and turns partial understanding into executable project state.
+
+You do not need a perfect task definition to start. Mnemoforge helps the task
+evolve as you build.
+
 ## What Mnemoforge Provides
 
 - **Project Bootstrap**: build useful project memory and context for an existing
