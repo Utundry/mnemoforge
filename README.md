@@ -239,13 +239,6 @@ Next task selected:
 - 382e7306... shared semantic/LLM route matching
 ```
 
-Some old capture drafts still remained, but the lifecycle state was synchronized:
-
-```text
-task status: done
-replay completeness: complete
-```
-
 Mnemoforge does not just track tasks. It helps agents verify work, checkpoint
 outcomes, transition task state, reconcile noisy memory, and continue from the
 next useful project action.
@@ -253,6 +246,22 @@ next useful project action.
 This is task lifecycle management, not chat memory: Mnemoforge verifies work,
 records completion evidence, updates state, tolerates noisy historical drafts,
 and continues from the next actionable task.
+
+## Example: Background Cleanup And Focus Recovery
+
+Project state changes while agents work. Temporary artifacts appear, side tasks
+are captured, interrupted sessions leave traces, and routing fixes can reveal
+old backlog noise. Mnemoforge treats that as part of the engineering workflow,
+not as manual bookkeeping for the user.
+
+When project state becomes noisy, agents can use Mnemoforge to close accidental
+or obsolete artifacts, synchronize related lifecycle records, recalculate the
+next priority, and return to meaningful work without asking the user to manage
+the backlog by hand.
+
+Mnemoforge keeps the engineering workflow coherent: it cleans up state,
+preserves focus, and restores the next useful action after interruptions,
+side effects, or background maintenance.
 
 ## Core Idea
 
