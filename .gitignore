@@ -83,6 +83,7 @@ node_modules/
 *.sqlite-journal
 
 # Temporary files
+temp_*
 *.tmp
 *.bak
 *.cache
