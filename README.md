@@ -422,28 +422,8 @@ For public or shared deployments:
 - keep experimental modules disabled unless you are actively testing them;
 - use the safe demo dataset in [demo/](demo/) for examples.
 
-Recommended public-alpha disable list:
-
-```env
-DISABLED_MODULES=auto_memory,code_search,layout_fixer,log_filter,openai_compat
-```
-
-## Development And Testing
-
-Use Docker-backed tests for DB and MCP integration checks:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps1 tests/test_learning_store_writebehind.py -q
-```
-
-Remote MCP e2e contour:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\run_docker_remote_mcp_e2e.ps1
-```
-
-The Docker test profile uses disposable Qdrant and SQLite storage, so test runs
-do not pollute live `qdrant_data`.
+Contributor setup and test commands live in [SETUP.md](SETUP.md). Container and
+remote MCP validation notes live in [docs/CONTAINER_STATUS.md](docs/CONTAINER_STATUS.md).
 
 ## Documentation
 
