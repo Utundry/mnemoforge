@@ -46,6 +46,33 @@ Claude Code returns for final review.
 No manual recap. No "here is what we did so far." The operational state is
 preserved across agents, models, tools, operating systems, and sessions.
 
+## Example: Local + Tooling Workflow
+
+![Local SLM and coding agent sharing one Mnemoforge workflow](docs/assets/local-tooling-workflow.png)
+
+A local SLM can analyze and structure the task while a coding agent executes,
+verifies, and records the result. Mnemoforge keeps both sides aligned through
+the same project state.
+
+```text
+Local SLM:
+- reads the task context;
+- summarizes the objective;
+- identifies routing constraints and safety rules.
+
+Coding agent:
+- edits the implementation;
+- runs the Docker test contour;
+- performs live MCP validation;
+- records a checkpoint;
+- reports the next task.
+```
+
+This is the point of operational continuity: Mnemoforge does not require every
+model to be equally strong. Even smaller local models can participate
+effectively in real engineering workflows when task state, tools, checkpoints,
+and verification evidence are preserved.
+
 ## Example: Working With Real Project State
 
 Mnemoforge is not just a place to store notes. It represents project work as
