@@ -91,3 +91,4 @@ pytest_temp_*/
 # OS specific
 Thumbs.db
 desktop.ini
+dockerpush.bat
