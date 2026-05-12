@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app.config import settings
-from app.services.cloud_llm import available_cloud_models, cloud_available, cloud_complete, cloud_provider
+from app.services.cloud_llm import available_cloud_models, cloud_available, cloud_complete, cloud_provider, is_cloud_model_callable
 
 
 @pytest.fixture
@@ -361,3 +361,19 @@ def test_available_cloud_models_includes_first_class_deepseek_settings(reset_clo
     assert cloud_available() is True
     assert available_cloud_models() == ["deepseek-chat"]
     assert cloud_provider(model_override="deepseek-chat") == "deepseek:deepseek-chat"
+
+
+def test_deepseek_config_rejects_stale_glm_override_before_http(reset_cloud_settings):
+    settings.cloud_llm_provider = ""
+    settings.cloud_llm_api_key = ""
+    settings.cloud_llm_model = ""
+    settings.glm_api_key = ""
+    settings.gemini_api_key = ""
+    settings.gemini_model = ""
+    settings.deepseek_api_key = "deepseek-key"
+    settings.deepseek_model = "deepseek-v4-pro"
+    settings.deepseek_base_url = "https://api.deepseek.com"
+
+    assert is_cloud_model_callable("deepseek-v4-pro") is True
+    assert is_cloud_model_callable("deepseek-v4-flash") is True
+    assert is_cloud_model_callable("glm-4.7") is False

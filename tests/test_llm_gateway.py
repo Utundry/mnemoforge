@@ -71,6 +71,13 @@ async def test_gateway_prefers_local_for_economy_summarization(monkeypatch, rese
 
 @pytest.mark.asyncio
 async def test_gateway_uses_economy_cloud_chain_with_fallback(monkeypatch, reset_cloud_settings):
+    settings.cloud_llm_provider = "openai-compatible"
+    settings.cloud_llm_api_key = "generic-key"
+    settings.cloud_llm_model = "cheap-model"
+    settings.cloud_llm_base_url = "https://example.invalid/v1"
+    settings.glm_api_key = ""
+    settings.gemini_api_key = ""
+    settings.deepseek_api_key = ""
     settings.economy_cloud_llms = "cheap-model,backup-model"
     settings.balanced_cloud_llms = ""
     settings.reasoning_cloud_llms = ""
@@ -221,6 +228,45 @@ async def test_gateway_resolves_deepseek_provider_alias(monkeypatch, reset_cloud
 
     assert result == "deepseek ok"
     assert calls[:2] == ["gemini-3.1-flash", "deepseek-chat"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_skips_stale_glm_candidate_for_deepseek_endpoint(monkeypatch, reset_cloud_settings):
+    settings.economy_cloud_llms = "glm-4.7,deepseek"
+    settings.balanced_cloud_llms = ""
+    settings.reasoning_cloud_llms = ""
+    settings.cloud_llm_api_key = ""
+    settings.cloud_llm_provider = ""
+    settings.cloud_llm_model = ""
+    settings.glm_api_key = ""
+    settings.gemini_api_key = ""
+    settings.gemini_model = ""
+    settings.deepseek_api_key = "deepseek-key"
+    settings.deepseek_model = "deepseek-v4-pro"
+    settings.deepseek_base_url = "https://api.deepseek.com"
+    monkeypatch.setattr("app.services.cloud_llm.cloud_available", lambda: True)
+    calls: list[str] = []
+
+    async def fake_cloud_complete(prompt: str, **kwargs):
+        model = kwargs.get("model_override") or ""
+        calls.append(str(model))
+        if model == "glm-4.7":
+            raise AssertionError("stale GLM model must not be sent to DeepSeek endpoint")
+        return "deepseek ok"
+
+    monkeypatch.setattr("app.services.cloud_llm.cloud_complete", fake_cloud_complete)
+
+    gateway = CloudLLMGateway()
+    monkeypatch.setattr(gateway, "_known_model_available", lambda model_id: True)
+    result = await gateway.generate(
+        "Write a short architecture note.",
+        task_type="architecture",
+        mode="economy",
+        allow_local_fallback=False,
+    )
+
+    assert result == "deepseek ok"
+    assert calls == ["deepseek-v4-pro"]
 
 
 @pytest.mark.asyncio

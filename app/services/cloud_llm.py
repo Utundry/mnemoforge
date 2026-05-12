@@ -166,6 +166,20 @@ def _infer_provider_name(*, provider: str, model: str, base_url: str) -> str:
     return _GENERIC_PROVIDER_LABEL
 
 
+def _provider_accepts_model(*, provider: str, model: str) -> bool:
+    normalized_provider = _normalize_provider_name(provider)
+    normalized_model = (model or "").strip().lower()
+    if not normalized_model:
+        return False
+    if normalized_provider == "deepseek":
+        return normalized_model.startswith("deepseek-")
+    if normalized_provider == "glm":
+        return normalized_model.startswith("glm-")
+    if normalized_provider == "gemini":
+        return "gemini" in normalized_model
+    return True
+
+
 def _infer_api_style(*, provider: str, model: str, base_url: str, api_style: str = "") -> str:
     explicit = _normalize_api_style(api_style)
     if explicit:
@@ -410,6 +424,13 @@ def has_cloud_profile(model_id: str) -> bool:
     return str(model_id or "").strip() in _load_profiled_configs()
 
 
+def is_cloud_model_callable(model_id: str) -> bool:
+    config = _resolve_cloud_config(model_override=model_id)
+    if not config:
+        return False
+    return _provider_accepts_model(provider=config.provider, model=config.model)
+
+
 def _resolve_cloud_config(model_override: str | None = None) -> CloudLLMConfig | None:
     override = str(model_override or "").strip()
     profiled = _load_profiled_configs()
@@ -425,6 +446,14 @@ def _resolve_cloud_config(model_override: str | None = None) -> CloudLLMConfig |
         return None
     if not override:
         return base
+    if not _provider_accepts_model(provider=base.provider, model=override):
+        logger.debug(
+            "Skipping incompatible cloud model override %s for provider %s (%s)",
+            override,
+            base.provider,
+            base.base_url,
+        )
+        return profiled.get(override)
 
     return CloudLLMConfig(
         provider=_infer_provider_name(provider=base.provider, model=override, base_url=base.base_url),

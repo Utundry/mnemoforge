@@ -126,7 +126,18 @@ class CloudLLMGateway:
     def _callable_cloud_models(self, mode_models: list[str]) -> list[str]:
         # Only retry models we can actually reach with configured credentials:
         # explicit mode/env hints plus profiled cross-provider configs.
-        return _dedupe_keep_order(self._resolve_model_aliases(mode_models) + self._profiled_models())
+        cloud_mod = self._cloud_module()
+        candidates = _dedupe_keep_order(self._resolve_model_aliases(mode_models) + self._profiled_models())
+        callable_models: list[str] = []
+        skipped: list[str] = []
+        for model in candidates:
+            if cloud_mod.is_cloud_model_callable(model):
+                callable_models.append(model)
+            else:
+                skipped.append(model)
+        if skipped:
+            logger.debug("Skipping incompatible cloud fallback models before HTTP call: %s", ", ".join(skipped))
+        return callable_models
 
     def _candidate_models(self, mode: str, *, task_type: str | None = None, model_override: str | None = None) -> list[str]:
         if model_override:
@@ -140,7 +151,7 @@ class CloudLLMGateway:
             mode_models = self.balanced_models or [self.primary_model]
         callable_models = self._callable_cloud_models(mode_models)
         ranked_models = [model_id for model_id in self._registry_ranked_models(task_type) if model_id in callable_models]
-        return _dedupe_keep_order(self._resolve_model_aliases(mode_models) + self._profiled_models() + ranked_models)
+        return _dedupe_keep_order(callable_models + ranked_models)
 
     def _known_model_available(self, model_id: str) -> bool:
         try:
@@ -292,6 +303,8 @@ class CloudLLMGateway:
         models_to_try = self._filter_models(
             self._candidate_models(mode, task_type=task_type, model_override=model_override)
         )
+        if not models_to_try:
+            raise RuntimeError("CloudLLMGateway: no callable cloud models after provider/model validation")
         last_error: Exception | None = None
         for model in models_to_try:
             try:
