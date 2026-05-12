@@ -1,0 +1,69 @@
+from app.services.route_pattern_store import RoutePatternStore
+
+
+def test_route_pattern_store_reuses_exact_pattern(tmp_path):
+    store = RoutePatternStore(tmp_path / "route_patterns.db")
+
+    pattern_id = store.record(
+        facade="project_context",
+        pattern="can this repo be used yet?",
+        intent_type="project_readiness",
+        tool="get_project_readiness",
+        confidence=0.91,
+        metadata={"matched_example": "check project readiness"},
+    )
+
+    match = store.match(
+        facade="project_context",
+        pattern="can this repo be used yet?",
+        allowed_intent_types={"project_readiness"},
+    )
+
+    assert match is not None
+    assert match["pattern_id"] == pattern_id
+    assert match["backend_used"] == "learned_exact"
+    assert match["intent_type"] == "project_readiness"
+    assert match["tool"] == "get_project_readiness"
+
+
+def test_route_pattern_store_reuses_semantic_pattern(tmp_path):
+    store = RoutePatternStore(tmp_path / "route_patterns.db")
+    store.record(
+        facade="project_context",
+        pattern="fresh agent recovery packet",
+        intent_type="reconstruction_bundle",
+        tool="get_project_reconstruction_bundle",
+        confidence=0.88,
+    )
+
+    match = store.match(
+        facade="project_context",
+        pattern="fresh agent recovery bundle",
+        allowed_intent_types={"reconstruction_bundle"},
+    )
+
+    assert match is not None
+    assert match["backend_used"] == "learned_semantic"
+    assert match["matched_by"] == "semantic"
+    assert match["intent_type"] == "reconstruction_bundle"
+
+
+def test_route_pattern_store_masks_uuid_values_for_reuse(tmp_path):
+    store = RoutePatternStore(tmp_path / "route_patterns.db")
+    store.record(
+        facade="project_context",
+        pattern="details for task 382e7306-cb61-46ee-8398-bc0a9bdfd9ef",
+        intent_type="task_details",
+        tool="continue_task",
+        confidence=0.95,
+    )
+
+    match = store.match(
+        facade="project_context",
+        pattern="details for task 50b5c81a-0000-4000-9000-000000000000",
+        allowed_intent_types={"task_details"},
+    )
+
+    assert match is not None
+    assert match["backend_used"] == "learned_exact"
+    assert match["intent_type"] == "task_details"

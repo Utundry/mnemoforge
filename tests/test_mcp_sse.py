@@ -409,7 +409,7 @@ class TestMcpToolExecution:
         assert "artifact_key" in props
         assert "allow_mutation" in props
         assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
-        assert props["scorer_backend"]["default"] == "lexical"
+        assert props["scorer_backend"]["default"] == "auto"
         assert props["allow_mutation"]["default"] is False
         assert "verification" in props["state"]["enum"]
         assert "live_validation" in props["state"]["enum"]
@@ -441,6 +441,8 @@ class TestMcpToolExecution:
         props = schema["properties"]
         assert props["detail"]["enum"] == ["compact", "full"]
         assert props["context_profile"]["default"] == "hot_path"
+        assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
+        assert props["scorer_backend"]["default"] == "auto"
         assert "project-context facade" in tool["description"]
 
     def test_project_verify_tool_is_thematic_verification_facade(self):
@@ -450,6 +452,8 @@ class TestMcpToolExecution:
         props = schema["properties"]
         assert "verification" in props["state"]["enum"]
         assert "live_validation" in props["state"]["enum"]
+        assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
+        assert props["scorer_backend"]["default"] == "auto"
         assert "120-second post-restart window" in tool["description"]
 
     def test_project_capture_tool_is_thematic_capture_facade(self):
@@ -458,6 +462,8 @@ class TestMcpToolExecution:
         assert schema["required"] == ["intent"]
         props = schema["properties"]
         assert props["allow_mutation"]["default"] is False
+        assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
+        assert props["scorer_backend"]["default"] == "auto"
         assert "raw_notes" in props
         assert "stenographer/clerk drafts" in tool["description"]
 
@@ -1131,8 +1137,134 @@ class TestMcpToolExecution:
         assert result["status"] == "executed"
         assert result["selected_route"]["tool"] == "project_rules"
         assert result["selected_route"]["intent_type"] == "rules_context"
+        assert result["selected_route"]["scorer"]["backend_used"] == "lexical"
+        assert result["route_telemetry"]["scorer_backend"] == "lexical"
         assert called[0][0] == "project_rules"
         assert called[0][1]["project"] == "alpha"
+
+    async def test_project_context_llm_backend_can_disambiguate_to_reconstruction(self, monkeypatch):
+        called: list[tuple[str, dict]] = []
+
+        async def fake_disambiguate(*, facade: str, text: str, args: dict, candidates: list[dict], catalog: tuple[dict, ...]):
+            assert facade == "project_context"
+            return {
+                "intent_type": "reconstruction_bundle",
+                "confidence": 0.93,
+                "matched_example": "reconstruct project from memory",
+                "reason": "The user asks for recovery context.",
+            }
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            called.append((tool_name, args))
+            return "Reconstruction bundle"
+
+        monkeypatch.setattr(mcp_sse, "_facade_llm_disambiguate", fake_disambiguate)
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        result = await mcp_sse._build_project_context_payload(
+            "http://test",
+            {"project": "alpha", "intent": "make a recovery packet for a fresh agent", "scorer_backend": "llm"},
+        )
+
+        assert result["selected_route"]["tool"] == "get_project_reconstruction_bundle"
+        assert result["selected_route"]["scorer"]["backend_used"] == "llm"
+        assert result["selected_route"]["scorer"]["llm_attempted"] is True
+        assert result["route_telemetry"]["scorer_backend"] == "llm"
+        assert called[0][0] == "get_project_reconstruction_bundle"
+
+    async def test_project_context_default_auto_uses_llm_for_ambiguous_route_and_learns_pattern(self, monkeypatch):
+        recorded: list[dict] = []
+
+        class FakeRoutePatternStore:
+            def match(self, **kwargs):
+                return None
+
+            def record(self, **kwargs):
+                recorded.append(kwargs)
+                return "pattern-1"
+
+        async def fake_disambiguate(*, facade: str, text: str, args: dict, candidates: list[dict], catalog: tuple[dict, ...]):
+            assert facade == "project_context"
+            return {
+                "intent_type": "project_readiness",
+                "confidence": 0.91,
+                "matched_example": "check project readiness",
+                "reason": "The request asks whether the project is ready.",
+            }
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            return json.dumps({"project_id": args["project_id"], "ready": True})
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+        monkeypatch.setattr(mcp_sse, "_facade_llm_disambiguate", fake_disambiguate)
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        result = await mcp_sse._build_project_context_payload(
+            "http://test",
+            {"project": "alpha", "intent": "can this repo be used yet"},
+        )
+
+        assert result["selected_route"]["tool"] == "get_project_readiness"
+        assert result["selected_route"]["scorer"]["backend_requested"] == "auto"
+        assert result["selected_route"]["scorer"]["backend_used"] == "llm"
+        assert result["route_telemetry"]["matched_pattern_id"] == "pattern-1"
+        assert recorded[0]["facade"] == "project_context"
+        assert recorded[0]["intent_type"] == "project_readiness"
+
+    async def test_project_context_default_auto_uses_learned_route_before_llm(self, monkeypatch):
+        class FakeRoutePatternStore:
+            def match(self, **kwargs):
+                return {
+                    "pattern_id": "pattern-2",
+                    "intent_type": "reconstruction_bundle",
+                    "tool": "get_project_reconstruction_bundle",
+                    "confidence": 0.89,
+                    "matched_example": "reconstruct project from memory",
+                    "reason": "Matched a learned route pattern.",
+                    "backend_used": "learned_semantic",
+                    "score": 0.82,
+                    "matched_by": "semantic",
+                }
+
+        async def forbidden_disambiguate(**kwargs):
+            raise AssertionError("learned route should skip LLM")
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            return "Reconstruction bundle"
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+        monkeypatch.setattr(mcp_sse, "_facade_llm_disambiguate", forbidden_disambiguate)
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        result = await mcp_sse._build_project_context_payload(
+            "http://test",
+            {"project": "alpha", "intent": "fresh agent recovery packet"},
+        )
+
+        assert result["selected_route"]["tool"] == "get_project_reconstruction_bundle"
+        assert result["selected_route"]["scorer"]["backend_used"] == "learned_semantic"
+        assert result["selected_route"]["scorer"]["llm_attempted"] is False
+        assert result["route_telemetry"]["matched_pattern_id"] == "pattern-2"
+        assert result["route_telemetry"]["matched_by"] == "semantic"
+
+    async def test_project_context_partial_task_id_routes_to_task_lookup_without_llm(self, monkeypatch):
+        called: list[tuple[str, dict]] = []
+
+        async def forbidden_disambiguate(**kwargs):
+            raise AssertionError("partial task id is a structural signal and should not call LLM")
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            called.append((tool_name, args))
+            return json.dumps({"items": [{"task_id": "382e7306-cb61-46ee-8398-bc0a9bdfd9ef"}]})
+
+        monkeypatch.setattr(mcp_sse, "_facade_llm_disambiguate", forbidden_disambiguate)
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        result = await mcp_sse._build_project_context_payload(
+            "http://test",
+            {"project": "alpha", "intent": "382e7306"},
+        )
+
+        assert result["selected_route"]["tool"] == "list_artifacts"
+        assert result["selected_route"]["intent_type"] == "task_lookup"
+        assert "Partial task_id detected" in result["warnings"][0]
+        assert called[0] == ("list_artifacts", {"project": "alpha", "type": "task", "limit": 50})
 
     async def test_project_context_executes_reconstruction_bundle(self, monkeypatch):
         called: list[tuple[str, dict]] = []
@@ -1177,6 +1309,28 @@ class TestMcpToolExecution:
         assert called[0][1]["changed_files"] == ["app/routers/mcp_sse.py"]
         assert result["project_verify_guidance"]["restart_window_seconds"] == 120
         assert "run_pytest_docker.ps1" in result["project_verify_guidance"]["docker_test_contour"]
+        assert result["selected_route"]["scorer"]["backend_used"] == "lexical"
+        assert result["route_telemetry"]["scorer_backend"] == "lexical"
+
+    async def test_project_verify_auto_backend_falls_back_to_lexical_when_llm_fails(self, monkeypatch):
+        async def broken_disambiguate(*, facade: str, text: str, args: dict, candidates: list[dict], catalog: tuple[dict, ...]):
+            assert facade == "project_verify"
+            raise RuntimeError("classifier unavailable")
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            return json.dumps({"project": args["project"], "state": args["state"]})
+
+        monkeypatch.setattr(mcp_sse, "_facade_llm_disambiguate", broken_disambiguate)
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        result = await mcp_sse._build_project_verify_payload(
+            "http://test",
+            {"project": "alpha", "intent": "unclear verification thing", "scorer_backend": "auto"},
+        )
+
+        assert result["selected_route"]["scorer"]["backend_used"] == "lexical"
+        assert result["selected_route"]["scorer"]["llm_attempted"] is True
+        assert "classifier unavailable" in result["selected_route"]["scorer"]["fallback_reason"]
+        assert result["route_telemetry"]["fallback_used"] is True
 
     async def test_project_verify_health_check_uses_health_surface(self, monkeypatch):
         called: list[tuple[str, dict]] = []
@@ -1217,6 +1371,7 @@ class TestMcpToolExecution:
         assert result["submit_payload"]["summary"] == "Facade slice is complete."
         assert result["route_telemetry"]["facade"] == "project_capture"
         assert result["route_telemetry"]["underlying_tool"] == "record_work_result"
+        assert result["route_telemetry"]["scorer_backend"] == "lexical"
         assert result["route_telemetry"]["guardrail_triggered"] is True
         assert result["agent_action"]["recommended_next_call"]["arguments"]["allow_mutation"] is True
         assert result["agent_action"]["do_not_call"] == ["record_work_result", "record_task_checkpoint", "record_stenographer_span"]
@@ -1242,6 +1397,7 @@ class TestMcpToolExecution:
         assert result["status"] == "executed"
         assert result["selected_route"]["tool"] == "clerk_draft_report"
         assert result["selected_route"]["intent_type"] == "draft_capture"
+        assert result["selected_route"]["scorer"]["backend_used"] == "lexical"
         assert called[0][0] == "clerk_draft_report"
         assert called[0][1]["raw_notes"] == "Implementation finished; tests pending."
 

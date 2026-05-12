@@ -1318,8 +1318,8 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "scorer_backend": {
                     "type": "string",
                     "enum": ["lexical", "auto", "llm"],
-                    "default": "lexical",
-                    "description": "Route scorer backend. lexical is deterministic; auto/llm may use cheap LLM disambiguation for ambiguous matches.",
+                    "default": "auto",
+                    "description": "Route scorer backend. auto keeps deterministic lexical strong matches and uses cheap LLM disambiguation when no explicit route is found; lexical forces deterministic-only routing.",
                 },
                 "detail": {
                     "type": "string",
