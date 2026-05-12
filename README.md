@@ -73,6 +73,34 @@ model to be equally strong. Even smaller local models can participate
 effectively in real engineering workflows when task state, tools, checkpoints,
 and verification evidence are preserved.
 
+## Example: Controlled Routing With A Local Model
+
+![Local SLM following a constrained Mnemoforge routing workflow](docs/assets/controlled-routing-local-model.png)
+
+A small local SLM connected through LM Studio was asked to operate on a real
+Mnemoforge project through MCP, under strict read-only constraints.
+
+```text
+Task:
+- resolve a partial task id: 382e7306;
+- handle an ambiguous request: can this repo be used yet;
+- avoid mutating actions;
+- inspect routing behavior and learned-route cache signals.
+
+Observed result:
+- the model respected the operational constraints;
+- the partial id was routed toward task artifact resolution;
+- the ambiguous request was handled through the project-context facade instead
+  of free-form guessing;
+- the model attempted to reason about route telemetry and learned routing;
+- the remaining gap was clear: weaker models need compact diagnostic fields
+  rather than broad JSON or explanatory output.
+```
+
+Mnemoforge is not just memory for agents. It is an operational environment that
+makes weaker models safer and more useful by providing routing, constraints,
+continuity, and verification state.
+
 ## Example: Working With Real Project State
 
 Mnemoforge is not just a place to store notes. It represents project work as
