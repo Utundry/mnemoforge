@@ -931,6 +931,68 @@ class TestMcpToolExecution:
         assert data["action_status"] == "needs_confirmation"
         assert data["selected_route"]["scorer"]["backend_used"] == "lexical"
 
+    async def test_project_work_routes_explicit_new_task_creation_without_continue_fallback(self, monkeypatch):
+        async def forbidden_disambiguate(text: str, args: dict, candidates: list[dict]):
+            raise AssertionError("explicit task creation should stay deterministic")
+
+        monkeypatch.setattr(mcp_sse, "_project_work_llm_disambiguate", forbidden_disambiguate)
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "intent": "create improvement task for multi-agent task leasing and timeout release",
+                "summary": "Add DB-backed task leases with heartbeat expiry.",
+                "scorer_backend": "auto",
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["status"] == "planned"
+        assert data["selected_route"]["tool"] == "record_work_result"
+        assert data["selected_route"]["intent_type"] == "create_task"
+        assert data["selected_route"]["route_candidates"][0]["intent_type"] == "create_task"
+        assert data["selected_route"]["scorer"]["backend_used"] == "lexical"
+        assert data["submit_payload"]["create_issue_if_unmatched"] is True
+        assert data["submit_payload"]["skip_auto_task_match"] is True
+        assert data["submit_payload"]["task_id"] == ""
+        assert data["action_status"] == "needs_confirmation"
+
+    async def test_project_work_routes_russian_new_task_creation_without_continue_fallback(self):
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "intent": "сохрани улучшение для многопользовательской работы",
+                "summary": "Нужно захватывать задачу агентской сессией и отпускать по таймауту.",
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["selected_route"]["intent_type"] == "create_task"
+        assert data["selected_route"]["tool"] == "record_work_result"
+        assert data["submit_payload"]["create_issue_if_unmatched"] is True
+        assert data["submit_payload"]["skip_auto_task_match"] is True
+
+    async def test_project_work_checkpoint_about_create_task_route_is_not_new_task_creation(self):
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "task_id": "facade-create-task-intent-routing",
+                "intent": "record checkpoint for facade create-task intent routing fix",
+                "summary": "Implemented routing fix.",
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["selected_route"]["intent_type"] == "capture_or_closeout"
+        assert data["selected_route"]["tool"] == "record_work_result"
+        assert data["submit_payload"].get("create_issue_if_unmatched") is not True
+        assert data["submit_payload"].get("skip_auto_task_match") is not True
+
     async def test_project_work_auto_keeps_strong_closeout_signal_deterministic(self, monkeypatch):
         async def forbidden_disambiguate(text: str, args: dict, candidates: list[dict]):
             raise AssertionError("strong route catalog match should not call LLM in auto mode")
@@ -1804,6 +1866,41 @@ class TestMcpToolExecution:
         assert data["target"]["target_source"] == "newest_open_task"
         assert data["target"]["task_id"] == "auto-task"
         assert posted[1][0] == "/project/tasks/auto-task/changes"
+
+    async def test_record_work_result_can_skip_auto_match_and_create_improvement(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def forbidden_get(api_base: str, path: str):
+            raise AssertionError("skip_auto_task_match should not query newest open task")
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            if path == "/memories":
+                return {"id": "memory-1"}
+            if path == "/improvements":
+                return {"id": "issue-1", "title": payload["title"], "status": "open"}
+            raise AssertionError(f"unexpected POST path: {path}")
+
+        monkeypatch.setattr(mcp_sse, "_get", forbidden_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "record_work_result",
+            {
+                "project": "alpha",
+                "title": "Add task leasing",
+                "summary": "Create DB-backed task leases for multi-agent sessions.",
+                "create_issue_if_unmatched": True,
+                "skip_auto_task_match": True,
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["route"] == ["memory", "improvement"]
+        assert data["target"]["target_source"] == "unmatched"
+        assert data["created_issue"]["id"] == "issue-1"
+        assert posted[1][0] == "/improvements"
+        assert posted[1][1]["title"] == "Add task leasing"
 
     async def test_record_work_result_falls_back_to_memory_only_when_unmatched(self, monkeypatch):
         async def fake_get(api_base: str, path: str):

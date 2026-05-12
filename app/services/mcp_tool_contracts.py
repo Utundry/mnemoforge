@@ -1280,6 +1280,11 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "default": False,
                     "description": "When no task/artifact can be matched, create a proposal improvement from title/summary instead of memory-only closeout.",
                 },
+                "skip_auto_task_match": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Do not attach to the newest open task when task_id/artifact_key are omitted; useful for explicit new backlog item creation.",
+                },
                 "agent_id": {"type": "string", "default": "codex"},
                 "acted_by": {"type": "string", "default": "codex"},
                 "source": {"type": "string", "default": "record_work_result"},
@@ -1290,7 +1295,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "project_work",
         "description": (
             "Thematic project-work routing facade. Use this as the first-contact surface for common project work "
-            "requests such as next priority, continue task, review capture drafts, close tail, save checkpoint, or route verification/restart work. "
+            "requests such as next priority, continue task, create/save an improvement task, review capture drafts, close tail, save checkpoint, or route verification/restart work. "
             "It classifies intent, returns routing evidence, executes safe read-only routes, and plans guarded mutations unless allow_mutation=true."
         ),
         "inputSchema": {

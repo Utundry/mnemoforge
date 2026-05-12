@@ -1408,6 +1408,7 @@ _PROJECT_WORK_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
             "close tail",
             "close remaining lifecycle gap",
             "save checkpoint",
+            "record checkpoint",
             "record result",
             "save work result",
             "wrap up the task",
@@ -1416,6 +1417,29 @@ _PROJECT_WORK_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
             "record progress",
         ),
         "reason": "Capture/closeout intent maps to record_work_result, but mutation is guarded by allow_mutation.",
+    },
+    {
+        "intent_type": "create_task",
+        "tool": "record_work_result",
+        "family": "project_knowledge",
+        "mutating": True,
+        "examples": (
+            "create a task",
+            "create improvement task",
+            "save this as an improvement",
+            "add this to backlog",
+            "record new issue",
+            "formulate this task",
+            "capture this as future work",
+            "сохрани улучшение",
+            "создай задачу",
+            "сформулируй задачу",
+            "добавь в backlog",
+        ),
+        "reason": (
+            "Explicit new-task/improvement creation intent maps to record_work_result with "
+            "auto task matching disabled so the new backlog item is not silently attached to current work."
+        ),
     },
     {
         "intent_type": "verify_or_live_validate",
@@ -1480,6 +1504,7 @@ def _route_tokens(text: str) -> set[str]:
 def _project_work_catalog_scores(text: str, args: dict[str, Any]) -> list[dict[str, Any]]:
     lowered = str(text or "").casefold()
     intent_tokens = _route_tokens(lowered)
+    has_create_task_intent = _project_work_has_create_task_intent(lowered, intent_tokens)
     candidates: list[dict[str, Any]] = []
     for route in _PROJECT_WORK_ROUTE_CATALOG:
         best_score = 0.0
@@ -1510,6 +1535,8 @@ def _project_work_catalog_scores(text: str, args: dict[str, Any]) -> list[dict[s
             best_score += 0.08
         if route["intent_type"] == "review_task_capture" and any(token in intent_tokens for token in {"capture", "draft", "drafts", "candidate", "candidates", "framing"}):
             best_score += 0.08
+        if route["intent_type"] == "create_task":
+            best_score = best_score + 0.5 if has_create_task_intent else 0.0
 
         candidates.append(
             {
@@ -1521,6 +1548,63 @@ def _project_work_catalog_scores(text: str, args: dict[str, Any]) -> list[dict[s
         )
     candidates.sort(key=lambda item: (-item["score"], item["intent_type"]))
     return candidates
+
+
+def _project_work_has_create_task_intent(text: str, tokens: set[str]) -> bool:
+    lowered = str(text or "").casefold()
+    checkpoint_terms = {"checkpoint", "closeout", "handoff", "result", "progress"}
+    if tokens & checkpoint_terms and not any(
+        marker in lowered
+        for marker in (
+            "create a task",
+            "create task",
+            "create improvement",
+            "save this as an improvement",
+            "add this to backlog",
+            "capture this as future work",
+            "создай задачу",
+            "сохрани улучшение",
+            "сформулируй задачу",
+        )
+    ):
+        return False
+    phrase_markers = (
+        "create task",
+        "create a task",
+        "create improvement",
+        "save improvement",
+        "save this as an improvement",
+        "add to backlog",
+        "add this to backlog",
+        "record new issue",
+        "formulate task",
+        "formulate this task",
+        "capture this as future work",
+        "сохрани улучшение",
+        "создай задачу",
+        "сформулируй задачу",
+        "добавь в backlog",
+    )
+    if any(marker in lowered for marker in phrase_markers):
+        return True
+    create_terms = {"create", "save", "record", "add", "formulate", "capture", "создай", "сохрани", "запиши", "добавь", "сформулируй"}
+    backlog_terms = {"task", "issue", "improvement", "backlog", "future", "work", "задачу", "задача", "улучшение", "бэклог", "backlog"}
+    return bool(tokens & create_terms) and bool(tokens & backlog_terms)
+
+
+def _title_from_text(text: str, *, fallback: str) -> str:
+    clean = re.sub(r"\s+", " ", str(text or "").strip())
+    if not clean:
+        return fallback
+    clean = re.sub(
+        r"^(create|save|record|add|formulate|capture|создай|сохрани|запиши|добавь|сформулируй)\s+",
+        "",
+        clean,
+        flags=re.IGNORECASE,
+    ).strip(" :-")
+    if not clean:
+        return fallback
+    return clean[:96]
 
 
 def _project_work_selected_catalog_route(text: str, args: dict[str, Any]) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
@@ -1651,6 +1735,25 @@ def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], tex
             "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
             "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
             "source": "project_work",
+        }
+    elif route["intent_type"] == "create_task":
+        summary = str(args.get("summary") or args.get("raw_notes") or intent).strip()
+        route["payload"] = {
+            "project": project,
+            "task_id": "",
+            "artifact_key": "",
+            "title": _title_from_text(summary or intent, fallback="New project improvement"),
+            "summary": summary or "Create a new project improvement task.",
+            "changed_files": changed_files,
+            "verification": verification,
+            "stage": "planning",
+            "checkpoint_mode": "lightweight",
+            "next_step_scope": "follow_up_task",
+            "create_issue_if_unmatched": True,
+            "skip_auto_task_match": True,
+            "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+            "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
+            "source": "project_work:create_task",
         }
     elif route["intent_type"] == "verify_or_live_validate":
         tokens = _route_tokens(text)
@@ -6554,7 +6657,7 @@ async def _resolve_work_result_target(api_base: str, args: dict[str, Any]) -> di
     elif task_id:
         artifact_key = f"task:{project}:{task_id}"
 
-    if not task_id:
+    if not task_id and not bool(args.get("skip_auto_task_match", False)):
         try:
             query = build_list_open_tasks_query({"project": project, "limit": 1})
             data = await _get(api_base, f"/artifacts?{query}")
