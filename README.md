@@ -101,6 +101,46 @@ Mnemoforge is not just memory for agents. It is an operational environment that
 makes weaker models safer and more useful by providing routing, constraints,
 continuity, and verification state.
 
+## Example: Local Model Compatibility Mode
+
+The controlled-routing test exposed a practical MCP integration problem: some
+local clients and smaller models do not reliably inspect nested raw tool
+results. The model was not the root cause, and the routing was not broken. The
+presentation layer was too heavy for that client/model pair.
+
+Mnemoforge facades can return a compact diagnostic block instead of nested JSON:
+
+```text
+project_context(
+  project="mnemoforge",
+  intent="382e7306",
+  diagnostic=true
+)
+```
+
+The response is plain text with the operational fields an agent needs:
+
+```text
+Mnemoforge route diagnostic
+facade=project_context
+project=mnemoforge
+intent=382e7306
+route.tool=list_artifacts
+route.intent_type=task_lookup
+scorer.backend_used=lexical
+scorer.llm_attempted=false
+telemetry.scorer_backend=lexical
+warnings=Partial task_id detected; resolve the exact task_id...
+first_task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef
+next_safe_action=Continue from the executed route result.
+```
+
+This mode is available on the thematic facades (`project_work`,
+`project_context`, `project_verify`, and `project_capture`) through
+`diagnostic=true` or `response_format="diagnostic"`. It lets local models see
+routes, telemetry, warnings, useful IDs, and the next safe action without
+having to parse deep JSON.
+
 ## Example: Working With Real Project State
 
 Mnemoforge is not just a place to store notes. It represents project work as
