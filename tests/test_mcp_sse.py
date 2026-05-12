@@ -40,7 +40,7 @@ class TestMcpToolExecution:
 
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
-        assert names[:5] == ["project_work", "project_rules", "project_context", "project_verify", "project_capture"]
+        assert names[:6] == ["ask_project", "project_work", "project_rules", "project_context", "project_verify", "project_capture"]
         assert len(names) <= 12
         assert len(names) < len(mcp_sse.TOOLS)
         assert "report_issue" not in names
@@ -79,12 +79,12 @@ class TestMcpToolExecution:
 
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
-        assert names[0] == "project_work"
+        assert names[0] == "ask_project"
         assert len(names) == 4
         assert len(names) < len(mcp_sse.TOOLS)
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["schema_mode"] == "summary"
-        assert result["_mnemoforge"]["recommended_first_tool"] == "project_work"
+        assert result["_mnemoforge"]["recommended_first_tool"] == "ask_project"
         assert result["_mnemoforge"]["full_catalog_available"] is True
         assert "inputSummary" in result["tools"][0]
         assert result["tools"][0]["inputSchema"]["type"] == "object"
@@ -130,7 +130,7 @@ class TestMcpToolExecution:
         )
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
-        assert names[0] == "project_work"
+        assert names[0] == "ask_project"
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["schema_mode"] == "summary"
         assert "inputSummary" in result["tools"][0]
@@ -398,7 +398,17 @@ class TestMcpToolExecution:
 
     def test_tool_discovery_family_tools_are_exposed(self):
         names = {tool["name"] for tool in mcp_sse.TOOLS}
-        assert {"list_tool_families", "tool_family_tools", "tool_explain", "tool_recommend", "tool_feedback", "project_work", "project_rules", "project_context", "project_verify", "project_capture", "continue_task", "clerk_draft_report", "draft_task_checkpoint", "record_work_result", "record_task_checkpoint", "report_task_checkpoint", "get_task_execution_context", "get_project_reconstruction_bundle", "operational_tray"} <= names
+        assert {"list_tool_families", "tool_family_tools", "tool_explain", "tool_recommend", "tool_feedback", "ask_project", "project_work", "project_rules", "project_context", "project_verify", "project_capture", "continue_task", "clerk_draft_report", "draft_task_checkpoint", "record_work_result", "record_task_checkpoint", "report_task_checkpoint", "get_task_execution_context", "get_project_reconstruction_bundle", "operational_tray"} <= names
+
+    def test_ask_project_tool_is_human_facing_expert_facade(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "ask_project")
+        schema = tool["inputSchema"]
+        assert schema["required"] == ["question"]
+        props = schema["properties"]
+        assert props["response_format"]["enum"] == ["auto", "answer", "diagnostic", "json"]
+        assert props["client_profile"]["enum"] == ["default", "local", "small_context", "agent"]
+        assert props["project"]["default"] == "mnemoforge"
+        assert "Human-facing" in tool["description"]
 
     def test_project_work_tool_is_thematic_routing_facade(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "project_work")
@@ -1331,6 +1341,108 @@ class TestMcpToolExecution:
         assert "warnings=Partial task_id detected" in text
         assert "first_task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef" in text
 
+    async def test_ask_project_routes_partial_task_id_to_project_context_answer(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            calls.append((tool_name, args))
+            return (
+                "Mnemoforge answer\n"
+                "Answer: Found task 382e7306-cb61-46ee-8398-bc0a9bdfd9ef.\n"
+                "task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef"
+            )
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {"project": "alpha", "question": "what is task 382e7306?"},
+            "http://test",
+        )
+
+        assert text.startswith("Mnemoforge answer\n")
+        assert "task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef" in text
+        assert calls[0][0] == "project_context"
+        assert calls[0][1]["response_format"] == "answer"
+        assert calls[0][1]["intent"] == "what is task 382e7306?"
+        assert "allow_mutation" not in calls[0][1]
+
+    async def test_ask_project_routes_readiness_question_to_project_context(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            calls.append((tool_name, args))
+            return "Mnemoforge answer\nAnswer: Project readiness route executed."
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {"project": "alpha", "question": "can this repo be used yet"},
+            "http://test",
+        )
+
+        assert "Project readiness" in text
+        assert calls[0][0] == "project_context"
+        assert calls[0][1]["response_format"] == "answer"
+
+    async def test_ask_project_routes_next_priority_to_project_work(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            calls.append((tool_name, args))
+            return "Mnemoforge answer\nAnswer: project_work executed route list_open_tasks."
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {"project": "alpha", "question": "what should I do next?"},
+            "http://test",
+        )
+
+        assert "project_work executed" in text
+        assert calls[0][0] == "project_work"
+        assert calls[0][1]["allow_mutation"] is False
+        assert calls[0][1]["response_format"] == "answer"
+
+    async def test_ask_project_mutating_request_stays_guarded(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            calls.append((tool_name, args))
+            return "Mnemoforge answer\nAnswer: No mutation was executed."
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {"project": "alpha", "question": "save checkpoint for this task"},
+            "http://test",
+        )
+
+        assert "No mutation was executed" in text
+        assert calls[0][0] == "project_capture"
+        assert calls[0][1]["allow_mutation"] is False
+
+    async def test_ask_project_diagnostic_explains_selected_facade(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            return "Mnemoforge answer\nAnswer: Found task 382e7306."
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {"project": "alpha", "question": "what is task 382e7306?", "response_format": "diagnostic"},
+            "http://test",
+        )
+
+        assert text.startswith("Mnemoforge ask_project diagnostic\n")
+        assert "selected_facade=project_context" in text
+        assert "response_format=diagnostic" in text
+        assert "Question contains a full or partial task id" in text
+
     async def test_project_context_answer_response_is_final_answer_shaped(self, monkeypatch):
         async def fake_project_context(api_base: str, args: dict, session_id=None):
             return {
@@ -1354,6 +1466,12 @@ class TestMcpToolExecution:
                 },
                 "result": {
                     "items": [
+                        {
+                            "task_id": "6f8e5a1d-811a-4bf5-8469-39799ddf9266",
+                            "title": "Add ask_project human-facing expert facade",
+                            "status": "open",
+                            "artifact_key": "task:alpha:6f8e5a1d-811a-4bf5-8469-39799ddf9266",
+                        },
                         {
                             "task_id": "382e7306-cb61-46ee-8398-bc0a9bdfd9ef",
                             "title": "Add shared semantic or LLM route matching",
@@ -3282,7 +3400,7 @@ class TestMcpToolExecution:
         assert info["tool_catalog"]["preferred_mode"] == "compact"
         assert info["tool_catalog"]["compact_request"] == {"method": "tools/list", "params": {"mode": "compact"}}
         assert info["tool_catalog"]["full_request"] == {"method": "tools/list", "params": {"mode": "full"}}
-        assert info["tool_catalog"]["recommended_first_tool"] == "project_work"
+        assert info["tool_catalog"]["recommended_first_tool"] == "ask_project"
         assert "Default tools/list" in info["tool_catalog"]["reason"]
         assert any("/api/v1/coordination/" in line for line in info["semantic_defaults"])
 

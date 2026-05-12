@@ -169,7 +169,7 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
     "project_knowledge": {
         "title": "Project knowledge & artifact lifecycle",
         "description": "Unified discovery for tasks, improvements, readiness, canonical knowledge, lifecycle checkpoints, reopen/resume flows, and lifecycle changes.",
-        "entrypoints": ["project_work", "project_rules", "project_context", "project_verify", "project_capture", "operational_tray", "record_work_result", "clerk_draft_report", "project_workflow", "continue_task", "get_task_execution_context", "get_project_reconstruction_bundle", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
+        "entrypoints": ["ask_project", "project_work", "project_rules", "project_context", "project_verify", "project_capture", "operational_tray", "record_work_result", "clerk_draft_report", "project_workflow", "continue_task", "get_task_execution_context", "get_project_reconstruction_bundle", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
         "keywords": [
             "task",
             "tasks",
@@ -515,6 +515,7 @@ def _tool_catalog() -> list[dict[str, Any]]:
 
 
 _COMPACT_TOOL_NAMES = (
+    "ask_project",
     "project_work",
     "project_rules",
     "project_context",
@@ -596,7 +597,7 @@ def _tools_list_payload(params: dict[str, Any] | None = None) -> dict[str, Any]:
             "full_catalog_available": True,
             "full_catalog_request": {"method": "tools/list", "params": {"mode": "full"}},
             "full_schema_request": {"method": "tools/list", "params": {"mode": "compact", "schema_mode": "full"}},
-            "recommended_first_tool": "project_work",
+            "recommended_first_tool": "ask_project",
             "reason": "Compact mode exposes thematic facades and staged discovery tools before the full flat catalog.",
             "total_tools_available": len(_tool_catalog()),
             "returned_tools": len(tools),
@@ -2108,24 +2109,34 @@ def _diagnostic_value(value: Any) -> str:
     return str(value)
 
 
-def _first_route_diagnostic_task_id(result: Any) -> str:
+def _first_route_diagnostic_task_id(result: Any, *, preferred_task_id: str = "") -> str:
     if isinstance(result, dict):
         if result.get("task_id"):
             return str(result["task_id"])
         items = result.get("items")
         if isinstance(items, list) and items:
+            preferred = str(preferred_task_id or "").strip().casefold()
+            if preferred:
+                for item in items:
+                    if isinstance(item, dict) and str(item.get("task_id") or "").casefold().startswith(preferred):
+                        return str(item["task_id"])
             first = items[0]
             if isinstance(first, dict) and first.get("task_id"):
                 return str(first["task_id"])
     return ""
 
 
-def _first_route_result_item(result: Any) -> dict[str, Any]:
+def _first_route_result_item(result: Any, *, preferred_task_id: str = "") -> dict[str, Any]:
     if isinstance(result, dict):
         if any(key in result for key in ("task_id", "title", "status", "artifact_key")):
             return result
         items = result.get("items")
         if isinstance(items, list) and items and isinstance(items[0], dict):
+            preferred = str(preferred_task_id or "").strip().casefold()
+            if preferred:
+                for item in items:
+                    if isinstance(item, dict) and str(item.get("task_id") or "").casefold().startswith(preferred):
+                        return item
             return items[0]
     return {}
 
@@ -2135,6 +2146,7 @@ def _format_route_diagnostic(data: dict[str, Any]) -> str:
     scorer = selected.get("scorer") if isinstance(selected.get("scorer"), dict) else {}
     telemetry = data.get("route_telemetry") if isinstance(data.get("route_telemetry"), dict) else {}
     result = data.get("result")
+    preferred_task_id = _extract_task_id_like_from_text(str(data.get("intent") or ""))
     lines = [
         "Mnemoforge route diagnostic",
         f"facade={_diagnostic_value(data.get('facade'))}",
@@ -2159,7 +2171,7 @@ def _format_route_diagnostic(data: dict[str, Any]) -> str:
         f"telemetry.matched_pattern_score={_diagnostic_value(telemetry.get('matched_pattern_score'))}",
         f"telemetry.matched_by={_diagnostic_value(telemetry.get('matched_by'))}",
         f"warnings={_diagnostic_value(data.get('warnings') or telemetry.get('warnings') or [])}",
-        f"first_task_id={_diagnostic_value(_first_route_diagnostic_task_id(result))}",
+        f"first_task_id={_diagnostic_value(_first_route_diagnostic_task_id(result, preferred_task_id=preferred_task_id))}",
         f"next_safe_action={_diagnostic_value(data.get('next_safe_action'))}",
     ]
     return "\n".join(lines)
@@ -2169,7 +2181,8 @@ def _format_route_answer(data: dict[str, Any]) -> str:
     selected = data.get("selected_route") if isinstance(data.get("selected_route"), dict) else {}
     telemetry = data.get("route_telemetry") if isinstance(data.get("route_telemetry"), dict) else {}
     result = data.get("result")
-    first = _first_route_result_item(result)
+    preferred_task_id = _extract_task_id_like_from_text(str(data.get("intent") or ""))
+    first = _first_route_result_item(result, preferred_task_id=preferred_task_id)
     warnings = data.get("warnings") or telemetry.get("warnings") or []
     intent_type = str(selected.get("intent_type") or "")
     lines = ["Mnemoforge answer"]
@@ -2177,7 +2190,7 @@ def _format_route_answer(data: dict[str, Any]) -> str:
     if selected.get("mutating") and not data.get("executed"):
         lines.append("Answer: No mutation was executed. Review the guarded route before allowing changes.")
     elif intent_type == "task_lookup":
-        task_id = first.get("task_id") or _first_route_diagnostic_task_id(result)
+        task_id = first.get("task_id") or _first_route_diagnostic_task_id(result, preferred_task_id=preferred_task_id)
         if task_id:
             lines.append(f"Answer: Found task {task_id}.")
         else:
@@ -2207,6 +2220,142 @@ def _format_route_answer(data: dict[str, Any]) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _ask_project_response_format(args: dict[str, Any]) -> str:
+    requested = str(args.get("response_format") or "").strip().lower()
+    if requested in {"answer", "diagnostic", "json"}:
+        return requested
+    client_profile = str(args.get("client_profile") or "").strip().lower()
+    if client_profile in {"local", "local_model", "small", "small_context", "slm", "weak"}:
+        return "answer"
+    return "answer"
+
+
+def _ask_project_select_route(args: dict[str, Any]) -> dict[str, Any]:
+    question = str(args.get("question") or args.get("intent") or "").strip()
+    text = question.casefold()
+    project = str(args.get("project") or args.get("project_id") or "mnemoforge").strip() or "mnemoforge"
+    detail = str(args.get("detail") or "compact").strip().lower()
+    if detail not in {"compact", "full"}:
+        detail = "compact"
+    response_format = _ask_project_response_format(args)
+
+    route = {
+        "facade": "project_context",
+        "reason": "General project question maps to project_context.",
+        "confidence": 0.7,
+        "response_format": response_format,
+        "payload": {
+            "project": project,
+            "intent": question,
+            "detail": detail,
+            "response_format": response_format,
+            "limit": int(args.get("limit") or 20),
+        },
+        "guardrail": "",
+    }
+
+    if _extract_task_id_like_from_text(question):
+        route.update(
+            facade="project_context",
+            reason="Question contains a full or partial task id; route to project_context task lookup.",
+            confidence=0.9,
+        )
+    elif any(term in text for term in ("next", "priority", "open work", "open tasks", "what should i do", "continue", "backlog")):
+        route.update(
+            facade="project_work",
+            reason="Question asks for next/open project work; route to project_work read-only planning.",
+            confidence=0.84,
+        )
+    elif any(term in text for term in ("test", "tests", "verify", "verification", "health", "restart", "smoke", "failed", "failure")):
+        route.update(
+            facade="project_verify",
+            reason="Question asks about tests, health, restart, or verification; route to project_verify.",
+            confidence=0.84,
+        )
+    elif any(term in text for term in ("rule", "rules", "law", "laws", "constraint", "constraints", "forget")):
+        route.update(
+            facade="project_context",
+            reason="Question asks about rules or constraints; route through project_context so it can delegate to project_rules safely.",
+            confidence=0.82,
+        )
+    elif any(term in text for term in ("ready", "readiness", "usable", "used yet", "bootstrap", "onboard")):
+        route.update(
+            facade="project_context",
+            reason="Question asks about readiness or usability; route to project_context readiness handling.",
+            confidence=0.82,
+        )
+
+    if any(term in text for term in ("save", "record", "close", "resolve", "delete", "promote", "approve", "create task", "write")):
+        route["guardrail"] = "Mutation-like question detected; ask_project will not set allow_mutation=true."
+        if any(term in text for term in ("save", "record", "checkpoint", "close")):
+            route.update(
+                facade="project_capture",
+                reason="Mutation-like capture request is routed to project_capture with allow_mutation=false.",
+                confidence=max(float(route["confidence"]), 0.86),
+            )
+
+    route["payload"].update(
+        {
+            "project": project,
+            "intent": question,
+            "detail": detail,
+            "response_format": response_format,
+            "allow_mutation": False,
+        }
+    )
+    if route["facade"] == "project_context":
+        route["payload"].pop("allow_mutation", None)
+    return route
+
+
+def _format_ask_project_diagnostic(data: dict[str, Any]) -> str:
+    route = data.get("selected_expert_route") if isinstance(data.get("selected_expert_route"), dict) else {}
+    lines = [
+        "Mnemoforge ask_project diagnostic",
+        f"project={_diagnostic_value(data.get('project'))}",
+        f"question={_diagnostic_value(data.get('question'))}",
+        f"selected_facade={_diagnostic_value(route.get('facade'))}",
+        f"response_format={_diagnostic_value(route.get('response_format'))}",
+        f"confidence={_diagnostic_value(route.get('confidence'))}",
+        f"reason={_diagnostic_value(route.get('reason'))}",
+        f"guardrail={_diagnostic_value(route.get('guardrail'))}",
+        f"underlying_text={_diagnostic_value(data.get('result_text'))}",
+    ]
+    return "\n".join(lines)
+
+
+async def _build_ask_project_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
+    route = _ask_project_select_route(args)
+    tool_name = str(route["facade"])
+    payload = dict(route["payload"])
+    result_text = await _execute_tool(tool_name, payload, api_base, session_id=session_id)
+    return {
+        "status": "executed",
+        "facade": "ask_project",
+        "project": payload.get("project") or payload.get("project_id") or "mnemoforge",
+        "question": str(args.get("question") or args.get("intent") or "").strip(),
+        "selected_expert_route": {
+            "facade": tool_name,
+            "response_format": route["response_format"],
+            "confidence": route["confidence"],
+            "reason": route["reason"],
+            "guardrail": route.get("guardrail") or "",
+        },
+        "result_text": result_text,
+        "route_telemetry": {
+            "facade": "ask_project",
+            "underlying_facade": tool_name,
+            "response_format": route["response_format"],
+            "confidence": route["confidence"],
+            "guardrail_triggered": bool(route.get("guardrail")),
+            "mutating": False,
+            "executed": True,
+            "reason": route["reason"],
+        },
+        "next_safe_action": "Use the answer directly, or ask for diagnostic details if the route looks wrong.",
+    }
 
 
 async def _run_facade_route(
@@ -4275,6 +4424,26 @@ async def oauth_authorization_server(request: Request) -> JSONResponse:
 # ── Tool definitions (mirrors mcp/server.py TOOLS) ────────────────────────────
 
 TOOLS = [
+    {
+        "name": "ask_project",
+        "description": (
+            "Human-facing read-only project expert facade. Ask a natural project question; "
+            "Mnemoforge chooses the thematic facade, route, and response format."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["question"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "project_id": {"type": "string"},
+                "question": {"type": "string", "description": "Natural user question such as 'what is task 382e7306?' or 'is this repo usable yet?'"},
+                "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
+                "client_profile": {"type": "string", "enum": ["default", "local", "small_context", "agent"], "default": "default"},
+                "response_format": {"type": "string", "enum": ["auto", "answer", "diagnostic", "json"], "default": "auto"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20},
+            },
+        },
+    },
     {
         "name": "memory_store",
         "description": (
@@ -6393,6 +6562,14 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
     # Server-side observer: works for any MCP client, no client hooks needed.
     # Runs asynchronously and never blocks tool execution.
     asyncio.create_task(_mcp_live_observe(name, args, api_base))
+
+    if name == "ask_project":
+        data = await _build_ask_project_payload(api_base, args, session_id=session_id)
+        if str(args.get("response_format") or "").strip().lower() == "diagnostic":
+            return _format_ask_project_diagnostic(data)
+        if str(args.get("response_format") or "").strip().lower() == "json":
+            return json.dumps(data, indent=2, ensure_ascii=False)
+        return str(data.get("result_text") or "")
 
     if name == "memory_store":
         data = await _post(api_base, "/memories", args)
