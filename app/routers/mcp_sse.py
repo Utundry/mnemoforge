@@ -2092,6 +2092,10 @@ def _wants_route_diagnostic(args: dict[str, Any]) -> bool:
     return bool(args.get("diagnostic")) or str(args.get("response_format") or "").strip().lower() == "diagnostic"
 
 
+def _wants_route_answer(args: dict[str, Any]) -> bool:
+    return bool(args.get("answer")) or str(args.get("response_format") or "").strip().lower() == "answer"
+
+
 def _diagnostic_value(value: Any) -> str:
     if value is None:
         return ""
@@ -2114,6 +2118,16 @@ def _first_route_diagnostic_task_id(result: Any) -> str:
             if isinstance(first, dict) and first.get("task_id"):
                 return str(first["task_id"])
     return ""
+
+
+def _first_route_result_item(result: Any) -> dict[str, Any]:
+    if isinstance(result, dict):
+        if any(key in result for key in ("task_id", "title", "status", "artifact_key")):
+            return result
+        items = result.get("items")
+        if isinstance(items, list) and items and isinstance(items[0], dict):
+            return items[0]
+    return {}
 
 
 def _format_route_diagnostic(data: dict[str, Any]) -> str:
@@ -2148,6 +2162,50 @@ def _format_route_diagnostic(data: dict[str, Any]) -> str:
         f"first_task_id={_diagnostic_value(_first_route_diagnostic_task_id(result))}",
         f"next_safe_action={_diagnostic_value(data.get('next_safe_action'))}",
     ]
+    return "\n".join(lines)
+
+
+def _format_route_answer(data: dict[str, Any]) -> str:
+    selected = data.get("selected_route") if isinstance(data.get("selected_route"), dict) else {}
+    telemetry = data.get("route_telemetry") if isinstance(data.get("route_telemetry"), dict) else {}
+    result = data.get("result")
+    first = _first_route_result_item(result)
+    warnings = data.get("warnings") or telemetry.get("warnings") or []
+    intent_type = str(selected.get("intent_type") or "")
+    lines = ["Mnemoforge answer"]
+
+    if selected.get("mutating") and not data.get("executed"):
+        lines.append("Answer: No mutation was executed. Review the guarded route before allowing changes.")
+    elif intent_type == "task_lookup":
+        task_id = first.get("task_id") or _first_route_diagnostic_task_id(result)
+        if task_id:
+            lines.append(f"Answer: Found task {task_id}.")
+        else:
+            lines.append("Answer: No exact task was found in the first result.")
+    elif intent_type == "project_readiness":
+        lines.append("Answer: Project readiness route executed.")
+    elif data.get("executed"):
+        lines.append(f"Answer: {data.get('facade') or 'facade'} executed route {selected.get('tool') or ''}.")
+    else:
+        lines.append("Answer: Route was selected but not executed.")
+
+    if first.get("task_id"):
+        lines.append(f"task_id={_diagnostic_value(first.get('task_id'))}")
+    if first.get("title"):
+        lines.append(f"title={_diagnostic_value(first.get('title'))}")
+    if first.get("status"):
+        lines.append(f"task_status={_diagnostic_value(first.get('status'))}")
+    if first.get("artifact_key"):
+        lines.append(f"artifact_key={_diagnostic_value(first.get('artifact_key'))}")
+    lines.extend(
+        [
+            f"route={_diagnostic_value(selected.get('tool'))}",
+            f"intent_type={_diagnostic_value(selected.get('intent_type'))}",
+            f"scorer_backend={_diagnostic_value(telemetry.get('scorer_backend'))}",
+            f"warnings={_diagnostic_value(warnings)}",
+            f"next_safe_action={_diagnostic_value(data.get('next_safe_action'))}",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -4654,7 +4712,8 @@ TOOLS = [
                 "context_profile": {"type": "string", "enum": ["default", "handoff_compact", "hot_path"], "default": "hot_path"},
                 "status": {"type": "string", "enum": ["active", "user_confirmed", "all"], "default": "active"},
                 "diagnostic": {"type": "boolean", "default": False, "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients."},
-                "response_format": {"type": "string", "enum": ["json", "diagnostic"], "default": "json"},
+                "answer": {"type": "boolean", "default": False, "description": "Return a final-answer-shaped plain-text block for small local models."},
+                "response_format": {"type": "string", "enum": ["json", "diagnostic", "answer"], "default": "json"},
                 "scorer_backend": {
                     "type": "string",
                     "enum": ["lexical", "auto", "llm"],
@@ -4692,7 +4751,8 @@ TOOLS = [
                 "stage_evidence": {"type": "array", "items": {"type": "string"}, "default": []},
                 "prior_stage_recorded": {"type": "boolean"},
                 "diagnostic": {"type": "boolean", "default": False, "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients."},
-                "response_format": {"type": "string", "enum": ["json", "diagnostic"], "default": "json"},
+                "answer": {"type": "boolean", "default": False, "description": "Return a final-answer-shaped plain-text block for small local models."},
+                "response_format": {"type": "string", "enum": ["json", "diagnostic", "answer"], "default": "json"},
                 "scorer_backend": {
                     "type": "string",
                     "enum": ["lexical", "auto", "llm"],
@@ -4731,7 +4791,8 @@ TOOLS = [
                 "allow_mutation": {"type": "boolean", "default": False},
                 "use_llm": {"type": "boolean", "default": False},
                 "diagnostic": {"type": "boolean", "default": False, "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients."},
-                "response_format": {"type": "string", "enum": ["json", "diagnostic"], "default": "json"},
+                "answer": {"type": "boolean", "default": False, "description": "Return a final-answer-shaped plain-text block for small local models."},
+                "response_format": {"type": "string", "enum": ["json", "diagnostic", "answer"], "default": "json"},
                 "scorer_backend": {
                     "type": "string",
                     "enum": ["lexical", "auto", "llm"],
@@ -6571,16 +6632,22 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         data = await _build_project_context_payload(api_base, args, session_id=session_id)
         if _wants_route_diagnostic(args):
             return _format_route_diagnostic(data)
+        if _wants_route_answer(args):
+            return _format_route_answer(data)
         return json.dumps(data, indent=2, ensure_ascii=False)
     elif name == "project_verify":
         data = await _build_project_verify_payload(api_base, args, session_id=session_id)
         if _wants_route_diagnostic(args):
             return _format_route_diagnostic(data)
+        if _wants_route_answer(args):
+            return _format_route_answer(data)
         return json.dumps(data, indent=2, ensure_ascii=False)
     elif name == "project_capture":
         data = await _build_project_capture_payload(api_base, args, session_id=session_id)
         if _wants_route_diagnostic(args):
             return _format_route_diagnostic(data)
+        if _wants_route_answer(args):
+            return _format_route_answer(data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name == "list_rule_candidates":
@@ -7359,6 +7426,8 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         data = _annotate_structured_tool_payload(name, data)
         if _wants_route_diagnostic(args):
             return _format_route_diagnostic(data)
+        if _wants_route_answer(args):
+            return _format_route_answer(data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name == "project_workflow":

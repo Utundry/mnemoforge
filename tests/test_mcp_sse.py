@@ -412,7 +412,8 @@ class TestMcpToolExecution:
         assert props["scorer_backend"]["default"] == "auto"
         assert props["allow_mutation"]["default"] is False
         assert props["diagnostic"]["default"] is False
-        assert props["response_format"]["enum"] == ["json", "diagnostic"]
+        assert props["answer"]["default"] is False
+        assert props["response_format"]["enum"] == ["json", "diagnostic", "answer"]
         assert "verification" in props["state"]["enum"]
         assert "live_validation" in props["state"]["enum"]
 
@@ -444,7 +445,8 @@ class TestMcpToolExecution:
         assert props["detail"]["enum"] == ["compact", "full"]
         assert props["context_profile"]["default"] == "hot_path"
         assert props["diagnostic"]["default"] is False
-        assert props["response_format"]["enum"] == ["json", "diagnostic"]
+        assert props["answer"]["default"] is False
+        assert props["response_format"]["enum"] == ["json", "diagnostic", "answer"]
         assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
         assert props["scorer_backend"]["default"] == "auto"
         assert "project-context facade" in tool["description"]
@@ -457,7 +459,8 @@ class TestMcpToolExecution:
         assert "verification" in props["state"]["enum"]
         assert "live_validation" in props["state"]["enum"]
         assert props["diagnostic"]["default"] is False
-        assert props["response_format"]["enum"] == ["json", "diagnostic"]
+        assert props["answer"]["default"] is False
+        assert props["response_format"]["enum"] == ["json", "diagnostic", "answer"]
         assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
         assert props["scorer_backend"]["default"] == "auto"
         assert "120-second post-restart window" in tool["description"]
@@ -469,7 +472,8 @@ class TestMcpToolExecution:
         props = schema["properties"]
         assert props["allow_mutation"]["default"] is False
         assert props["diagnostic"]["default"] is False
-        assert props["response_format"]["enum"] == ["json", "diagnostic"]
+        assert props["answer"]["default"] is False
+        assert props["response_format"]["enum"] == ["json", "diagnostic", "answer"]
         assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
         assert props["scorer_backend"]["default"] == "auto"
         assert "raw_notes" in props
@@ -1326,6 +1330,99 @@ class TestMcpToolExecution:
         assert "telemetry.scorer_backend=lexical" in text
         assert "warnings=Partial task_id detected" in text
         assert "first_task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef" in text
+
+    async def test_project_context_answer_response_is_final_answer_shaped(self, monkeypatch):
+        async def fake_project_context(api_base: str, args: dict, session_id=None):
+            return {
+                "status": "executed",
+                "facade": "project_context",
+                "project": "alpha",
+                "intent": "382e7306",
+                "action_status": "executed",
+                "selected_route": {
+                    "tool": "list_artifacts",
+                    "intent_type": "task_lookup",
+                    "mutating": False,
+                    "confidence": 0.8,
+                    "reason": "A partial task-id-like token was provided.",
+                    "scorer": {
+                        "backend_requested": "auto",
+                        "backend_used": "lexical",
+                        "llm_attempted": False,
+                        "fallback_reason": "",
+                    },
+                },
+                "result": {
+                    "items": [
+                        {
+                            "task_id": "382e7306-cb61-46ee-8398-bc0a9bdfd9ef",
+                            "title": "Add shared semantic or LLM route matching",
+                            "status": "done",
+                            "artifact_key": "task:alpha:382e7306-cb61-46ee-8398-bc0a9bdfd9ef",
+                        }
+                    ]
+                },
+                "route_telemetry": {
+                    "scorer_backend": "lexical",
+                    "fallback_used": False,
+                    "warnings": ["Partial task_id detected"],
+                },
+                "warnings": ["Partial task_id detected"],
+                "next_safe_action": "Continue from the executed route result.",
+                "executed": True,
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_project_context_payload", fake_project_context)
+        text = await mcp_sse._execute_tool(
+            "project_context",
+            {"project": "alpha", "intent": "382e7306", "response_format": "answer"},
+            "http://test",
+        )
+
+        assert text.startswith("Mnemoforge answer\n")
+        assert "Answer: Found task 382e7306-cb61-46ee-8398-bc0a9bdfd9ef." in text
+        assert "task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef" in text
+        assert "title=Add shared semantic or LLM route matching" in text
+        assert "task_status=done" in text
+        assert "route=list_artifacts" in text
+        assert "intent_type=task_lookup" in text
+        assert "scorer_backend=lexical" in text
+        assert "warnings=Partial task_id detected" in text
+        assert "selected_route" not in text
+        assert "route_candidates" not in text
+
+    async def test_project_capture_answer_response_does_not_authorize_guarded_mutation(self, monkeypatch):
+        async def fake_project_capture(api_base: str, args: dict, session_id=None):
+            return {
+                "status": "planned",
+                "facade": "project_capture",
+                "project": "alpha",
+                "intent": "save checkpoint",
+                "action_status": "plan",
+                "selected_route": {
+                    "tool": "record_work_result",
+                    "intent_type": "record_work_result",
+                    "mutating": True,
+                    "confidence": 0.88,
+                    "reason": "Guarded mutation.",
+                },
+                "result": None,
+                "route_telemetry": {"scorer_backend": "lexical", "warnings": []},
+                "warnings": ["Selected project_capture route is mutating; set allow_mutation=true only after reviewing submit_payload."],
+                "next_safe_action": "Review the plan before setting allow_mutation=true.",
+                "executed": False,
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_project_capture_payload", fake_project_capture)
+        text = await mcp_sse._execute_tool(
+            "project_capture",
+            {"project": "alpha", "intent": "save checkpoint", "answer": True},
+            "http://test",
+        )
+
+        assert "Answer: No mutation was executed." in text
+        assert "route=record_work_result" in text
+        assert "next_safe_action=Review the plan before setting allow_mutation=true." in text
 
     async def test_project_context_executes_reconstruction_bundle(self, monkeypatch):
         called: list[tuple[str, dict]] = []

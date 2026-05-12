@@ -1320,11 +1320,16 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "default": False,
                     "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients.",
                 },
+                "answer": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Return a final-answer-shaped plain-text block for small local models.",
+                },
                 "response_format": {
                     "type": "string",
-                    "enum": ["json", "diagnostic"],
+                    "enum": ["json", "diagnostic", "answer"],
                     "default": "json",
-                    "description": "Use diagnostic for a short plain-text route/scorer/telemetry block instead of nested JSON.",
+                    "description": "Use diagnostic for route/scorer/telemetry fields or answer for a short final-answer-shaped plain-text block instead of nested JSON.",
                 },
                 "scorer_backend": {
                     "type": "string",
