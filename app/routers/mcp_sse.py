@@ -2021,6 +2021,98 @@ def _catalog_route_by_intent(catalog: tuple[dict[str, Any], ...], intent_type: s
     return next((item for item in catalog if item["intent_type"] == clean), None)
 
 
+def _task_id_from_open_task_item(item: dict[str, Any]) -> str:
+    task_id = str(item.get("task_id") or item.get("id") or "").strip()
+    if task_id:
+        return task_id
+    artifact_key = str(item.get("artifact_key") or "").strip()
+    if artifact_key.startswith("task:"):
+        parts = artifact_key.split(":")
+        if len(parts) >= 3:
+            return parts[-1].strip()
+    return ""
+
+
+def _annotate_open_tasks_with_claims(data: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    claim_filter = str(args.get("claim_filter") or "available").strip().lower()
+    if claim_filter not in {"available", "claimed", "all"}:
+        claim_filter = "available"
+    include_claims = bool(args.get("include_claims", True))
+    if not include_claims and claim_filter == "all":
+        return data
+
+    items = data.get("items") or []
+    if not isinstance(items, list):
+        return data
+    if not items:
+        enriched = dict(data)
+        enriched["claim_filter"] = claim_filter
+        enriched["claim_summary"] = {"available": 0, "claimed": 0, "returned": 0, "hidden_claimed": 0}
+        return enriched
+
+    project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    try:
+        from app.services.task_lease_service import get_task_lease_store
+
+        store = get_task_lease_store()
+    except Exception as exc:
+        enriched = dict(data)
+        enriched["claim_filter"] = claim_filter
+        enriched["claim_summary"] = {
+            "available": len([item for item in items if isinstance(item, dict)]),
+            "claimed": 0,
+            "returned": len([item for item in items if isinstance(item, dict)]),
+            "hidden_claimed": 0,
+            "unavailable": True,
+        }
+        enriched.setdefault("warnings", [])
+        if isinstance(enriched["warnings"], list):
+            enriched["warnings"].append(f"Task claim annotations unavailable: {_format_tool_error_brief(exc)}")
+        return enriched
+    visible: list[dict[str, Any]] = []
+    hidden_claimed_count = 0
+    claimed_count = 0
+    available_count = 0
+
+    for raw_item in items:
+        if not isinstance(raw_item, dict):
+            continue
+        item = dict(raw_item)
+        task_id = _task_id_from_open_task_item(item)
+        lease = store.get_active_claim(project=project, task_id=task_id) if task_id else None
+        if lease:
+            claimed_count += 1
+            item["claim_status"] = "claimed"
+            item["claim_available"] = False
+            item["task_claim"] = lease.model_dump(mode="json")
+        else:
+            available_count += 1
+            if include_claims:
+                item["claim_status"] = "available"
+                item["claim_available"] = True
+                item["task_claim"] = None
+
+        if claim_filter == "available" and lease:
+            hidden_claimed_count += 1
+            continue
+        if claim_filter == "claimed" and not lease:
+            continue
+        visible.append(item)
+
+    enriched = dict(data)
+    enriched["items"] = visible
+    enriched["claim_filter"] = claim_filter
+    enriched["claim_summary"] = {
+        "available": available_count,
+        "claimed": claimed_count,
+        "returned": len(visible),
+        "hidden_claimed": hidden_claimed_count,
+    }
+    if hidden_claimed_count:
+        enriched["hidden_claimed_count"] = hidden_claimed_count
+    return enriched
+
+
 def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> dict[str, Any]:
     project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
     intent = str(args.get("intent") or "").strip()
@@ -2034,7 +2126,10 @@ def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], tex
         detail = "compact"
 
     if route["intent_type"] == "next_priority":
-        route["payload"] = {"project": project, "limit": limit}
+        claim_filter = str(args.get("claim_filter") or "").strip().lower()
+        if claim_filter not in {"available", "claimed", "all"}:
+            claim_filter = "claimed" if _route_tokens(text) & {"claimed", "claim", "busy", "occupied", "leased"} else "available"
+        route["payload"] = {"project": project, "limit": limit, "claim_filter": claim_filter, "include_claims": True}
     elif route["intent_type"] == "continue_task":
         route["payload"] = {
             "project": project,
@@ -2190,17 +2285,22 @@ def _project_work_route(args: dict[str, Any], *, llm_decision: dict[str, Any] | 
 def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
     if route.get("tool") == "list_open_tasks" and isinstance(result, dict):
         items = result.get("items") or []
-        return [
-            {
+        compact_items: list[dict[str, Any]] = []
+        for item in items[:5]:
+            if not isinstance(item, dict):
+                continue
+            compact_item = {
                 "artifact_key": item.get("artifact_key"),
                 "title": item.get("title"),
                 "status": item.get("status"),
                 "task_id": item.get("task_id"),
                 "linked_artifact_key": item.get("linked_artifact_key"),
             }
-            for item in items[:5]
-            if isinstance(item, dict)
-        ]
+            if isinstance(item.get("task_claim"), dict):
+                compact_item["claim_status"] = item.get("claim_status")
+                compact_item["claimed_by"] = (item.get("task_claim") or {}).get("owner_agent")
+            compact_items.append(compact_item)
+        return compact_items
     if route.get("tool") == "continue_task" and isinstance(result, dict):
         return {
             "task_id": result.get("task_id"),
@@ -4068,6 +4168,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
     elif route["tool"] == "list_open_tasks":
         query = build_list_open_tasks_query(route["payload"])
         result = await _get(api_base, f"/artifacts?{query}")
+        result = _annotate_open_tasks_with_claims(result, route["payload"])
         executed = True
     elif route["tool"] == "continue_task":
         result = await _build_continue_task_payload(api_base, route["payload"])
@@ -8217,6 +8318,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
     elif name == "list_open_tasks":
         query = build_list_open_tasks_query(args)
         data = await _get(api_base, f"/artifacts?{query}")
+        data = _annotate_open_tasks_with_claims(data, args)
         return format_list_open_tasks_response(data)
     elif name == "normalize_mcp_intent":
         payload = build_normalize_mcp_intent_payload(args)

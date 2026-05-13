@@ -973,6 +973,20 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "type": "string",
                     "description": "ISO 8601 timestamp; include tasks with updated_at <= this value",
                 },
+                "claim_filter": {
+                    "type": "string",
+                    "enum": ["available", "claimed", "all"],
+                    "default": "available",
+                    "description": (
+                        "Filter by task lease state. available hides active claims, claimed returns occupied tasks, "
+                        "all returns both with task_claim annotations."
+                    ),
+                },
+                "include_claims": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Annotate returned tasks with task_claim, claim_status, and claim_available.",
+                },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
             },
         },
@@ -2189,15 +2203,36 @@ def format_list_learning_candidates_response(data: dict[str, Any]) -> str:
 def format_list_open_tasks_response(data: dict[str, Any]) -> str:
     items = data.get("items", [])
     if not items:
+        claim_filter = str(data.get("claim_filter") or "available")
+        if claim_filter == "claimed":
+            return "No claimed open tasks found."
+        if data.get("hidden_claimed_count"):
+            return f"No available open tasks found. Hidden claimed tasks: {data['hidden_claimed_count']}."
         return "No open tasks found."
-    lines = [f"Open tasks: {len(items)}"]
+    claim_filter = str(data.get("claim_filter") or "available")
+    if claim_filter == "claimed":
+        heading = f"Claimed open tasks: {len(items)}"
+    elif claim_filter == "all":
+        heading = f"Open tasks: {len(items)}"
+    else:
+        heading = f"Available open tasks: {len(items)}"
+    lines = [heading]
     for i, item in enumerate(items, 1):
         linked = item.get("linked_artifact_key") or item.get("linked_status") or ""
         suffix = f" linked={linked}" if linked else ""
+        claim = item.get("task_claim") or {}
+        if claim:
+            suffix += (
+                f" claimed_by={claim.get('owner_agent')}"
+                f" expires_at={claim.get('expires_at')}"
+                f" lease_id={claim.get('lease_id')}"
+            )
         lines.append(f"{i}. [{item.get('status', 'open')}] {item.get('title', '')} ({item.get('artifact_key')}){suffix}")
         description = str(item.get("description") or "").strip()
         if description:
             lines.append(f"   {description[:240]}")
+    if data.get("hidden_claimed_count"):
+        lines.append(f"Hidden claimed tasks: {data['hidden_claimed_count']}")
     return "\n".join(lines)
 
 

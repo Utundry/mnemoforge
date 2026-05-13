@@ -827,6 +827,90 @@ class TestMcpToolExecution:
         assert requested[0].startswith("/artifacts?project=alpha&status=open&type=task&limit=5")
         assert data["result"]["items"][0]["artifact_key"] == "task:alpha:task-1"
 
+    async def test_project_work_next_priority_skips_claimed_tasks(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+
+        async def fake_get(api_base: str, path: str):
+            return {
+                "items": [
+                    {
+                        "artifact_key": "task:alpha:task-1",
+                        "task_id": "task-1",
+                        "title": "Busy task",
+                        "status": "open",
+                    },
+                    {
+                        "artifact_key": "task:alpha:task-2",
+                        "task_id": "task-2",
+                        "title": "Free task",
+                        "status": "open",
+                    },
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        try:
+            store.claim(project="alpha", task_id="task-1", owner_agent="claude", session_id="sess-claude")
+            result = await mcp_sse._execute_tool(
+                "project_work",
+                {"project": "alpha", "intent": "what is the next priority?", "limit": 5},
+                "http://test",
+            )
+            data = json.loads(result)
+
+            assert data["result"]["claim_filter"] == "available"
+            assert data["result"]["claim_summary"]["hidden_claimed"] == 1
+            assert [item["title"] for item in data["result"]["items"]] == ["Free task"]
+            assert data["compact_result"][0]["title"] == "Free task"
+        finally:
+            store.close()
+
+    async def test_project_work_can_request_claimed_tasks(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+
+        async def fake_get(api_base: str, path: str):
+            return {
+                "items": [
+                    {
+                        "artifact_key": "task:alpha:task-1",
+                        "task_id": "task-1",
+                        "title": "Busy task",
+                        "status": "open",
+                    },
+                    {
+                        "artifact_key": "task:alpha:task-2",
+                        "task_id": "task-2",
+                        "title": "Free task",
+                        "status": "open",
+                    },
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        try:
+            store.claim(project="alpha", task_id="task-1", owner_agent="claude", session_id="sess-claude")
+            result = await mcp_sse._execute_tool(
+                "project_work",
+                {"project": "alpha", "intent": "show occupied open tasks", "limit": 5},
+                "http://test",
+            )
+            data = json.loads(result)
+
+            assert data["result"]["claim_filter"] == "claimed"
+            assert [item["title"] for item in data["result"]["items"]] == ["Busy task"]
+            assert data["compact_result"][0]["claim_status"] == "claimed"
+            assert data["compact_result"][0]["claimed_by"] == "claude"
+        finally:
+            store.close()
+
     async def test_project_work_next_priority_answer_is_final_answer_shaped(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
             return {
@@ -2664,6 +2748,67 @@ class TestMcpToolExecution:
 
         assert "updated_after=2026-04-17T00%3A00%3A00%2B04%3A00" in seen["path"]
         assert "updated_before=2026-04-18T00%3A00%3A00%2B04%3A00" in seen["path"]
+
+    async def test_list_open_tasks_hides_claimed_tasks_by_default(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_get(api_base: str, path: str):
+            return {
+                "items": [
+                    {"artifact_key": "task:alpha:task-1", "task_id": "task-1", "title": "Busy task", "status": "open"},
+                    {"artifact_key": "task:alpha:task-2", "task_id": "task-2", "title": "Free task", "status": "open"},
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        try:
+            store.claim(project="alpha", task_id="task-1", owner_agent="claude", session_id="sess-claude")
+            result = await mcp_sse._execute_tool("list_open_tasks", {"project": "alpha"}, "http://test")
+
+            assert "Available open tasks: 1" in result
+            assert "Free task" in result
+            assert "Busy task" not in result
+            assert "Hidden claimed tasks: 1" in result
+        finally:
+            store.close()
+
+    async def test_list_open_tasks_can_return_claimed_tasks(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_get(api_base: str, path: str):
+            return {
+                "items": [
+                    {"artifact_key": "task:alpha:task-1", "task_id": "task-1", "title": "Busy task", "status": "open"},
+                    {"artifact_key": "task:alpha:task-2", "task_id": "task-2", "title": "Free task", "status": "open"},
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        try:
+            claim = store.claim(project="alpha", task_id="task-1", owner_agent="claude", session_id="sess-claude")
+            result = await mcp_sse._execute_tool(
+                "list_open_tasks",
+                {"project": "alpha", "claim_filter": "claimed"},
+                "http://test",
+            )
+
+            assert "Claimed open tasks: 1" in result
+            assert "Busy task" in result
+            assert "Free task" not in result
+            assert "claimed_by=claude" in result
+            assert f"lease_id={claim.lease.lease_id}" in result
+        finally:
+            store.close()
 
     async def test_unknown_list_active_tasks_recovers_via_learned_project_work_pattern(self, monkeypatch):
         seen: dict[str, object] = {}
