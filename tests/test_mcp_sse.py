@@ -48,6 +48,8 @@ class TestMcpToolExecution:
         assert "get_task_execution_context" not in names
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["full_catalog_request"] == {"method": "tools/list", "params": {"mode": "full"}}
+        assert "get_task_execution_context" in result["_mnemoforge"]["reason"]
+        assert "project_work" in result["_mnemoforge"]["reason"]
 
     async def test_tools_list_full_mode_returns_full_catalog(self):
         response = await mcp_sse._handle(
@@ -368,6 +370,9 @@ class TestMcpToolExecution:
         assert "limit" in props
         assert "status" not in props
 
+    def test_list_active_tasks_is_not_exposed_in_public_catalog(self):
+        assert all(tool["name"] != "list_active_tasks" for tool in mcp_sse.TOOLS)
+
     def test_reconcile_completed_checkpoints_tool_is_exposed_report_only_by_default(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "reconcile_completed_checkpoints")
         props = tool["inputSchema"]["properties"]
@@ -405,6 +410,7 @@ class TestMcpToolExecution:
         schema = tool["inputSchema"]
         assert schema["required"] == ["question"]
         props = schema["properties"]
+        assert "query" in props
         assert props["response_format"]["enum"] == ["auto", "answer", "diagnostic", "json"]
         assert props["client_profile"]["enum"] == ["default", "local", "small_context", "agent"]
         assert props["evaluation_footer"]["enum"] == ["none", "routine_reduction"]
@@ -1500,6 +1506,76 @@ class TestMcpToolExecution:
         assert calls[0][1]["allow_mutation"] is False
         assert calls[0][1]["response_format"] == "answer"
 
+    async def test_ask_project_accepts_query_alias_and_routes_to_project_work(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            calls.append((tool_name, args))
+            return "Mnemoforge answer\nAnswer: project_work executed route list_open_tasks."
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {"project": "alpha", "query": "What are my active/open tasks right now? List all open tasks."},
+            "http://test",
+        )
+
+        assert "project_work executed" in text
+        assert calls[0][0] == "project_work"
+        assert calls[0][1]["intent"] == "What are my active/open tasks right now? List all open tasks."
+
+    async def test_ask_project_snake_case_query_routes_to_project_work(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            calls.append((tool_name, args))
+            return "Mnemoforge answer\nAnswer: project_work executed route list_open_tasks."
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {"project": "alpha", "query": "list_open_tasks"},
+            "http://test",
+        )
+
+        assert "project_work executed" in text
+        assert calls[0][0] == "project_work"
+        assert calls[0][1]["intent"] == "list_open_tasks"
+
+    async def test_ask_project_uses_learned_route_pattern(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            calls.append((tool_name, args))
+            return "Mnemoforge answer\nAnswer: project_verify executed route get_task_execution_context."
+
+        monkeypatch.setattr(
+            mcp_sse,
+            "_learned_route_match",
+            lambda **kwargs: {
+                "tool": "project_verify",
+                "reason": "Matched a learned route pattern.",
+                "confidence": 0.93,
+                "backend_used": "learned_semantic",
+                "pattern_id": "pat-1",
+                "score": 0.88,
+                "matched_by": "semantic",
+            },
+        )
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {"project": "alpha", "question": "check this repo health for me"},
+            "http://test",
+        )
+
+        assert "project_verify executed" in text
+        assert calls[0][0] == "project_verify"
+        assert calls[0][1]["allow_mutation"] is False
+
     async def test_ask_project_routine_reduction_footer_is_self_contained(self, monkeypatch):
         original_execute = mcp_sse._execute_tool
 
@@ -2542,6 +2618,110 @@ class TestMcpToolExecution:
         assert "updated_after=2026-04-17T00%3A00%3A00%2B04%3A00" in seen["path"]
         assert "updated_before=2026-04-18T00%3A00%3A00%2B04%3A00" in seen["path"]
 
+    async def test_unknown_list_active_tasks_recovers_via_learned_project_work_pattern(self, monkeypatch):
+        seen: dict[str, object] = {}
+
+        async def fake_build_project_work_payload(api_base: str, args: dict[str, object], *, session_id: str | None = None):
+            seen["api_base"] = api_base
+            seen["args"] = args
+            return {"facade": "project_work", "selected_route": {"tool": "list_open_tasks"}}
+
+        monkeypatch.setattr(
+            mcp_sse,
+            "_learned_route_match",
+            lambda **kwargs: {
+                "tool": "project_work",
+                "reason": "Matched a learned route pattern.",
+                "metadata": {"intent": "List open project tasks and current priority work."},
+            },
+        )
+        monkeypatch.setattr(mcp_sse, "_build_project_work_payload", fake_build_project_work_payload)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool("list_active_tasks", {"project": "alpha", "limit": 3}, "http://test")
+
+        assert seen["api_base"] == "http://test"
+        assert seen["args"] == {
+            "project": "alpha",
+            "intent": "List open project tasks and current priority work.",
+            "allow_mutation": False,
+            "detail": "full",
+            "response_format": "json",
+            "limit": 3,
+        }
+        assert '"facade": "project_work"' in result
+        assert '"tool": "list_open_tasks"' in result
+
+    async def test_unknown_current_priority_tasks_recovers_via_expert_and_records_pattern(self, monkeypatch):
+        seen: dict[str, object] = {}
+
+        async def fake_build_project_work_payload(api_base: str, args: dict[str, object], *, session_id: str | None = None):
+            seen["args"] = args
+            return {"facade": "project_work", "selected_route": {"tool": "list_open_tasks"}}
+
+        async def fake_unknown_tool_llm_recovery(name: str, args: dict[str, object]):
+            seen["recovered_name"] = name
+            return {
+                "tool": "project_work",
+                "confidence": 0.91,
+                "intent": "List open project tasks and current priority work.",
+                "reason": "The unknown tool name refers to priority task listing.",
+            }
+
+        recorded: dict[str, object] = {}
+
+        class FakePatternStore:
+            def record(self, **kwargs):
+                recorded.update(kwargs)
+                return "pattern-1"
+
+        monkeypatch.setattr(mcp_sse, "_learned_route_match", lambda **kwargs: None)
+        monkeypatch.setattr(mcp_sse, "_unknown_tool_llm_recovery", fake_unknown_tool_llm_recovery)
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: FakePatternStore())
+        monkeypatch.setattr(mcp_sse, "_build_project_work_payload", fake_build_project_work_payload)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool("current_priority_tasks", {"project": "alpha"}, "http://test")
+
+        assert seen["recovered_name"] == "current_priority_tasks"
+        assert seen["args"] == {
+            "project": "alpha",
+            "intent": "List open project tasks and current priority work.",
+            "allow_mutation": False,
+            "detail": "full",
+            "response_format": "json",
+            "limit": 50,
+        }
+        assert recorded["facade"] == "unknown_tool_recovery"
+        assert recorded["intent_type"] == "project_work"
+        assert recorded["tool"] == "project_work"
+        assert recorded["metadata"]["intent"] == "List open project tasks and current priority work."
+        assert '"facade": "project_work"' in result
+
+    async def test_unknown_tool_error_guides_to_expert_entrypoints(self, monkeypatch):
+        monkeypatch.setattr(mcp_sse, "_learned_route_match", lambda **kwargs: None)
+
+        async def fake_unknown_tool_llm_recovery(name: str, args: dict[str, object]):
+            return {}
+
+        monkeypatch.setattr(mcp_sse, "_unknown_tool_llm_recovery", fake_unknown_tool_llm_recovery)
+        response = await mcp_sse._handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "banana_wrench", "arguments": {"project": "alpha"}},
+            },
+            "http://test",
+        )
+
+        assert response["result"]["isError"] is True
+        text = response["result"]["content"][0]["text"]
+        assert "Unknown tool: banana_wrench." in text
+        assert "start with ask_project for human project questions" in text
+        assert "use project_work for open work, next priority, or task list questions" in text
+        assert "use tool_recommend when the intended MCP family is unclear" in text
+
     async def test_list_artifacts_tool_url_encodes_datetime_filters(self, monkeypatch):
         seen: dict[str, str] = {}
 
@@ -2704,6 +2884,12 @@ class TestMcpToolExecution:
 
     async def test_normalize_mcp_intent_returns_canonical_form_for_resume_requests(self, monkeypatch):
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        monkeypatch.setattr(mcp_sse, "_learned_route_match", lambda **kwargs: None)
+
+        async def fake_llm(intent: str, *, project_id: str = "", top_n: int = 3):
+            return {}
+
+        monkeypatch.setattr(mcp_sse, "_normalize_mcp_intent_llm", fake_llm)
 
         result = await mcp_sse._execute_tool(
             "normalize_mcp_intent",
@@ -2716,10 +2902,51 @@ class TestMcpToolExecution:
         assert '"cache"' in result
         assert '"canonical_surface"' in result
         assert '"normalize_mcp_intent"' in result
-        assert '"stage": "testing"' in result
-        assert '"feedback_expected": true' in result
-        assert '"follow_up": "tool_feedback"' in result
         assert '"ready_to_execute": true' in result
+
+    async def test_normalize_mcp_intent_uses_learned_route_pattern(self, monkeypatch):
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        monkeypatch.setattr(
+            mcp_sse,
+            "_learned_route_match",
+            lambda **kwargs: {
+                "tool": "list_open_tasks",
+                "reason": "Matched a learned route pattern.",
+                "confidence": 0.91,
+                "backend_used": "learned_semantic",
+                "pattern_id": "pat-open-1",
+                "score": 0.9,
+                "matched_by": "semantic",
+            },
+        )
+
+        result = await mcp_sse._execute_tool(
+            "normalize_mcp_intent",
+            {"intent": "show me the queue", "project_id": "mnemoforge", "top_n": 3},
+            "http://test",
+        )
+
+        assert '"resolved_tool": "list_open_tasks"' in result
+        assert '"matched_pattern_id": "pat-open-1"' in result
+
+    async def test_normalize_mcp_intent_llm_records_learned_pattern(self, monkeypatch):
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        monkeypatch.setattr(mcp_sse, "_learned_route_match", lambda **kwargs: None)
+
+        async def fake_llm(intent: str, *, project_id: str = "", top_n: int = 3):
+            return {"tool": "list_open_tasks", "confidence": 0.89, "reason": "This asks for open work."}
+
+        monkeypatch.setattr(mcp_sse, "_normalize_mcp_intent_llm", fake_llm)
+        monkeypatch.setattr(mcp_sse, "_record_learned_route_pattern", lambda **kwargs: "learned-norm-1")
+
+        result = await mcp_sse._execute_tool(
+            "normalize_mcp_intent",
+            {"intent": "what should I do next", "project_id": "mnemoforge", "top_n": 3},
+            "http://test",
+        )
+
+        assert '"resolved_tool": "list_open_tasks"' in result
+        assert '"learned_pattern_id": "learned-norm-1"' in result
 
     async def test_list_tool_families_returns_compact_catalog(self, monkeypatch):
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
@@ -3558,6 +3785,8 @@ class TestMcpToolExecution:
         assert "compact expert-helper surface" in info["tool_catalog"]["reason"]
         assert any("/api/v1/coordination/" in line for line in info["semantic_defaults"])
         assert any("project-specific hints" in line for line in info["semantic_defaults"])
+        assert "get_task_execution_context" in info["tip"]
+        assert "get_task_execution_context" in info["semantic_defaults"][2]
 
     async def test_get_onboarding_includes_mnemoforge_basics(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
@@ -3591,6 +3820,19 @@ class TestMcpToolExecution:
         monkeypatch.setattr(mcp_sse, "_get", fake_get)
         monkeypatch.setattr(mcp_sse, "_post", fake_post)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        monkeypatch.setattr(
+            mcp_sse,
+            "get_active_operational_instincts",
+            lambda *args, **kwargs: [
+                {
+                    "rank": 1,
+                    "instinct_id": "trust_first",
+                    "action": "Trust storage and project context first.",
+                    "family": "ops",
+                    "phase": "onboarding",
+                },
+            ],
+        )
 
         result = await mcp_sse._execute_tool(
             "get_onboarding",
@@ -3607,10 +3849,10 @@ class TestMcpToolExecution:
         assert "get_storage_trust_status" in result
         assert "STORAGE TRUST WARNING:" in result
         assert "pickup_coordination_messages" in result
-        assert "coordination_is_not_truth" in result
         assert "INTEGRITY WARNING:" in result
         assert "EXPERT HELPER GUIDANCE:" in result
         assert "Start with ask_project" in result
+        assert "get_task_execution_context" in result
         assert "project-specific hints" in result
 
     async def test_get_onboarding_degrades_gracefully_when_skill_pack_http500(self, monkeypatch):
@@ -3643,6 +3885,19 @@ class TestMcpToolExecution:
         monkeypatch.setattr(mcp_sse, "_get", fake_get)
         monkeypatch.setattr(mcp_sse, "_post", fake_post)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        monkeypatch.setattr(
+            mcp_sse,
+            "get_active_operational_instincts",
+            lambda *args, **kwargs: [
+                {
+                    "rank": 1,
+                    "instinct_id": "trust_first",
+                    "action": "Trust storage and project context first.",
+                    "family": "ops",
+                    "phase": "onboarding",
+                },
+            ],
+        )
 
         result = await mcp_sse._execute_tool(
             "get_onboarding",

@@ -12,6 +12,7 @@ Protocol:
 from __future__ import annotations
 
 import asyncio
+import difflib
 import hashlib
 import json
 import os
@@ -448,6 +449,196 @@ def _find_tool_definition(tool_name: str) -> dict[str, Any] | None:
     return None
 
 
+def _normalized_tool_name(tool_name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(tool_name or "").strip().lower()).strip("_")
+
+
+def _unknown_tool_recovery_pattern(name: str, args: dict[str, Any]) -> str:
+    parts = [f"tool_name={_normalized_tool_name(name)}"]
+    project = str(args.get("project") or args.get("project_id") or "").strip()
+    if project:
+        parts.append(f"project={project}")
+    for key in ("intent", "question", "task", "summary", "raw_notes", "state"):
+        value = str(args.get(key) or "").strip()
+        if value:
+            parts.append(f"{key}={value[:240]}")
+    if args:
+        parts.append("arg_keys=" + ",".join(sorted(str(key) for key in args.keys())))
+    return "\n".join(parts)
+
+
+def _unknown_tool_call_args(tool_name: str, args: dict[str, Any], *, recovered_text: str = "") -> dict[str, Any]:
+    project = str(args.get("project") or args.get("project_id") or "mnemoforge").strip() or "mnemoforge"
+    limit = int(args.get("limit", 50))
+    text = recovered_text.strip()
+    if tool_name == "ask_project":
+        return {
+            "project": project,
+            "question": text or f"Help route this project request that arrived via unknown tool '{_normalized_tool_name(args.get('name') or tool_name)}'.",
+            "detail": "full",
+            "response_format": "json",
+            "client_profile": "agent",
+        }
+    if tool_name == "project_work":
+        return {
+            "project": project,
+            "intent": text or "Interpret this unknown tool request and choose the right open-work or task route.",
+            "allow_mutation": False,
+            "detail": "full",
+            "response_format": "json",
+            "limit": limit,
+        }
+    if tool_name == "project_context":
+        return {
+            "project": project,
+            "intent": text or "Interpret this unknown tool request and provide the relevant project context.",
+            "detail": "full",
+            "response_format": "json",
+        }
+    if tool_name == "project_verify":
+        return {
+            "project": project,
+            "intent": text or "Interpret this unknown tool request and choose the right verification path.",
+            "response_format": "json",
+        }
+    if tool_name == "project_capture":
+        return {
+            "project": project,
+            "intent": text or "Interpret this unknown tool request and choose the right capture or checkpoint path.",
+            "allow_mutation": False,
+            "response_format": "json",
+        }
+    if tool_name == "tool_recommend":
+        return {
+            "task": text or f"Unknown MCP tool request: {_normalized_tool_name(args.get('name') or '')}",
+            "project_id": project,
+            "top_n": 3,
+        }
+    return args
+
+
+async def _unknown_tool_llm_recovery(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    from app.dependencies import get_llm_gateway
+
+    allowed_tools = ["ask_project", "project_work", "project_context", "project_verify", "project_capture", "tool_recommend"]
+    prompt = json.dumps(
+        {
+            "task": "Recover an unknown MCP tool call by selecting the best expert entrypoint. Return only JSON.",
+            "unknown_tool_name": name,
+            "normalized_tool_name": _normalized_tool_name(name),
+            "arguments": {key: args.get(key) for key in sorted(args.keys())},
+            "allowed_tools": allowed_tools,
+            "output_schema": {
+                "tool": "one allowed_tools value",
+                "confidence": "number 0..1",
+                "intent": "short natural-language intent/question to pass into the selected expert tool",
+                "reason": "one sentence",
+            },
+            "safety": "Prefer expert helper facades over low-level tools. Do not authorize mutations.",
+        },
+        ensure_ascii=False,
+    )
+    response = await get_llm_gateway().generate(
+        prompt,
+        system="You are a strict JSON classifier for unknown MCP tool recovery. Return only a JSON object.",
+        task_type="intent_classification",
+        mode="economy",
+        max_tokens=220,
+        temperature=0.0,
+        timeout=20.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
+    parsed = _extract_json_object(response)
+    tool = str(parsed.get("tool") or "")
+    if tool not in set(allowed_tools):
+        return {}
+    try:
+        confidence = float(parsed.get("confidence") or 0.0)
+    except Exception:
+        confidence = 0.0
+    return {
+        "tool": tool,
+        "confidence": max(0.0, min(1.0, confidence)),
+        "intent": str(parsed.get("intent") or "").strip(),
+        "reason": str(parsed.get("reason") or "").strip(),
+    }
+
+
+async def _recover_unknown_tool_call(name: str, args: dict[str, Any]) -> dict[str, Any] | None:
+    normalized = _normalized_tool_name(name)
+    if not normalized:
+        return None
+
+    available_names = [str(tool.get("name") or "") for tool in TOOLS if tool.get("name")]
+    if normalized in available_names:
+        return {"tool": normalized, "args": args, "reason": "Normalized unknown tool name to a known MCP tool."}
+
+    pattern = _unknown_tool_recovery_pattern(name, args)
+    learned = _learned_route_match(
+        facade="unknown_tool_recovery",
+        text=pattern,
+        allowed_intent_types={"ask_project", "project_work", "project_context", "project_verify", "project_capture", "tool_recommend"},
+    )
+    if learned and str(learned.get("tool") or ""):
+        metadata = learned.get("metadata") or {}
+        recovered_text = str(metadata.get("intent") or "").strip()
+        tool_name = str(learned.get("tool") or "").strip()
+        return {
+            "tool": tool_name,
+            "args": _unknown_tool_call_args(tool_name, {**args, "name": name}, recovered_text=recovered_text),
+            "reason": str(learned.get("reason") or "Recovered unknown tool name from learned expert routing patterns."),
+        }
+
+    close = difflib.get_close_matches(normalized, available_names, n=1, cutoff=0.82)
+    if close:
+        return {
+            "tool": close[0],
+            "args": args,
+            "reason": "Recovered unknown tool name by close match to a known MCP tool.",
+        }
+
+    decision = await _unknown_tool_llm_recovery(name, args)
+    tool_name = str(decision.get("tool") or "").strip()
+    if not tool_name:
+        return None
+    try:
+        get_route_pattern_store().record(
+            facade="unknown_tool_recovery",
+            pattern=pattern,
+            intent_type=tool_name,
+            tool=tool_name,
+            mutating=False,
+            confidence=float(decision.get("confidence") or 0.0),
+            source="llm",
+            metadata={
+                "matched_example": normalized,
+                "reason": decision.get("reason") or "Recovered unknown tool through expert routing.",
+                "intent": decision.get("intent") or "",
+            },
+        )
+    except Exception:
+        pass
+    return {
+        "tool": tool_name,
+        "args": _unknown_tool_call_args(tool_name, {**args, "name": name}, recovered_text=str(decision.get("intent") or "").strip()),
+        "reason": str(decision.get("reason") or "Recovered unknown tool via expert routing."),
+    }
+
+
+def _unknown_tool_error_message(name: str, args: dict[str, Any]) -> str:
+    normalized = _normalized_tool_name(name)
+    available_names = [str(tool.get("name") or "") for tool in TOOLS if tool.get("name")]
+    close = difflib.get_close_matches(normalized, available_names, n=3, cutoff=0.6)
+    hints: list[str] = []
+    if close:
+        hints.append("closest_tools=" + ", ".join(close))
+    hints.append("start with ask_project for human project questions")
+    hints.append("use project_work for open work, next priority, or task list questions")
+    hints.append("use tool_recommend when the intended MCP family is unclear")
+    return f"Unknown tool: {name}. " + "; ".join(hints) + "."
+
+
 def _infer_tool_family(tool_name: str) -> str:
     name = str(tool_name or "").strip()
     if not name:
@@ -598,7 +789,7 @@ def _tools_list_payload(params: dict[str, Any] | None = None) -> dict[str, Any]:
             "full_catalog_request": {"method": "tools/list", "params": {"mode": "full"}},
             "full_schema_request": {"method": "tools/list", "params": {"mode": "compact", "schema_mode": "full"}},
             "recommended_first_tool": "ask_project",
-            "reason": "Compact mode exposes thematic facades and staged discovery tools before the full flat catalog.",
+            "reason": "Compact mode exposes thematic facades and staged discovery tools before the full flat catalog; use get_task_execution_context for active task work and project_work for next-step questions.",
             "total_tools_available": len(_tool_catalog()),
             "returned_tools": len(tools),
         }
@@ -1257,7 +1448,7 @@ def _tool_example_payload(tool_name: str, *, intent: str, project_id: str = "") 
     return {}
 
 
-def _normalize_mcp_intent(intent: str, *, project_id: str = "", top_n: int = 3) -> dict[str, Any]:
+def _normalize_mcp_intent_lexical(intent: str, *, project_id: str = "", top_n: int = 3) -> dict[str, Any]:
     text = str(intent or "").strip()
     clean_project = str(project_id or "").strip()
     top_n = max(1, min(5, int(top_n or 3)))
@@ -1365,6 +1556,134 @@ def _normalize_mcp_intent(intent: str, *, project_id: str = "", top_n: int = 3) 
         "next_step": "Call the submit_to tool with the example_payload, filling any missing fields." if resolved_tool != "tool_recommend" else "Call tool_recommend to get a narrower route.",
         "alternatives": [item["tool"] for item in canonical_surface if item["tool"] not in {resolved_tool, "normalize_mcp_intent"}][:top_n],
     }
+
+
+async def _normalize_mcp_intent_llm(intent: str, *, project_id: str = "", top_n: int = 3) -> dict[str, Any]:
+    from app.dependencies import get_llm_gateway
+
+    allowed_tools = [
+        "reopen_task",
+        "list_open_tasks",
+        "report_task_checkpoint",
+        "enrich_task_with_context",
+        "reconcile_completed_checkpoints",
+        "resolve_artifact",
+        "reopen_artifact",
+        "tool_recommend",
+    ]
+    prompt = json.dumps(
+        {
+            "task": "Normalize an MCP intent to the best canonical tool. Return only JSON.",
+            "intent": intent,
+            "project_id": project_id,
+            "allowed_tools": allowed_tools,
+            "output_schema": {
+                "tool": "one allowed_tools value",
+                "confidence": "number 0..1",
+                "reason": "one sentence",
+            },
+            "safety": "Only choose the routing tool; do not invent arguments beyond intent normalization.",
+        },
+        ensure_ascii=False,
+    )
+    response = await get_llm_gateway().generate(
+        prompt,
+        system="You are a strict JSON classifier for normalize_mcp_intent. Return only a JSON object.",
+        task_type="intent_classification",
+        mode="economy",
+        max_tokens=200,
+        temperature=0.0,
+        timeout=20.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
+    parsed = _extract_json_object(response)
+    tool = str(parsed.get("tool") or "")
+    if tool not in set(allowed_tools):
+        return {}
+    try:
+        confidence = float(parsed.get("confidence") or 0.0)
+    except Exception:
+        confidence = 0.0
+    return {
+        "tool": tool,
+        "confidence": max(0.0, min(1.0, confidence)),
+        "reason": str(parsed.get("reason") or "").strip(),
+    }
+
+
+async def _normalize_mcp_intent(intent: str, *, project_id: str = "", top_n: int = 3) -> dict[str, Any]:
+    lexical = _normalize_mcp_intent_lexical(intent, project_id=project_id, top_n=top_n)
+    allowed = {
+        "reopen_task",
+        "list_open_tasks",
+        "report_task_checkpoint",
+        "enrich_task_with_context",
+        "reconcile_completed_checkpoints",
+        "resolve_artifact",
+        "reopen_artifact",
+        "tool_recommend",
+    }
+    learned = _learned_route_match(
+        facade="normalize_mcp_intent",
+        text=intent,
+        allowed_intent_types=allowed,
+    )
+    if learned and str(learned.get("tool") or "") in allowed:
+        resolved_tool = str(learned.get("tool") or "")
+        result = _normalize_mcp_intent_lexical(intent, project_id=project_id, top_n=top_n)
+        result["resolved_tool"] = resolved_tool
+        result["resolved_family"] = _infer_tool_family(resolved_tool)
+        result["submit_to"] = resolved_tool
+        result["confidence"] = float(learned.get("confidence") or result["confidence"])
+        result["rationale"] = str(learned.get("reason") or result["rationale"])
+        result["example_payload"] = _tool_example_payload(resolved_tool, intent=str(intent or "").strip(), project_id=str(project_id or "").strip())
+        task_id = _extract_task_id_from_text(str(intent or ""))
+        if task_id and result["example_payload"].get("task_id") == "<task_id>":
+            result["example_payload"]["task_id"] = task_id
+        required = list(_tool_input_schema(resolved_tool).get("required") or [])
+        result["required_fields"] = required
+        result["optional_fields"] = [name for name in (result["example_payload"].keys()) if name not in required]
+        result["missing_fields"] = [field for field in required if field not in result["example_payload"] or result["example_payload"].get(field) in {"", None, "<task_id>"}]
+        result["ready_to_execute"] = not result["missing_fields"] and resolved_tool != "tool_recommend"
+        result["route_telemetry"] = {
+            "backend_used": learned.get("backend_used") or "learned_semantic",
+            "matched_pattern_id": learned.get("pattern_id") or "",
+            "matched_pattern_score": learned.get("score"),
+            "matched_by": learned.get("matched_by") or "",
+        }
+        return result
+    try:
+        decision = await _normalize_mcp_intent_llm(intent, project_id=project_id, top_n=top_n)
+    except Exception:
+        decision = {}
+    if not decision:
+        lexical["route_telemetry"] = {"backend_used": "lexical", "fallback_reason": "LLM returned no valid normalized tool."}
+        return lexical
+    resolved_tool = str(decision["tool"])
+    result = _normalize_mcp_intent_lexical(intent, project_id=project_id, top_n=top_n)
+    result["resolved_tool"] = resolved_tool
+    result["resolved_family"] = _infer_tool_family(resolved_tool)
+    result["submit_to"] = resolved_tool
+    result["confidence"] = float(decision.get("confidence") or result["confidence"])
+    result["rationale"] = str(decision.get("reason") or result["rationale"])
+    result["example_payload"] = _tool_example_payload(resolved_tool, intent=str(intent or "").strip(), project_id=str(project_id or "").strip())
+    task_id = _extract_task_id_from_text(str(intent or ""))
+    if task_id and result["example_payload"].get("task_id") == "<task_id>":
+        result["example_payload"]["task_id"] = task_id
+    required = list(_tool_input_schema(resolved_tool).get("required") or [])
+    result["required_fields"] = required
+    result["optional_fields"] = [name for name in (result["example_payload"].keys()) if name not in required]
+    result["missing_fields"] = [field for field in required if field not in result["example_payload"] or result["example_payload"].get(field) in {"", None, "<task_id>"}]
+    result["ready_to_execute"] = not result["missing_fields"] and resolved_tool != "tool_recommend"
+    pattern_id = _record_learned_route_pattern(
+        facade="normalize_mcp_intent",
+        text=str(intent or "").strip(),
+        route={"intent_type": resolved_tool, "tool": resolved_tool, "mutating": False, "confidence": result["confidence"], "reason": result["rationale"]},
+        decision={"confidence": result["confidence"], "matched_example": str(intent or "").strip()[:120], "reason": result["rationale"]},
+    )
+    result["route_telemetry"] = {"backend_used": "llm", "learned_pattern_id": pattern_id or ""}
+    return result
 
 
 _PROJECT_WORK_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
@@ -2343,9 +2662,20 @@ def _ask_project_response_format(args: dict[str, Any]) -> str:
     return "answer"
 
 
-def _ask_project_select_route(args: dict[str, Any]) -> dict[str, Any]:
-    question = str(args.get("question") or args.get("intent") or "").strip()
-    text = question.casefold()
+def _ask_project_query_text(args: dict[str, Any]) -> str:
+    return str(args.get("question") or args.get("query") or args.get("intent") or "").strip()
+
+
+def _ask_project_lexical_text(question: str) -> str:
+    # Normalize snake/kebab tool-like phrases into lexical text so small clients
+    # that send values like "list_open_tasks" are still routed semantically.
+    normalized = re.sub(r"[_\-/\.]+", " ", str(question or ""))
+    return normalized.casefold()
+
+
+def _ask_project_select_route_lexical(args: dict[str, Any]) -> dict[str, Any]:
+    question = _ask_project_query_text(args)
+    text = _ask_project_lexical_text(question)
     project = str(args.get("project") or args.get("project_id") or "mnemoforge").strip() or "mnemoforge"
     detail = str(args.get("detail") or "compact").strip().lower()
     if detail not in {"compact", "full"}:
@@ -2421,6 +2751,128 @@ def _ask_project_select_route(args: dict[str, Any]) -> dict[str, Any]:
     return route
 
 
+async def _ask_project_llm_route(args: dict[str, Any]) -> dict[str, Any]:
+    from app.dependencies import get_llm_gateway
+
+    question = _ask_project_query_text(args)
+    project = str(args.get("project") or args.get("project_id") or "mnemoforge").strip() or "mnemoforge"
+    detail = str(args.get("detail") or "compact").strip().lower()
+    if detail not in {"compact", "full"}:
+        detail = "compact"
+    response_format = _ask_project_response_format(args)
+    prompt = json.dumps(
+        {
+            "task": "Choose the best ask_project expert facade. Return only JSON.",
+            "question": question,
+            "project": project,
+            "allowed_facades": ["project_context", "project_work", "project_verify", "project_capture"],
+            "output_schema": {
+                "facade": "one allowed_facades value",
+                "confidence": "number 0..1",
+                "reason": "one sentence",
+                "guardrail": "optional string; mention mutation caution when relevant",
+            },
+            "safety": "Prefer read-only routing. Mutation-like requests must remain guarded.",
+        },
+        ensure_ascii=False,
+    )
+    response = await get_llm_gateway().generate(
+        prompt,
+        system="You are a strict JSON classifier for ask_project routing. Return only a JSON object.",
+        task_type="intent_classification",
+        mode="economy",
+        max_tokens=200,
+        temperature=0.0,
+        timeout=20.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
+    parsed = _extract_json_object(response)
+    facade = str(parsed.get("facade") or "")
+    if facade not in {"project_context", "project_work", "project_verify", "project_capture"}:
+        return {}
+    try:
+        confidence = float(parsed.get("confidence") or 0.0)
+    except Exception:
+        confidence = 0.0
+    route = {
+        "facade": facade,
+        "reason": str(parsed.get("reason") or "ask_project classified the question into an expert facade.").strip(),
+        "confidence": max(0.0, min(1.0, confidence)),
+        "response_format": response_format,
+        "payload": {
+            "project": project,
+            "intent": question,
+            "detail": detail,
+            "response_format": response_format,
+            "limit": int(args.get("limit") or 20),
+            "allow_mutation": False,
+        },
+        "guardrail": str(parsed.get("guardrail") or "").strip(),
+    }
+    if facade == "project_context":
+        route["payload"].pop("allow_mutation", None)
+    return route
+
+
+async def _ask_project_select_route(args: dict[str, Any]) -> dict[str, Any]:
+    lexical_route = _ask_project_select_route_lexical(args)
+    question = _ask_project_query_text(args)
+    if not question:
+        return lexical_route
+    learned = _learned_route_match(
+        facade="ask_project",
+        text=question,
+        allowed_intent_types={"project_context", "project_work", "project_verify", "project_capture"},
+    )
+    if learned and str(learned.get("tool") or "") in {"project_context", "project_work", "project_verify", "project_capture"}:
+        route = _ask_project_select_route_lexical({**args})
+        route["facade"] = str(learned.get("tool"))
+        route["reason"] = str(learned.get("reason") or route["reason"])
+        route["confidence"] = float(learned.get("confidence") or route["confidence"])
+        route["scorer"] = {
+            "backend_requested": "auto",
+            "backend_used": learned.get("backend_used") or "learned_semantic",
+            "llm_attempted": False,
+            "fallback_reason": "",
+            "matched_pattern_id": learned.get("pattern_id") or "",
+            "matched_pattern_score": learned.get("score"),
+            "matched_by": learned.get("matched_by") or "",
+        }
+        if route["facade"] == "project_context":
+            route["payload"].pop("allow_mutation", None)
+        else:
+            route["payload"]["allow_mutation"] = False
+        return route
+    try:
+        llm_route = await _ask_project_llm_route(args)
+    except Exception:
+        llm_route = {}
+    if not llm_route:
+        route = lexical_route
+        route["scorer"] = {
+            "backend_requested": "auto",
+            "backend_used": "lexical",
+            "llm_attempted": True,
+            "fallback_reason": "LLM returned no valid ask_project facade.",
+        }
+        return route
+    pattern_id = _record_learned_route_pattern(
+        facade="ask_project",
+        text=question,
+        route={"intent_type": llm_route["facade"], "tool": llm_route["facade"], "mutating": False, "confidence": llm_route["confidence"], "reason": llm_route["reason"]},
+        decision={"confidence": llm_route["confidence"], "matched_example": question[:120], "reason": llm_route["reason"]},
+    )
+    llm_route["scorer"] = {
+        "backend_requested": "auto",
+        "backend_used": "llm",
+        "llm_attempted": True,
+        "fallback_reason": "",
+        "learned_pattern_id": pattern_id or "",
+    }
+    return llm_route
+
+
 def _format_ask_project_diagnostic(data: dict[str, Any]) -> str:
     route = data.get("selected_expert_route") if isinstance(data.get("selected_expert_route"), dict) else {}
     lines = [
@@ -2448,7 +2900,7 @@ def _ask_project_evaluation_footer(args: dict[str, Any], result_text: str) -> st
 
 
 async def _build_ask_project_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
-    route = _ask_project_select_route(args)
+    route = await _ask_project_select_route(args)
     tool_name = str(route["facade"])
     payload = dict(route["payload"])
     result_text = await _execute_tool(tool_name, payload, api_base, session_id=session_id)
@@ -2457,13 +2909,14 @@ async def _build_ask_project_payload(api_base: str, args: dict[str, Any], *, ses
         "status": "executed",
         "facade": "ask_project",
         "project": payload.get("project") or payload.get("project_id") or "mnemoforge",
-        "question": str(args.get("question") or args.get("intent") or "").strip(),
+        "question": _ask_project_query_text(args),
         "selected_expert_route": {
             "facade": tool_name,
             "response_format": route["response_format"],
             "confidence": route["confidence"],
             "reason": route["reason"],
             "guardrail": route.get("guardrail") or "",
+            "scorer": route.get("scorer") if isinstance(route.get("scorer"), dict) else None,
         },
         "result_text": result_text,
         "route_telemetry": {
@@ -2475,6 +2928,8 @@ async def _build_ask_project_payload(api_base: str, args: dict[str, Any], *, ses
             "mutating": False,
             "executed": True,
             "reason": route["reason"],
+            "scorer_backend": ((route.get("scorer") or {}).get("backend_used") if isinstance(route.get("scorer"), dict) else "lexical") or "lexical",
+            "matched_pattern_id": ((route.get("scorer") or {}).get("matched_pattern_id") if isinstance(route.get("scorer"), dict) else "") or ((route.get("scorer") or {}).get("learned_pattern_id") if isinstance(route.get("scorer"), dict) else ""),
         },
         "next_safe_action": "Use the answer directly, or ask for diagnostic details if the route looks wrong.",
     }
@@ -4559,6 +5014,10 @@ TOOLS = [
                 "project": {"type": "string", "default": "mnemoforge"},
                 "project_id": {"type": "string"},
                 "question": {"type": "string", "description": "Natural user question such as 'what is task 382e7306?' or 'is this repo usable yet?'"},
+                "query": {
+                    "type": "string",
+                    "description": "Compatibility alias for question used by some MCP clients.",
+                },
                 "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
                 "client_profile": {"type": "string", "enum": ["default", "local", "small_context", "agent"], "default": "default"},
                 "response_format": {"type": "string", "enum": ["auto", "answer", "diagnostic", "json"], "default": "auto"},
@@ -7725,7 +8184,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         return format_list_open_tasks_response(data)
     elif name == "normalize_mcp_intent":
         payload = build_normalize_mcp_intent_payload(args)
-        data = _normalize_mcp_intent(payload["intent"], project_id=payload["project_id"], top_n=payload["top_n"])
+        data = await _normalize_mcp_intent(payload["intent"], project_id=payload["project_id"], top_n=payload["top_n"])
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
@@ -8563,7 +9022,8 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
 
         sections.append(
             "EXPERT HELPER GUIDANCE:\n"
-            "  Start with ask_project for natural human/project questions, then use thematic facades for explicit workflows.\n"
+            "  Start with ask_project for natural human/project questions, project_work for next-step or open-work questions, and get_task_execution_context when you are already inside an active task.\n"
+            "  Stay on the compact surface unless you need deep/debug access.\n"
             "  Prefer expert helpers over low-level tools when they can express the request.\n"
             "  Treat runtime details such as Docker test contours as project-specific hints from project context, not universal rules."
         )
@@ -8934,7 +9394,13 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         return "\n".join(lines)
 
     else:
-        raise ValueError(f"Unknown tool: {name}")
+        recovery = await _recover_unknown_tool_call(name, args)
+        if recovery:
+            recovered_tool = str(recovery.get("tool") or "").strip()
+            recovered_args = recovery.get("args")
+            if recovered_tool and recovered_tool != name and isinstance(recovered_args, dict):
+                return await _execute_tool(recovered_tool, recovered_args, api_base, session_id=session_id)
+        raise ValueError(_unknown_tool_error_message(name, args))
 
 
 # ── JSON-RPC handler ───────────────────────────────────────────────────────────

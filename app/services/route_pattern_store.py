@@ -102,6 +102,7 @@ def _row_to_route(row: sqlite3.Row, *, backend_used: str, score: float, matched_
         "backend_used": backend_used,
         "score": round(score, 3),
         "matched_by": matched_by,
+        "metadata": metadata,
     }
 
 

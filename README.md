@@ -4,6 +4,10 @@
 
 AI agents stop failing when operational continuity survives interruption.
 
+## Quick Demo
+
+![Mnemoforge quick demo](Анимация4.gif)
+
 ## Why Mnemoforge Exists
 
 AI coding agents are powerful until the session ends, the IDE restarts, a
