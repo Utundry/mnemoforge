@@ -170,7 +170,7 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
     "project_knowledge": {
         "title": "Project knowledge & artifact lifecycle",
         "description": "Unified discovery for tasks, improvements, readiness, canonical knowledge, lifecycle checkpoints, reopen/resume flows, and lifecycle changes.",
-        "entrypoints": ["ask_project", "project_work", "project_rules", "project_context", "project_verify", "project_capture", "operational_tray", "record_work_result", "clerk_draft_report", "project_workflow", "continue_task", "get_task_execution_context", "get_project_reconstruction_bundle", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_work_session", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
+        "entrypoints": ["ask_project", "project_work", "project_rules", "project_context", "project_verify", "project_capture", "operational_tray", "record_work_result", "clerk_draft_report", "project_workflow", "continue_task", "get_task_execution_context", "get_project_reconstruction_bundle", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_work_session", "claim_task", "heartbeat_task_claim", "release_task_claim", "list_task_claims", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
         "keywords": [
             "task",
             "tasks",
@@ -219,6 +219,10 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
             "rename_project",
             "get_work_session_state",
             "start_work_session",
+            "claim_task",
+            "heartbeat_task_claim",
+            "release_task_claim",
+            "list_task_claims",
             "park_work_session",
             "resume_work_session",
             "end_work_session",
@@ -5800,6 +5804,10 @@ TOOLS = [
     tool_definition("tool_feedback"),
     tool_definition("get_work_session_state"),
     tool_definition("start_work_session"),
+    tool_definition("claim_task"),
+    tool_definition("heartbeat_task_claim"),
+    tool_definition("release_task_claim"),
+    tool_definition("list_task_claims"),
     tool_definition("park_work_session"),
     tool_definition("resume_work_session"),
     tool_definition("end_work_session"),
@@ -8441,6 +8449,72 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 else "No immediate follow-up recorded."
             ),
         }
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    elif name in {"claim_task", "heartbeat_task_claim", "release_task_claim", "list_task_claims"}:
+        from app.services.task_lease_service import TaskLeaseConflict, get_task_lease_store
+
+        store = get_task_lease_store()
+        owner_agent = str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex"
+        lease_session_id = str(args.get("session_id") or session_id or owner_agent).strip() or owner_agent
+        try:
+            if name == "claim_task":
+                claim = store.claim(
+                    project=str(args.get("project") or "mnemoforge"),
+                    task_id=str(args["task_id"]),
+                    owner_agent=owner_agent,
+                    session_id=lease_session_id,
+                    lease_ttl_seconds=int(args.get("lease_ttl_seconds") or 900),
+                )
+                data = claim.model_dump(mode="json")
+                data["next_safe_action"] = "Start or continue work while the task claim is active."
+            elif name == "heartbeat_task_claim":
+                lease = store.heartbeat(
+                    lease_id=str(args["lease_id"]),
+                    owner_agent=owner_agent,
+                    session_id=lease_session_id,
+                    lease_ttl_seconds=int(args["lease_ttl_seconds"]) if args.get("lease_ttl_seconds") else None,
+                )
+                data = {
+                    "status": "renewed",
+                    "lease": lease.model_dump(mode="json"),
+                    "next_safe_action": "Continue work; the task claim expiration was extended.",
+                }
+            elif name == "release_task_claim":
+                lease = store.release(
+                    lease_id=str(args["lease_id"]),
+                    owner_agent=owner_agent,
+                    session_id=lease_session_id,
+                    reason=str(args.get("reason") or "released"),
+                    status=str(args.get("status") or "released"),
+                )
+                data = {
+                    "status": lease.status,
+                    "lease": lease.model_dump(mode="json"),
+                    "next_safe_action": "The task claim is no longer active.",
+                }
+            else:
+                leases = store.list_leases(
+                    project=str(args.get("project") or "") or None,
+                    task_id=str(args.get("task_id") or "") or None,
+                    owner_agent=str(args.get("owner_agent") or "") or None,
+                    status=str(args.get("status") or "active"),
+                    limit=int(args.get("limit") or 50),
+                )
+                data = {
+                    "status": "listed",
+                    "count": len(leases),
+                    "leases": [lease.model_dump(mode="json") for lease in leases],
+                    "next_safe_action": "Avoid active claims owned by another agent; stale claims are expired before listing.",
+                }
+        except TaskLeaseConflict as exc:
+            data = {
+                "status": "conflict",
+                "error": exc.to_dict(),
+                "claim_allowed": False,
+                "next_safe_action": "Do not start this task; choose another task or wait for the claim to expire.",
+            }
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 

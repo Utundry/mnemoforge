@@ -1586,6 +1586,70 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "claim_task": {
+        "name": "claim_task",
+        "description": (
+            "Claim a project task before starting multi-agent work. Active claims block other agents until released "
+            "or expired by timeout; reentrant claims by the same owner renew the lease."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["project", "task_id"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "task_id": {"type": "string"},
+                "owner_agent": {"type": "string", "default": "codex"},
+                "agent_id": {"type": "string", "description": "Compatibility alias for owner_agent"},
+                "session_id": {"type": "string"},
+                "lease_ttl_seconds": {"type": "integer", "minimum": 5, "maximum": 86400, "default": 900},
+            },
+        },
+    },
+    "heartbeat_task_claim": {
+        "name": "heartbeat_task_claim",
+        "description": "Renew an active task claim lease so it does not expire while the owning session is still alive.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["lease_id"],
+            "properties": {
+                "lease_id": {"type": "string"},
+                "owner_agent": {"type": "string", "default": "codex"},
+                "agent_id": {"type": "string", "description": "Compatibility alias for owner_agent"},
+                "session_id": {"type": "string"},
+                "lease_ttl_seconds": {"type": "integer", "minimum": 5, "maximum": 86400},
+            },
+        },
+    },
+    "release_task_claim": {
+        "name": "release_task_claim",
+        "description": "Release an active task claim after completion, handoff, cancellation, or operator transfer.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["lease_id"],
+            "properties": {
+                "lease_id": {"type": "string"},
+                "owner_agent": {"type": "string", "default": "codex"},
+                "agent_id": {"type": "string", "description": "Compatibility alias for owner_agent"},
+                "session_id": {"type": "string"},
+                "reason": {"type": "string", "default": "released"},
+                "status": {"type": "string", "enum": ["released", "transferred", "expired"], "default": "released"},
+            },
+        },
+    },
+    "list_task_claims": {
+        "name": "list_task_claims",
+        "description": "List task claim leases, expiring stale active leases before returning results.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "task_id": {"type": "string"},
+                "owner_agent": {"type": "string"},
+                "status": {"type": "string", "enum": ["active", "released", "expired", "transferred", "all"], "default": "active"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50},
+            },
+        },
+    },
     "park_work_session": {
         "name": "park_work_session",
         "description": "Park the active work session before starting focused child work.",

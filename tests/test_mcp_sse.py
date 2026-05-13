@@ -373,6 +373,15 @@ class TestMcpToolExecution:
     def test_list_active_tasks_is_not_exposed_in_public_catalog(self):
         assert all(tool["name"] != "list_active_tasks" for tool in mcp_sse.TOOLS)
 
+    def test_task_claim_tools_are_exposed(self):
+        names = {tool["name"] for tool in mcp_sse.TOOLS}
+        assert {"claim_task", "heartbeat_task_claim", "release_task_claim", "list_task_claims"} <= names
+        claim_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "claim_task")
+        claim_props = claim_tool["inputSchema"]["properties"]
+        assert "project" in claim_tool["inputSchema"]["required"]
+        assert "task_id" in claim_tool["inputSchema"]["required"]
+        assert claim_props["lease_ttl_seconds"]["default"] == 900
+
     def test_reconcile_completed_checkpoints_tool_is_exposed_report_only_by_default(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "reconcile_completed_checkpoints")
         props = tool["inputSchema"]["properties"]
@@ -3268,6 +3277,103 @@ class TestMcpToolExecution:
             recorded_data = json.loads(recorded)
             assert recorded_data["work_id"] == "work-1"
             assert recorded_data["excluded_from_learning"] is True
+        finally:
+            store.close()
+
+    async def test_task_claim_mcp_tools_block_second_agent_until_timeout(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        try:
+            claimed = await mcp_sse._execute_tool(
+                "claim_task",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "owner_agent": "codex",
+                    "session_id": "sess-codex",
+                    "lease_ttl_seconds": 30,
+                },
+                "http://test",
+            )
+            claim_data = json.loads(claimed)
+            lease_id = claim_data["lease"]["lease_id"]
+            assert claim_data["status"] == "claimed"
+            assert claim_data["lease"]["status"] == "active"
+
+            conflict = await mcp_sse._execute_tool(
+                "claim_task",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "owner_agent": "claude",
+                    "session_id": "sess-claude",
+                },
+                "http://test",
+            )
+            conflict_data = json.loads(conflict)
+            assert conflict_data["status"] == "conflict"
+            assert conflict_data["claim_allowed"] is False
+            assert conflict_data["error"]["active_lease"]["lease_id"] == lease_id
+
+            released = await mcp_sse._execute_tool(
+                "release_task_claim",
+                {
+                    "lease_id": lease_id,
+                    "owner_agent": "codex",
+                    "session_id": "sess-codex",
+                    "reason": "completed",
+                },
+                "http://test",
+            )
+            assert json.loads(released)["lease"]["status"] == "released"
+        finally:
+            store.close()
+
+    async def test_task_claim_mcp_tools_heartbeat_and_list(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        try:
+            claimed = await mcp_sse._execute_tool(
+                "claim_task",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-codex",
+                    "lease_ttl_seconds": 30,
+                },
+                "http://test",
+            )
+            lease_id = json.loads(claimed)["lease"]["lease_id"]
+
+            heartbeat = await mcp_sse._execute_tool(
+                "heartbeat_task_claim",
+                {
+                    "lease_id": lease_id,
+                    "agent_id": "codex",
+                    "session_id": "sess-codex",
+                    "lease_ttl_seconds": 60,
+                },
+                "http://test",
+            )
+            assert json.loads(heartbeat)["status"] == "renewed"
+
+            listed = await mcp_sse._execute_tool(
+                "list_task_claims",
+                {"project": "alpha", "task_id": "task-1", "status": "active"},
+                "http://test",
+            )
+            listed_data = json.loads(listed)
+            assert listed_data["count"] == 1
+            assert listed_data["leases"][0]["lease_id"] == lease_id
         finally:
             store.close()
 
