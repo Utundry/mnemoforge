@@ -4,6 +4,19 @@
 
 AI agents stop failing when operational continuity survives interruption.
 
+## The moment it clicks
+ 
+User: connect to mcp mnemoforge
+
+Agent:
+- retrieves project state
+- finds active tasks
+- evaluates priorities
+- suggests next action
+
+**One command turns a chat into a working system.**
+
+
 ## Quick Demo
 
 ![Mnemoforge quick demo](Анимация4.gif)
