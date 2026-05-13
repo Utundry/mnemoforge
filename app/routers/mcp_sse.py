@@ -1703,6 +1703,9 @@ _PROJECT_WORK_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
             "list open tasks",
             "find the next task",
             "current priority task",
+            "give another agent an independent task",
+            "find independent parallel work",
+            "delegate a safe task to another agent",
         ),
         "reason": "Priority/open-work intent maps to the unified open-task surface.",
     },
@@ -2113,6 +2116,85 @@ def _annotate_open_tasks_with_claims(data: dict[str, Any], args: dict[str, Any])
     return enriched
 
 
+def _task_assignment_safety(item: dict[str, Any]) -> dict[str, Any]:
+    tags = {str(tag).strip().casefold() for tag in (item.get("tags") or []) if str(tag).strip()}
+    if item.get("claim_status") == "claimed":
+        return {
+            "state": "blocked",
+            "assignable": False,
+            "reason": "task_is_already_claimed",
+            "requires_review": False,
+        }
+    if bool(item.get("task_statement_incomplete")):
+        return {
+            "state": "needs_review",
+            "assignable": False,
+            "reason": "task_statement_incomplete",
+            "requires_review": True,
+        }
+    dependency_fields = ("depends_on", "blocked_by", "sequential_after", "related_task_ids")
+    if any(item.get(field) for field in dependency_fields) or tags & {"dependent", "blocked", "sequential", "needs_dependency_review"}:
+        return {
+            "state": "needs_review",
+            "assignable": False,
+            "reason": "dependency_or_sequence_marker_present",
+            "requires_review": True,
+        }
+    if item.get("parallel_safe") is True or item.get("assignment_safety") == "independent" or tags & {"parallel_safe", "independent", "multi_agent_safe"}:
+        return {
+            "state": "independent",
+            "assignable": True,
+            "reason": "explicit_independent_marker",
+            "requires_review": False,
+        }
+    return {
+        "state": "needs_review",
+        "assignable": False,
+        "reason": "no_explicit_independence_evidence",
+        "requires_review": True,
+    }
+
+
+def _annotate_open_tasks_with_assignment_safety(data: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    assignment_filter = str(args.get("assignment_filter") or "all").strip().lower()
+    if assignment_filter not in {"all", "independent", "needs_review"}:
+        assignment_filter = "all"
+    items = data.get("items") or []
+    if not isinstance(items, list):
+        return data
+
+    visible: list[dict[str, Any]] = []
+    summary = {"independent": 0, "needs_review": 0, "blocked": 0, "returned": 0, "hidden": 0}
+    for raw_item in items:
+        if not isinstance(raw_item, dict):
+            continue
+        item = dict(raw_item)
+        safety = _task_assignment_safety(item)
+        item["assignment_safety"] = safety
+        state = str(safety["state"])
+        if state in summary:
+            summary[state] += 1
+        if assignment_filter == "independent" and state != "independent":
+            summary["hidden"] += 1
+            continue
+        if assignment_filter == "needs_review" and state != "needs_review":
+            summary["hidden"] += 1
+            continue
+        visible.append(item)
+
+    summary["returned"] = len(visible)
+    enriched = dict(data)
+    enriched["items"] = visible
+    enriched["assignment_filter"] = assignment_filter
+    enriched["assignment_summary"] = summary
+    if assignment_filter == "independent":
+        enriched["assignment_policy"] = (
+            "Only tasks with explicit independence evidence are returned for multi-agent assignment; "
+            "unclaimed alone is not enough."
+        )
+    return enriched
+
+
 def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> dict[str, Any]:
     project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
     intent = str(args.get("intent") or "").strip()
@@ -2129,7 +2211,17 @@ def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], tex
         claim_filter = str(args.get("claim_filter") or "").strip().lower()
         if claim_filter not in {"available", "claimed", "all"}:
             claim_filter = "claimed" if _route_tokens(text) & {"claimed", "claim", "busy", "occupied", "leased"} else "available"
-        route["payload"] = {"project": project, "limit": limit, "claim_filter": claim_filter, "include_claims": True}
+        assignment_filter = str(args.get("assignment_filter") or "").strip().lower()
+        if assignment_filter not in {"all", "independent", "needs_review"}:
+            multi_agent_terms = {"multi", "agent", "agents", "parallel", "another", "delegate", "handoff"}
+            assignment_filter = "independent" if _route_tokens(text) & multi_agent_terms else "all"
+        route["payload"] = {
+            "project": project,
+            "limit": limit,
+            "claim_filter": claim_filter,
+            "include_claims": True,
+            "assignment_filter": assignment_filter,
+        }
     elif route["intent_type"] == "continue_task":
         route["payload"] = {
             "project": project,
@@ -4169,6 +4261,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         query = build_list_open_tasks_query(route["payload"])
         result = await _get(api_base, f"/artifacts?{query}")
         result = _annotate_open_tasks_with_claims(result, route["payload"])
+        result = _annotate_open_tasks_with_assignment_safety(result, route["payload"])
         executed = True
     elif route["tool"] == "continue_task":
         result = await _build_continue_task_payload(api_base, route["payload"])
@@ -8319,6 +8412,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         query = build_list_open_tasks_query(args)
         data = await _get(api_base, f"/artifacts?{query}")
         data = _annotate_open_tasks_with_claims(data, args)
+        data = _annotate_open_tasks_with_assignment_safety(data, args)
         return format_list_open_tasks_response(data)
     elif name == "normalize_mcp_intent":
         payload = build_normalize_mcp_intent_payload(args)

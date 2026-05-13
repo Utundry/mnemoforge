@@ -987,6 +987,15 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "default": True,
                     "description": "Annotate returned tasks with task_claim, claim_status, and claim_available.",
                 },
+                "assignment_filter": {
+                    "type": "string",
+                    "enum": ["all", "independent", "needs_review"],
+                    "default": "all",
+                    "description": (
+                        "Filter by multi-agent assignment safety. independent returns only tasks explicitly marked "
+                        "parallel-safe/independent; needs_review returns available tasks that need dependency review."
+                    ),
+                },
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
             },
         },
@@ -2233,6 +2242,9 @@ def format_list_open_tasks_response(data: dict[str, Any]) -> str:
             lines.append(f"   {description[:240]}")
     if data.get("hidden_claimed_count"):
         lines.append(f"Hidden claimed tasks: {data['hidden_claimed_count']}")
+    assignment_policy = str(data.get("assignment_policy") or "").strip()
+    if assignment_policy:
+        lines.append(f"Assignment policy: {assignment_policy}")
     return "\n".join(lines)
 
 

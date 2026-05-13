@@ -911,6 +911,40 @@ class TestMcpToolExecution:
         finally:
             store.close()
 
+    async def test_project_work_multi_agent_assignment_requires_independent_tasks(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            return {
+                "items": [
+                    {
+                        "artifact_key": "task:alpha:task-1",
+                        "task_id": "task-1",
+                        "title": "Needs dependency review",
+                        "status": "open",
+                    },
+                    {
+                        "artifact_key": "task:alpha:task-2",
+                        "task_id": "task-2",
+                        "title": "Independent docs task",
+                        "status": "open",
+                        "tags": ["parallel_safe"],
+                    },
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {"project": "alpha", "intent": "give another agent an independent parallel task", "limit": 5},
+            "http://test",
+        )
+        data = json.loads(result)
+
+        assert data["result"]["assignment_filter"] == "independent"
+        assert data["result"]["assignment_policy"].startswith("Only tasks with explicit independence evidence")
+        assert [item["title"] for item in data["result"]["items"]] == ["Independent docs task"]
+        assert data["result"]["assignment_summary"]["needs_review"] == 1
+        assert data["result"]["assignment_summary"]["hidden"] == 1
+
     async def test_project_work_next_priority_answer_is_final_answer_shaped(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
             return {
@@ -2809,6 +2843,34 @@ class TestMcpToolExecution:
             assert f"lease_id={claim.lease.lease_id}" in result
         finally:
             store.close()
+
+    async def test_list_open_tasks_independent_filter_hides_unknown_dependency_tasks(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            return {
+                "items": [
+                    {"artifact_key": "task:alpha:task-1", "task_id": "task-1", "title": "Unknown task", "status": "open"},
+                    {
+                        "artifact_key": "task:alpha:task-2",
+                        "task_id": "task-2",
+                        "title": "Explicitly independent task",
+                        "status": "open",
+                        "assignment_safety": "independent",
+                    },
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool(
+            "list_open_tasks",
+            {"project": "alpha", "assignment_filter": "independent"},
+            "http://test",
+        )
+
+        assert "Explicitly independent task" in result
+        assert "Unknown task" not in result
+        assert "Assignment policy: Only tasks with explicit independence evidence" in result
 
     async def test_unknown_list_active_tasks_recovers_via_learned_project_work_pattern(self, monkeypatch):
         seen: dict[str, object] = {}
