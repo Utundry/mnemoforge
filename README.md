@@ -8,6 +8,29 @@ AI agents stop failing when operational continuity survives interruption.
 
 ![Mnemoforge quick demo](Анимация4.gif)
 
+## Example: Full Project State via MCP
+
+Mnemoforge can return a full operational snapshot of the project, not just a
+single answer:
+
+- active operational rules (instincts)
+- prioritized tasks and recommended next task
+- open improvements and decision history
+- incomplete task drafts (assumptions, constraints, definition of done)
+- generated documentation projection
+- system health and degradation signals
+- recommended MCP calls for next actions
+
+This is a multi-layer project state, not a chat response. It gives a clear
+bridge between system state and human action.
+
+When sources are incomplete or degraded, Mnemoforge surfaces that explicitly
+instead of pretending everything is healthy. This keeps execution honest and
+reduces hidden risk.
+
+Your project is no longer just a repository. It becomes a living system with
+memory, state, decisions, and direction.
+
 ## Why Mnemoforge Exists
 
 AI coding agents are powerful until the session ends, the IDE restarts, a
