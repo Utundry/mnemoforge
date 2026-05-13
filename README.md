@@ -191,6 +191,87 @@ This mode is available on the thematic facades (`project_work`,
 routes, telemetry, warnings, useful IDs, and the next safe action without
 having to parse deep JSON.
 
+## Example: Small Local Model Retrieving Project State
+
+This example shows the same idea from a different angle: a very small local
+model can still work on real project state when Mnemoforge provides the routing,
+context, and operational guardrails.
+
+```text
+User:
+list active tasks from mnemoforge
+```
+
+The local model:
+
+```text
+- inspects the available tools;
+- reasons about which tool to use;
+- selects a project workflow or project-state tool;
+- retrieves real active tasks from MCP;
+- returns a structured result.
+```
+
+The important part is not that the model is perfect. The important part is that
+it can still produce a useful engineering outcome when the system supplies
+structured continuity.
+
+## Why This Matters
+
+This is one of the strongest signals for the project.
+
+It shows not just a model response, but a very small model operating inside a
+structured engineering system.
+
+Small models often fail on their own:
+
+- they lose context;
+- they choose the wrong tools;
+- they hallucinate;
+- they get stuck.
+
+Mnemoforge changes that by providing:
+
+- structured continuity;
+- routing;
+- operational context;
+- guardrails for tool use.
+
+The result is simple: even weak models can stay useful.
+
+## Small Model Tool Reasoning
+
+A 2B-class local model can still reason about tools when the system is designed
+well.
+
+In this example, the model:
+
+- inspects the available tools;
+- filters out irrelevant options;
+- builds a plan;
+- selects an appropriate tool;
+- retrieves real project state from MCP.
+
+This is not perfect reasoning.
+It is bounded reasoning that still produces useful outcomes.
+
+## System-Level Takeaway
+
+The point is not to make weak models smarter.
+
+The point is to make them operationally useful.
+
+Mnemoforge helps small local models work on real engineering tasks by giving
+them:
+
+- project context;
+- tool routing;
+- task continuity;
+- safe next actions.
+
+That is the core differentiator: the system strengthens the model instead of
+depending on the model being strong.
+
 ## Example: Natural Interaction With A Local Model
 
 The next step is removing the need for users to know the internal MCP surface.
@@ -227,6 +308,77 @@ intent from the question and returned the correct task.
 Mnemoforge lets small local models interact naturally with complex project
 state, even when clients pass imperfect arguments and users do not know the
 internal tool API.
+
+## Example: README Summary Version
+
+```text
+Small models fail alone.
+With Mnemoforge, they become operationally useful.
+```
+
+## Example: Starting With A New Project
+
+This is the first-contact experience on an empty project.
+
+The system does not invent a task, assume intent, or force a workflow. Instead,
+it presents a structured entry point:
+
+```text
+User:
+connect to MCP mnemoforge
+
+Agent:
+Mnemoforge MCP server is connected and available.
+
+Available capabilities:
+- ask_project
+- project_work
+- project_context
+- project_verify
+- project_capture
+- operational_tray
+
+Utilities:
+- list_tool_families / tool_family_tools
+- tool_recommend
+- memory_search / memory_store
+
+Agent asks:
+What would you like to do with Mnemoforge?
+
+Options:
+1. Get project context
+2. Create or continue a task
+3. Save a checkpoint or notes
+4. Search memory
+5. Manage project rules
+6. Something else
+```
+
+This is the important part: the system does not guess the user's intent. It
+captures it.
+
+That makes the onboarding layer feel like a guided entry point instead of an
+empty prompt.
+
+## Why This Cold Start Matters
+
+Cold start is one of the hardest parts of AI engineering workflows:
+
+- the project is empty;
+- there is no history;
+- there is no task context;
+- the model does not know where to begin.
+
+Mnemoforge turns that into a structured starting point.
+
+Instead of asking the user to understand the internal MCP surface, it offers
+clear categories and a direct question about intent. That reduces cognitive
+load and gives the agent a safe way to begin.
+
+The result is simple:
+
+`No context? No problem. Mnemoforge gives agents a structured way to begin.`
 
 ## Example: Working With Real Project State
 
@@ -522,5 +674,4 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Project Name
 
-`Mnemoforge` is the public release name. The internal project id remains
-`mnemoforge` in task history, storage metadata, and compatibility paths.
+`Mnemoforge` is the public release name.
