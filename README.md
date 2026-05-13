@@ -8,6 +8,13 @@ AI agents stop failing when operational continuity survives interruption.
 
 ![Mnemoforge quick demo](Анимация4.gif)
 
+## Proof: AI-Built With MnemoForge
+
+MnemoForge was built end-to-end by AI agents using MnemoForge itself.
+
+The human role was idea guidance and direction. Implementation, coordination,
+and operational continuity were handled by the agents through the same system.
+
 ## Example: Full Project State via MCP
 
 Mnemoforge can return a full operational snapshot of the project, not just a
