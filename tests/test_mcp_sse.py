@@ -963,6 +963,10 @@ class TestMcpToolExecution:
         assert data["submit_payload"]["skip_auto_task_match"] is True
         assert data["submit_payload"]["task_id"] == ""
         assert data["action_status"] == "needs_confirmation"
+        assert data["weak_model_guardrail"]["mutation_executed"] is False
+        assert data["weak_model_guardrail"]["confirmation_required"] is True
+        assert data["weak_model_guardrail"]["do_not_claim_created"] is True
+        assert "No task" in data["weak_model_guardrail"]["plain_instruction"]
 
     async def test_project_work_routes_russian_new_task_creation_without_continue_fallback(self):
         result = await mcp_sse._execute_tool(
@@ -980,6 +984,40 @@ class TestMcpToolExecution:
         assert data["selected_route"]["tool"] == "record_work_result"
         assert data["submit_payload"]["create_issue_if_unmatched"] is True
         assert data["submit_payload"]["skip_auto_task_match"] is True
+
+    async def test_project_work_guarded_create_task_answer_is_hard_to_misread(self):
+        text = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "intent": "create task for mcp functional overview",
+                "response_format": "answer",
+            },
+            "http://test",
+        )
+
+        assert text.startswith("Mnemoforge answer\n")
+        assert "Answer: No mutation was executed." in text
+        assert "executed=false" in text
+        assert "mutation_executed=false" in text
+        assert "confirmation_required=true" in text
+        assert "do_not_claim_created=true" in text
+
+    async def test_project_work_guarded_create_task_diagnostic_has_execution_state(self):
+        text = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "intent": "create task for mcp functional overview",
+                "response_format": "diagnostic",
+            },
+            "http://test",
+        )
+
+        assert text.startswith("Mnemoforge route diagnostic\n")
+        assert "executed=false" in text
+        assert "guardrail_triggered=true" in text
+        assert "confirmation_required=true" in text
 
     async def test_project_work_checkpoint_about_create_task_route_is_not_new_task_creation(self):
         result = await mcp_sse._execute_tool(

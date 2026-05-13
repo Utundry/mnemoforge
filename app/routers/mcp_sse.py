@@ -2569,6 +2569,8 @@ def _format_route_diagnostic(data: dict[str, Any]) -> str:
     telemetry = data.get("route_telemetry") if isinstance(data.get("route_telemetry"), dict) else {}
     result = data.get("result")
     preferred_task_id = _extract_task_id_like_from_text(str(data.get("intent") or ""))
+    executed = bool(data.get("executed"))
+    guardrail_triggered = bool(selected.get("mutating")) and not executed
     lines = [
         "Mnemoforge route diagnostic",
         f"facade={_diagnostic_value(data.get('facade'))}",
@@ -2576,6 +2578,9 @@ def _format_route_diagnostic(data: dict[str, Any]) -> str:
         f"intent={_diagnostic_value(data.get('intent'))}",
         f"status={_diagnostic_value(data.get('status'))}",
         f"action_status={_diagnostic_value(data.get('action_status'))}",
+        f"executed={_diagnostic_value(executed)}",
+        f"guardrail_triggered={_diagnostic_value(guardrail_triggered)}",
+        f"confirmation_required={_diagnostic_value(guardrail_triggered)}",
         f"route.tool={_diagnostic_value(selected.get('tool'))}",
         f"route.intent_type={_diagnostic_value(selected.get('intent_type'))}",
         f"route.mutating={_diagnostic_value(selected.get('mutating'))}",
@@ -2611,6 +2616,10 @@ def _format_route_answer(data: dict[str, Any]) -> str:
 
     if selected.get("mutating") and not data.get("executed"):
         lines.append("Answer: No mutation was executed. Review the guarded route before allowing changes.")
+        lines.append("executed=false")
+        lines.append("mutation_executed=false")
+        lines.append("confirmation_required=true")
+        lines.append("do_not_claim_created=true")
     elif intent_type == "task_lookup":
         task_id = first.get("task_id") or _first_route_diagnostic_task_id(result, preferred_task_id=preferred_task_id)
         if task_id:
@@ -3793,6 +3802,23 @@ def _project_work_action_card(
     }
 
 
+def _weak_model_mutation_guardrail(route: dict[str, Any], executed: bool, action_card: dict[str, Any]) -> dict[str, Any] | None:
+    if executed or not route.get("mutating"):
+        return None
+    return {
+        "mutation_executed": False,
+        "confirmation_required": True,
+        "state_change": "not_executed",
+        "do_not_claim_created": True,
+        "plain_instruction": (
+            "No task, checkpoint, rule, or artifact was created or changed. "
+            "Say that only a guarded route plan was returned. Execute only after "
+            "reviewing submit_payload and calling the recommended_next_call with allow_mutation=true."
+        ),
+        "recommended_next_call": action_card.get("recommended_next_call"),
+    }
+
+
 def _extract_json_object(text: str) -> dict[str, Any]:
     raw = str(text or "").strip()
     if not raw:
@@ -4086,6 +4112,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         warnings=warnings,
         args=args,
     )
+    weak_model_guardrail = _weak_model_mutation_guardrail(route, executed, action_card)
     route_telemetry = _build_route_telemetry(
         facade="project_work",
         route=route,
@@ -4121,6 +4148,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         "compact_result": action_card["compact_result"],
         "warnings": warnings,
         "next_safe_action": next_safe_action,
+        "weak_model_guardrail": weak_model_guardrail,
     }
 
 
