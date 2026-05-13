@@ -9,6 +9,7 @@ COPY app/ app/
 COPY static/ static/
 COPY mcp/ mcp/
 COPY cli/ cli/
+COPY scripts/ scripts/
 COPY docs/ docs/
 COPY demo/ demo/
 COPY README.md SETUP.md CLIENT_SETUP.md STATUS.md .env.public.example ./
