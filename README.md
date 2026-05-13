@@ -380,6 +380,54 @@ The result is simple:
 
 `No context? No problem. Mnemoforge gives agents a structured way to begin.`
 
+## Example: Ultra-Small Model On A Clean Build
+
+This was tested on a clean Mnemoforge build with `liquid/lfm2.5-1.2b` through
+LM Studio.
+
+The first user command was intentionally minimal:
+
+```text
+connect to mcp mnemoforge
+```
+
+The 1.2B model was not perfect. It first tried to call `ask_project` without the
+required `question` parameter, then recovered by sending a concrete project
+question through the facade. Later, when asked to create a task, it routed the
+request through `project_work`.
+
+Mnemoforge returned a guarded route plan instead of silently mutating state:
+
+```text
+status=planned
+action_status=needs_confirmation
+selected_route.tool=record_work_result
+selected_route.intent_type=create_task
+guardrail_triggered=true
+executed=false
+next_safe_action=Review the selected route and execute the submit_payload if it
+matches the operator intent.
+```
+
+That is the important part. Even when the model was weak, the system kept the
+mutation behind an explicit confirmation gate.
+
+The same session also showed the current boundary: after the guarded response,
+the model claimed that the task had been created even though `executed=false`.
+That is useful evidence, not just a failure. It shows why weak-model workflows
+need compact diagnostics, explicit confirmation language, and stricter
+memory/context checks before implementation or mutation.
+
+The clean-build run demonstrated three things at once:
+
+- a 1.2B model can reach the MCP facade and retrieve real project context;
+- Mnemoforge can expose laws, instincts, fallback state, and recommended calls;
+- guardrails can prevent accidental mutation even when the model's explanation
+  is unreliable.
+
+Small models do not become magically smart. They become bounded enough to be
+useful.
+
 ## Example: Working With Real Project State
 
 Mnemoforge is not just a place to store notes. It represents project work as
