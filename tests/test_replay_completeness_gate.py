@@ -44,9 +44,13 @@ async def _wire_mcp_to_test_client(client, monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_replay_completeness_v1_release_gate_reconstructs_fixture_project_from_mcp_state(client, monkeypatch):
     from app.routers import models as models_router
+    from pathlib import Path
+    from app.services import task_lease_service as lease_mod
 
     await _wire_mcp_to_test_client(client, monkeypatch)
     monkeypatch.setattr(models_router, "get_model_registry", lambda: _FakeRegistry())
+    lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", lease_store)
 
     improvement = await client.post(
         "/api/v1/improvements",
@@ -88,7 +92,7 @@ async def test_replay_completeness_v1_release_gate_reconstructs_fixture_project_
         json={
             "project": "gate-project",
             "change_type": "implementation",
-            "content": "Implemented replay_bundle assembly for continue_task.",
+            "content": "Implemented replay_bundle assembly for pull_task_context.",
             "why": "Agents need compact durable state for mini-project continuation.",
             "agent_id": "codex",
             "source": "release_gate_fixture",
@@ -97,11 +101,24 @@ async def test_replay_completeness_v1_release_gate_reconstructs_fixture_project_
     )
     assert implementation.status_code == 201, implementation.text
 
+    claimed = await mcp_sse._execute_tool(
+        "claim_task",
+        {
+            "project": "gate-project",
+            "task_id": task_id,
+            "owner_agent": "codex",
+            "session_id": "sess-gate",
+        },
+        "http://test",
+    )
+    assert json.loads(claimed)["status"] in {"claimed", "renewed"}
+
     checkpoint = await mcp_sse._execute_tool(
         "record_task_checkpoint",
         {
             "project": "gate-project",
             "task_id": task_id,
+            "session_id": "sess-gate",
             "stage": "handoff",
             "status": "active",
             "summary": "Fixture project reached replay gate checkpoint.",
@@ -116,13 +133,25 @@ async def test_replay_completeness_v1_release_gate_reconstructs_fixture_project_
         "http://test",
     )
     assert "handoff_packet_created=True" in checkpoint
+    released = await mcp_sse._execute_tool(
+        "release_task_claim",
+        {
+            "lease_id": json.loads(claimed)["lease"]["lease_id"],
+            "owner_agent": "codex",
+            "session_id": "sess-gate",
+            "reason": "checkpoint_recorded",
+        },
+        "http://test",
+    )
+    assert json.loads(released)["status"] == "released"
 
     replay = await mcp_sse._execute_tool(
-        "continue_task",
+        "pull_task_context",
         {
             "project": "gate-project",
             "task_id": task_id,
             "agent_id": "codex",
+            "session_id": "sess-gate",
             "include_handoffs": True,
             "detail": "full",
         },
@@ -168,7 +197,7 @@ async def test_replay_completeness_v1_release_gate_reconstructs_fixture_project_
     assert data["execution_readiness"]["required_evidence"] == EXECUTION_READINESS_REQUIRED_EVIDENCE
     assert data["execution_readiness"]["missing_evidence"] == []
     assert data["execution_readiness"]["can_choose_next_action_without_user"] is True
-    assert data["execution_readiness"]["recommended_next_tool"] == "continue_task"
+    assert data["execution_readiness"]["recommended_next_tool"] == "pull_task_context"
     assert data["execution_readiness"]["recommended_next_action"] == data["next_safe_action"]
     assert data["replay_drill"]["status"] == "ready"
     assert data["replay_drill"]["first_tool"] == "enrich_task_with_context"
@@ -187,14 +216,15 @@ async def test_replay_completeness_v1_release_gate_reconstructs_fixture_project_
     )
     assert drill_context.strip()
     assert "Recommended MCP calls:" in drill_context
-    assert "get_project_readiness" in drill_context or "continue_task" in drill_context
+    assert "get_project_readiness" in drill_context or "pull_task_context" in drill_context
 
     compact_replay = await mcp_sse._execute_tool(
-        "continue_task",
+        "pull_task_context",
         {
             "project": "gate-project",
             "task_id": task_id,
             "agent_id": "codex",
+            "session_id": "sess-gate",
             "include_handoffs": True,
         },
         "http://test",
@@ -212,6 +242,7 @@ async def test_replay_completeness_v1_release_gate_reconstructs_fixture_project_
     assert compact["token_budget"]["profile"] == "normal"
     assert compact["token_budget"]["context_window"] == 32000
     assert compact["token_budget"]["estimated_tokens"] <= compact["token_budget"]["soft_limit_tokens"]
+    lease_store.close()
 
 
 def test_replay_completeness_v1_release_gate_fails_loudly_when_required_fields_are_missing():
@@ -315,7 +346,7 @@ def test_replay_drill_selects_checkpoint_when_replay_is_incomplete():
     assert "latest_checkpoint.stage" in decision["blocking_missing"]
 
 
-def test_replay_drill_selects_enrichment_tool_from_ready_continue_task_output():
+def test_replay_drill_selects_enrichment_tool_from_ready_pull_task_context_output():
     decision = build_replay_drill_decision(
         {
             "project": "alpha",

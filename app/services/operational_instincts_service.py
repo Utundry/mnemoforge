@@ -100,7 +100,7 @@ _DEFAULT_INSTINCTS: dict[str, dict[str, Any]] = {
         "action": (
             "For any MnemoForge-backed project task, query MnemoForge before repository files, shell search, or ad-hoc "
             "memory reconstruction. Start with enrich_task_with_context using an explicit project_id. For priority, "
-            "continuation, lifecycle, or open-work questions, call list_open_tasks, list_artifacts, or continue_task "
+            "continuation, lifecycle, or open-work questions, call list_open_tasks, list_artifacts, or pull_task_context "
             "before inspecting files. For new or external projects, call get_project_readiness and bootstrap checklist "
             "surfaces before assuming project knowledge exists. Treat MnemoForge output as triage guidance: check degraded "
             "state, missing sources, data hygiene warnings, and whether results come from governed layers rather than raw "

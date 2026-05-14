@@ -419,6 +419,37 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "prior_stage_recorded": {"type": "boolean"},
                 "dry_run": {"type": "boolean", "default": False},
                 "include_rules": {"type": "boolean", "default": True},
+                "detail": {
+                    "type": "string",
+                    "enum": ["compact", "full"],
+                    "default": "compact",
+                    "description": "Rule packet detail. compact returns top relevant full rules + available rule index; full can include expanded available rule details.",
+                },
+                "relevance_threshold": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "default": 0.25,
+                    "description": "Minimum semantic relevance score for rules to appear in the available list.",
+                },
+                "top_rules_limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 3,
+                    "description": "Number of highest-relevance rules to include in full form.",
+                },
+                "available_rules_limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30,
+                    "default": 12,
+                    "description": "Maximum number of additional available rules to list after top rules.",
+                },
+                "rule_id": {
+                    "type": "string",
+                    "description": "Optional rule id/title to pull full details for one available rule during inspect mode.",
+                },
             },
         },
     },
@@ -1609,6 +1640,61 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "start_task_session": {
+        "name": "start_task_session",
+        "description": (
+            "Atomically start task execution for one agent session: claim task lease, start work session, "
+            "and record an in_progress checkpoint."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["project", "task_id", "session_id"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "task_id": {"type": "string"},
+                "agent_id": {"type": "string", "default": "codex"},
+                "owner_agent": {"type": "string", "description": "Compatibility alias for agent_id"},
+                "session_id": {"type": "string"},
+                "lease_ttl_seconds": {"type": "integer", "minimum": 5, "maximum": 86400, "default": 900},
+                "role": {"type": "string", "default": "worker"},
+                "summary": {"type": "string", "default": "Task claimed; work session started."},
+                "reason": {"type": "string", "default": "start_task_session"},
+                "source": {"type": "string", "default": "start_task_session"},
+            },
+        },
+    },
+    "finish_task_session": {
+        "name": "finish_task_session",
+        "description": (
+            "Atomically finish task execution for one agent session: record closeout checkpoint, "
+            "end work session, and release task claim."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["project", "task_id", "work_id", "session_id"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "task_id": {"type": "string"},
+                "work_id": {"type": "string"},
+                "agent_id": {"type": "string", "default": "codex"},
+                "owner_agent": {"type": "string", "description": "Compatibility alias for agent_id"},
+                "session_id": {"type": "string"},
+                "status": {
+                    "type": "string",
+                    "enum": ["completed", "blocked", "failed", "interrupted", "cancelled"],
+                    "default": "completed",
+                },
+                "summary": {"type": "string", "default": "Task session finished."},
+                "result": {"type": "string", "default": ""},
+                "verification": {"type": "array", "items": {"type": "string"}, "default": []},
+                "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
+                "next_step": {"type": "string", "default": ""},
+                "reason": {"type": "string", "default": "finish_task_session"},
+                "source": {"type": "string", "default": "finish_task_session"},
+                "release_reason": {"type": "string", "default": "finished"},
+            },
+        },
+    },
     "claim_task": {
         "name": "claim_task",
         "description": (
@@ -1617,7 +1703,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "inputSchema": {
             "type": "object",
-            "required": ["project", "task_id"],
+            "required": ["project", "task_id", "session_id"],
             "properties": {
                 "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string"},
@@ -1633,7 +1719,7 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "description": "Renew an active task claim lease so it does not expire while the owning session is still alive.",
         "inputSchema": {
             "type": "object",
-            "required": ["lease_id"],
+            "required": ["lease_id", "session_id"],
             "properties": {
                 "lease_id": {"type": "string"},
                 "owner_agent": {"type": "string", "default": "codex"},
@@ -1648,13 +1734,27 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         "description": "Release an active task claim after completion, handoff, cancellation, or operator transfer.",
         "inputSchema": {
             "type": "object",
-            "required": ["lease_id"],
+            "required": ["lease_id", "session_id"],
             "properties": {
                 "lease_id": {"type": "string"},
                 "owner_agent": {"type": "string", "default": "codex"},
                 "agent_id": {"type": "string", "description": "Compatibility alias for owner_agent"},
                 "session_id": {"type": "string"},
                 "reason": {"type": "string", "default": "released"},
+                "status": {"type": "string", "enum": ["released", "transferred", "expired"], "default": "released"},
+            },
+        },
+    },
+    "force_release_task_claim": {
+        "name": "force_release_task_claim",
+        "description": "Force-release an active task claim with audit metadata when normal owner/session release is not possible.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["lease_id", "acted_by", "reason"],
+            "properties": {
+                "lease_id": {"type": "string"},
+                "acted_by": {"type": "string"},
+                "reason": {"type": "string"},
                 "status": {"type": "string", "enum": ["released", "transferred", "expired"], "default": "released"},
             },
         },
@@ -1844,13 +1944,13 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
-    "continue_task": {
-        "name": "continue_task",
+    "pull_task_context": {
+        "name": "pull_task_context",
         "description": (
-            "Resume a task from MnemoForge using MCP-accessible state. "
+            "Pull task context from MnemoForge using MCP-accessible state. "
             "Returns a compact layered resume response by default: latest checkpoint, replay/execution status, replay drill decision, available layer index, token-overhead estimate, and the next safe action. "
             "Use detail=full or include_replay_bundle=true to fetch full task history, linked improvement, handoff refs, and context refs. "
-            "Use this when the user says to continue a task or when an old agent session is unavailable."
+            "Use this when the user asks to pull or restore task context, or when an old agent session is unavailable."
         ),
         "inputSchema": {
             "type": "object",
@@ -2541,7 +2641,7 @@ def format_task_checkpoint_response(data: dict[str, Any]) -> str:
     return base
 
 
-def format_continue_task_response(data: dict[str, Any]) -> str:
+def format_pull_task_context_response(data: dict[str, Any]) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 

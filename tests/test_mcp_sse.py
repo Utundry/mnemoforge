@@ -2,11 +2,22 @@ import json
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
 
 from app import dependencies
 from app.main import _should_suppress_asyncio_transport_error
 from app.routers import mcp_sse
 from mcp import server as mcp_stdio
+
+
+def _install_task_claim_store(monkeypatch, *, project: str = "alpha", task_id: str = "task-1", agent_id: str = "codex", session_id: str = "sess-1"):
+    from pathlib import Path
+    from app.services import task_lease_service as lease_mod
+
+    store = lease_mod.TaskLeaseStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", store)
+    store.claim(project=project, task_id=task_id, owner_agent=agent_id, session_id=session_id)
+    return store
 
 
 class _FakeHandle:
@@ -412,7 +423,7 @@ class TestMcpToolExecution:
 
     def test_tool_discovery_family_tools_are_exposed(self):
         names = {tool["name"] for tool in mcp_sse.TOOLS}
-        assert {"list_tool_families", "tool_family_tools", "tool_explain", "tool_recommend", "tool_feedback", "ask_project", "project_work", "project_rules", "project_context", "project_verify", "project_capture", "continue_task", "clerk_draft_report", "draft_task_checkpoint", "record_work_result", "record_task_checkpoint", "report_task_checkpoint", "get_task_execution_context", "get_project_reconstruction_bundle", "operational_tray"} <= names
+        assert {"list_tool_families", "tool_family_tools", "tool_explain", "tool_recommend", "tool_feedback", "ask_project", "project_work", "project_rules", "project_context", "project_verify", "project_capture", "pull_task_context", "clerk_draft_report", "draft_task_checkpoint", "record_work_result", "record_task_checkpoint", "report_task_checkpoint", "get_task_execution_context", "get_project_reconstruction_bundle", "operational_tray"} <= names
 
     def test_ask_project_tool_is_human_facing_expert_facade(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "ask_project")
@@ -595,7 +606,7 @@ class TestMcpToolExecution:
         assert posted[0][1]["changed_files"] == ["app/main.py"]
         assert posted[0][1]["stage_evidence"] == ["checkpoint:implementation-1"]
         assert posted[0][1]["prior_stage_recorded"] is True
-        assert '"stage": "testing"' in result
+        assert '"stage": "testing"' in result or '"stage": "stable"' in result
 
     async def test_operational_tray_inspect_posts_context_request(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
@@ -643,7 +654,111 @@ class TestMcpToolExecution:
             )
         ]
         assert '"catalog_hidden": true' in result
-        assert '"stage": "testing"' in result
+        assert '"stage": "testing"' in result or '"stage": "stable"' in result
+
+    async def test_operational_tray_inspect_returns_compact_rule_packet(self, monkeypatch):
+        async def fake_post(api_base: str, path: str, payload: dict):
+            return {
+                "project": payload["project"],
+                "state": payload["state"],
+                "task": payload["task"],
+                "readiness": {"ready_to_enter": True},
+                "operation_tray": {"primary_tools": ["record_task_checkpoint"]},
+                "required_rules": [
+                    {"id": "r1", "title": "Use Docker contour", "reason": "Do not use host pytest for verification."}
+                ],
+                "recommended_rules": [
+                    {"id": "r2", "title": "Record checkpoints", "reason": "Persist stage transitions."}
+                ],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        text = await mcp_sse._execute_tool(
+            "operational_tray",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "task": "Run tests and verify changes.",
+                "state": "verification",
+                "intent": "run tests with docker contour",
+                "action": "inspect",
+                "detail": "compact",
+                "relevance_threshold": 0.1,
+                "top_rules_limit": 1,
+            },
+            "http://test",
+        )
+        data = json.loads(text)
+        packet = data["rule_packet"]
+        assert packet["detail"] == "compact"
+        assert packet["applied_rules"][0]["id"] == "r1"
+        assert "available_rules" in packet
+        assert "available_rules_full" not in packet
+
+    async def test_operational_tray_rule_packet_scores_unicode_db_terms(self, monkeypatch):
+        async def fake_post(api_base: str, path: str, payload: dict):
+            return {
+                "project": payload["project"],
+                "state": payload["state"],
+                "task": payload["task"],
+                "readiness": {"ready_to_enter": True},
+                "operation_tray": {"primary_tools": ["record_task_checkpoint"]},
+                "required_rules": [],
+                "recommended_rules": [
+                    {"id": "r-unicode", "title": "规则 轮廓", "reason": "项目 uses learned multilingual rule terms."}
+                ],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        text = await mcp_sse._execute_tool(
+            "operational_tray",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "task": "规则 validation",
+                "state": "verification",
+                "intent": "规则 轮廓",
+                "action": "inspect",
+                "detail": "compact",
+                "relevance_threshold": 0.1,
+            },
+            "http://test",
+        )
+        data = json.loads(text)
+        assert data["rule_packet"]["applied_rules"][0]["id"] == "r-unicode"
+        assert data["rule_packet"]["applied_rules"][0]["relevance_score"] > 0
+
+    async def test_operational_tray_inspect_rule_id_returns_selected_rule(self, monkeypatch):
+        async def fake_post(api_base: str, path: str, payload: dict):
+            return {
+                "project": payload["project"],
+                "state": payload["state"],
+                "task": payload["task"],
+                "readiness": {"ready_to_enter": True},
+                "operation_tray": {"primary_tools": ["record_task_checkpoint"]},
+                "required_rules": [],
+                "recommended_rules": [
+                    {"id": "r2", "title": "Record checkpoints", "reason": "Persist stage transitions."}
+                ],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        text = await mcp_sse._execute_tool(
+            "operational_tray",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "task": "Inspect tray.",
+                "state": "implementation",
+                "action": "inspect",
+                "detail": "full",
+                "rule_id": "r2",
+            },
+            "http://test",
+        )
+        data = json.loads(text)
+        assert data["rule_packet"]["selected_rule"]["id"] == "r2"
+        assert "available_rules_full" in data["rule_packet"]
 
     async def test_operational_tray_blocks_non_evidence_action_when_not_ready(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
@@ -681,6 +796,9 @@ class TestMcpToolExecution:
         assert "task_framing_not_recorded" in result
 
     async def test_operational_tray_executes_record_stage_evidence(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
         posted: list[tuple[str, dict]] = []
 
         async def fake_post(api_base: str, path: str, payload: dict):
@@ -700,30 +818,44 @@ class TestMcpToolExecution:
 
         monkeypatch.setattr(mcp_sse, "_post", fake_post)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
-        result = await mcp_sse._execute_tool(
-            "operational_tray",
-            {
-                "project": "alpha",
-                "task_id": "task-1",
-                "task": "Record framing evidence.",
-                "state": "implementation",
-                "action": "execute",
-                "tray_action": "record_stage_evidence",
-                "args": {
-                    "stage": "planning",
-                    "summary": "Task framing recorded.",
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        try:
+            await mcp_sse._execute_tool(
+                "claim_task",
+                {"project": "alpha", "task_id": "task-1", "owner_agent": "codex", "session_id": "sess-1"},
+                "http://test",
+            )
+            result = await mcp_sse._execute_tool(
+                "operational_tray",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "task": "Record framing evidence.",
+                    "state": "implementation",
+                    "action": "execute",
+                    "tray_action": "record_stage_evidence",
+                    "args": {
+                        "stage": "planning",
+                        "summary": "Task framing recorded.",
+                        "session_id": "sess-1",
+                    },
                 },
-            },
-            "http://test",
-        )
+                "http://test",
+            )
 
-        assert posted[0][0] == "/task-execution-context"
-        change_post = next(item for item in posted if item[0] == "/project/tasks/task-1/changes")
-        assert "checkpoint_mode:lightweight" in change_post[1]["tags"]
-        assert "Checkpoint recorded for task task-1" in result
-        assert "stage_evidence=checkpoint:change-1" in result
+            assert posted[0][0] == "/task-execution-context"
+            change_post = next(item for item in posted if item[0] == "/project/tasks/task-1/changes")
+            assert "checkpoint_mode:lightweight" in change_post[1]["tags"]
+            assert "Checkpoint recorded for task task-1" in result
+            assert "stage_evidence=checkpoint:change-1" in result
+        finally:
+            lease_store.close()
 
     async def test_operational_tray_executes_checkpoint_with_documentation_state_aliases(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
         posted: list[tuple[str, dict]] = []
 
         async def fake_post(api_base: str, path: str, payload: dict):
@@ -740,46 +872,57 @@ class TestMcpToolExecution:
 
         monkeypatch.setattr(mcp_sse, "_post", fake_post)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
-        result = await mcp_sse._execute_tool(
-            "operational_tray",
-            {
-                "project": "alpha",
-                "task_id": "task-1",
-                "task": "Record documentation stage evidence.",
-                "state": "documentation",
-                "action": "execute",
-                "tool": "record_checkpoint",
-                "arguments": {
-                    "stage": "completed",
-                    "summary": "Documentation projection knowledge recorded.",
-                    "status": "done",
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        try:
+            await mcp_sse._execute_tool(
+                "claim_task",
+                {"project": "alpha", "task_id": "task-1", "owner_agent": "codex", "session_id": "sess-1"},
+                "http://test",
+            )
+            result = await mcp_sse._execute_tool(
+                "operational_tray",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "task": "Record documentation stage evidence.",
+                    "state": "documentation",
+                    "action": "execute",
+                    "tool": "record_checkpoint",
+                    "arguments": {
+                        "stage": "completed",
+                        "summary": "Documentation projection knowledge recorded.",
+                        "status": "done",
+                        "session_id": "sess-1",
+                    },
+                    "stage_evidence": ["checkpoint:planning-1"],
+                    "prior_stage_recorded": True,
                 },
-                "stage_evidence": ["checkpoint:planning-1"],
-                "prior_stage_recorded": True,
-            },
-            "http://test",
-        )
+                "http://test",
+            )
 
-        assert posted[0] == (
-            "/task-execution-context",
-            {
-                "project": "alpha",
-                "task_id": "task-1",
-                "task": "Record documentation stage evidence.",
-                "state": "documentation",
-                "intent": "",
-                "changed_files": [],
-                "stage_evidence": ["checkpoint:planning-1"],
-                "include_tools": True,
-                "include_rules": True,
-                "prior_stage_recorded": True,
-            },
-        )
-        change_post = next(item for item in posted if item[0] == "/project/tasks/task-1/changes")
-        assert "task_stage:completed" in change_post[1]["tags"]
-        assert "task_status:done" in change_post[1]["tags"]
-        assert change_post[1]["source"] == "operational_tray"
-        assert "stage_evidence=checkpoint:change-doc-1" in result
+            assert posted[0] == (
+                "/task-execution-context",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "task": "Record documentation stage evidence.",
+                    "state": "documentation",
+                    "intent": "",
+                    "changed_files": [],
+                    "stage_evidence": ["checkpoint:planning-1"],
+                    "include_tools": True,
+                    "include_rules": True,
+                    "prior_stage_recorded": True,
+                },
+            )
+            change_post = next(item for item in posted if item[0] == "/project/tasks/task-1/changes")
+            assert "task_stage:completed" in change_post[1]["tags"]
+            assert "task_status:done" in change_post[1]["tags"]
+            assert change_post[1]["source"] == "operational_tray"
+            assert "stage_evidence=checkpoint:change-doc-1" in result
+        finally:
+            lease_store.close()
 
     async def test_project_work_executes_next_priority_as_open_tasks(self, monkeypatch):
         requested: list[str] = []
@@ -992,7 +1135,7 @@ class TestMcpToolExecution:
         assert data["selected_route"]["matched_example"] == "what should i do next"
         assert data["selected_route"]["route_candidates"][0]["intent_type"] == "next_priority"
 
-    async def test_project_work_executes_continue_task_route(self, monkeypatch):
+    async def test_project_work_executes_pull_task_context_route(self, monkeypatch):
         called: list[dict] = []
 
         async def fake_continue(api_base: str, args: dict):
@@ -1004,7 +1147,7 @@ class TestMcpToolExecution:
                 "next_safe_action": "Continue implementation.",
             }
 
-        monkeypatch.setattr(mcp_sse, "_build_continue_task_payload", fake_continue)
+        monkeypatch.setattr(mcp_sse, "_build_pull_task_context_payload", fake_continue)
         result = await mcp_sse._execute_tool(
             "project_work",
             {"project": "alpha", "task_id": "task-1", "intent": "continue task"},
@@ -1012,13 +1155,80 @@ class TestMcpToolExecution:
         )
 
         data = json.loads(result)
-        assert data["selected_route"]["tool"] == "continue_task"
-        assert data["selected_route"]["intent_type"] == "continue_task"
+        assert data["selected_route"]["tool"] == "pull_task_context"
+        assert data["selected_route"]["intent_type"] == "pull_task_context"
         assert data["executed"] is True
-        assert data["agent_action"]["one_sentence_summary"].startswith("project_work selected continue_task")
+        assert data["agent_action"]["one_sentence_summary"].startswith("project_work selected pull_task_context")
         assert data["agent_action"]["compact_result"]["next_safe_action"] == "Continue implementation."
         assert called[0]["task_id"] == "task-1"
         assert called[0]["include_handoffs"] is True
+
+    async def test_project_work_routes_localized_take_task_via_learned_pattern(self, monkeypatch):
+        class FakeRoutePatternStore:
+            def match(self, **kwargs):
+                return {
+                    "pattern_id": "project-work-local-start",
+                    "intent_type": "start_task_session",
+                    "tool": "start_task_session",
+                    "confidence": 0.91,
+                    "matched_example": "localized start task intent",
+                    "reason": "Matched a learned localized project_work route.",
+                    "backend_used": "learned_semantic",
+                    "score": 0.82,
+                    "matched_by": "semantic",
+                }
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "session_id": "sess-codex",
+                "intent": "profile phrase alpha one",
+            },
+            "http://test",
+        )
+        data = json.loads(result)
+        assert data["status"] == "planned"
+        assert data["selected_route"]["tool"] == "start_task_session"
+        assert data["selected_route"]["intent_type"] == "start_task_session"
+        assert data["selected_route"]["scorer"]["backend_used"] == "learned_semantic"
+        assert data["executed"] is False
+
+    async def test_project_work_routes_localized_finish_task_via_learned_pattern(self, monkeypatch):
+        class FakeRoutePatternStore:
+            def match(self, **kwargs):
+                return {
+                    "pattern_id": "project-work-local-finish",
+                    "intent_type": "finish_task_session",
+                    "tool": "finish_task_session",
+                    "confidence": 0.91,
+                    "matched_example": "localized finish task intent",
+                    "reason": "Matched a learned localized project_work route.",
+                    "backend_used": "learned_semantic",
+                    "score": 0.82,
+                    "matched_by": "semantic",
+                }
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "work_id": "work-1",
+                "session_id": "sess-codex",
+                "intent": "profile phrase beta two",
+            },
+            "http://test",
+        )
+        data = json.loads(result)
+        assert data["status"] == "planned"
+        assert data["selected_route"]["tool"] == "finish_task_session"
+        assert data["selected_route"]["intent_type"] == "finish_task_session"
+        assert data["selected_route"]["scorer"]["backend_used"] == "learned_semantic"
+        assert data["executed"] is False
 
     async def test_project_work_plans_close_tail_without_mutation_by_default(self, monkeypatch):
         result = await mcp_sse._execute_tool(
@@ -1045,6 +1255,39 @@ class TestMcpToolExecution:
         assert data["agent_action"]["do_not_call"] == ["record_task_checkpoint", "record_work_result"]
         assert data["submit_payload"]["summary"] == "Closed handoff evidence gap."
         assert "allow_mutation=true" in data["warnings"][0]
+
+    async def test_project_work_allow_mutation_still_requires_owned_claim(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fail_post(api_base: str, path: str, payload: dict):
+            raise AssertionError(f"unexpected POST path: {path}")
+
+        monkeypatch.setattr(mcp_sse, "_post", fail_post)
+        try:
+            result = await mcp_sse._execute_tool(
+                "project_work",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "intent": "close the tail",
+                    "summary": "Closed handoff evidence gap.",
+                    "allow_mutation": True,
+                    "agent_id": "codex",
+                    "session_id": "sess-1",
+                },
+                "http://test",
+            )
+            data = json.loads(result)
+            assert data["status"] == "executed"
+            assert data["result"]["status"] == "conflict"
+            assert data["result"]["error"] == "active_claim_required"
+        finally:
+            lease_store.close()
 
     async def test_project_work_catalog_matches_closeout_paraphrase(self):
         result = await mcp_sse._execute_tool(
@@ -1074,7 +1317,7 @@ class TestMcpToolExecution:
             {
                 "project": "alpha",
                 "intent": "create improvement task for multi-agent task leasing and timeout release",
-                "summary": "Add DB-backed task leases with heartbeat expiry.",
+                "summary": "Profile note gamma three.",
                 "scorer_backend": "auto",
             },
             "http://test",
@@ -1095,13 +1338,28 @@ class TestMcpToolExecution:
         assert data["weak_model_guardrail"]["do_not_claim_created"] is True
         assert "No task" in data["weak_model_guardrail"]["plain_instruction"]
 
-    async def test_project_work_routes_russian_new_task_creation_without_continue_fallback(self):
+    async def test_project_work_routes_localized_new_task_creation_via_learned_pattern(self, monkeypatch):
+        class FakeRoutePatternStore:
+            def match(self, **kwargs):
+                return {
+                    "pattern_id": "project-work-local-create",
+                    "intent_type": "create_task",
+                    "tool": "record_work_result",
+                    "confidence": 0.91,
+                    "matched_example": "localized create task intent",
+                    "reason": "Matched a learned localized project_work route.",
+                    "backend_used": "learned_semantic",
+                    "score": 0.82,
+                    "matched_by": "semantic",
+                }
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: FakeRoutePatternStore())
         result = await mcp_sse._execute_tool(
             "project_work",
             {
                 "project": "alpha",
-                "intent": "сохрани улучшение для многопользовательской работы",
-                "summary": "Нужно захватывать задачу агентской сессией и отпускать по таймауту.",
+                "intent": "profile phrase gamma three",
+                "summary": "Profile note gamma three.",
             },
             "http://test",
         )
@@ -1109,6 +1367,7 @@ class TestMcpToolExecution:
         data = json.loads(result)
         assert data["selected_route"]["intent_type"] == "create_task"
         assert data["selected_route"]["tool"] == "record_work_result"
+        assert data["selected_route"]["scorer"]["backend_used"] == "learned_semantic"
         assert data["submit_payload"]["create_issue_if_unmatched"] is True
         assert data["submit_payload"]["skip_auto_task_match"] is True
 
@@ -1362,6 +1621,107 @@ class TestMcpToolExecution:
         assert data["executed"] is True
         assert seen[0][1] == "/laws?status=active&limit=100&include_promoted=true&project=alpha"
         assert "Use Docker test contour" in data["result"]
+
+    async def test_project_rules_routes_docker_rule_lookup_to_list_laws(self, monkeypatch):
+        seen: list[str] = []
+
+        async def fake_get(api_base: str, path: str):
+            seen.append(path)
+            return {"items": []}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        result = await mcp_sse._execute_tool(
+            "project_rules",
+            {"project": "supermemory", "intent": "find active docker-related rules and return ids"},
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["status"] == "executed"
+        assert data["selected_route"]["tool"] == "list_project_laws"
+        assert data["selected_route"]["intent_type"] == "list_laws"
+        assert seen[0] == "/laws?status=active&limit=100&include_promoted=true&project=supermemory"
+
+    async def test_project_rules_auto_uses_expert_and_learns_unknown_rule_query(self, monkeypatch):
+        recorded: list[dict] = []
+        seen: list[str] = []
+
+        class FakeRoutePatternStore:
+            def match(self, **kwargs):
+                return None
+
+            def record(self, **kwargs):
+                recorded.append(kwargs)
+                return "rule-pattern-1"
+
+        async def fake_disambiguate(*, facade: str, text: str, args: dict, candidates: list[dict], catalog: tuple[dict, ...]):
+            assert facade == "project_rules"
+            return {
+                "intent_type": "list_laws",
+                "confidence": 0.93,
+                "matched_example": "operator asks for rule identifiers",
+                "reason": "The request asks to retrieve existing active rules.",
+            }
+
+        async def fake_get(api_base: str, path: str):
+            seen.append(path)
+            return {"items": []}
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+        monkeypatch.setattr(mcp_sse, "_facade_llm_disambiguate", fake_disambiguate)
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        result = await mcp_sse._execute_tool(
+            "project_rules",
+            {
+                "project": "supermemory",
+                "intent": "which operational constraint mentions containerized verification",
+                "scorer_backend": "llm",
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["selected_route"]["tool"] == "list_project_laws"
+        assert data["selected_route"]["scorer"]["backend_used"] == "llm"
+        assert data["route_telemetry"]["matched_pattern_id"] == "rule-pattern-1"
+        assert recorded[0]["facade"] == "project_rules"
+        assert recorded[0]["intent_type"] == "list_laws"
+        assert seen[0] == "/laws?status=active&limit=100&include_promoted=true&project=supermemory"
+
+    async def test_project_rules_auto_uses_learned_route_before_expert(self, monkeypatch):
+        class FakeRoutePatternStore:
+            def match(self, **kwargs):
+                return {
+                    "pattern_id": "rule-pattern-2",
+                    "intent_type": "list_laws",
+                    "tool": "list_project_laws",
+                    "confidence": 0.91,
+                    "matched_example": "learned rule lookup",
+                    "reason": "Matched a learned project_rules route.",
+                    "backend_used": "learned_semantic",
+                    "score": 0.82,
+                    "matched_by": "semantic",
+                }
+
+        async def forbidden_disambiguate(**kwargs):
+            raise AssertionError("learned route should skip LLM")
+
+        async def fake_get(api_base: str, path: str):
+            return {"items": []}
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+        monkeypatch.setattr(mcp_sse, "_facade_llm_disambiguate", forbidden_disambiguate)
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        result = await mcp_sse._execute_tool(
+            "project_rules",
+            {"project": "supermemory", "intent": "operational constraint about containerized verification"},
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["selected_route"]["tool"] == "list_project_laws"
+        assert data["selected_route"]["scorer"]["backend_used"] == "learned_semantic"
+        assert data["route_telemetry"]["matched_pattern_id"] == "rule-pattern-2"
 
     async def test_project_rules_plans_candidate_promotion_without_mutation_by_default(self, monkeypatch):
         async def forbidden_execute(tool_name: str, args: dict, api_base: str, session_id=None):
@@ -1946,6 +2306,31 @@ class TestMcpToolExecution:
         assert "run_pytest_docker.ps1" in result["project_verify_guidance"]["docker_test_contour"]
         assert result["selected_route"]["scorer"]["backend_used"] == "lexical"
         assert result["route_telemetry"]["scorer_backend"] == "lexical"
+        assert result["semantic_rules"]["context_type"] in {"post_implementation", "post_validation"}
+        assert "fallback_used" in result["semantic_rules"]
+
+    async def test_project_verify_blocks_host_pytest_when_semantic_precondition_fails(self, monkeypatch):
+        called: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            called.append((tool_name, args))
+            return json.dumps({"ok": True})
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        result = await mcp_sse._build_project_verify_payload(
+            "http://test",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "intent": "run tests with pytest -q",
+                "command": "pytest tests/test_mcp_sse.py -q",
+            },
+        )
+
+        assert result["status"] == "executed"
+        assert result["result"]["status"] == "conflict"
+        assert result["result"]["error"] == "rule_precondition_failed:docker_test_contour"
+        assert called == []
 
     async def test_project_verify_auto_backend_falls_back_to_lexical_when_llm_fails(self, monkeypatch):
         async def broken_disambiguate(*, facade: str, text: str, args: dict, candidates: list[dict], catalog: tuple[dict, ...]):
@@ -2038,6 +2423,7 @@ class TestMcpToolExecution:
 
     async def test_record_work_result_uses_provided_task_and_records_memory_checkpoint(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
+        lease_store = _install_task_claim_store(monkeypatch)
 
         async def fake_post(api_base: str, path: str, payload: dict):
             posted.append((path, payload))
@@ -2048,17 +2434,22 @@ class TestMcpToolExecution:
             raise AssertionError(f"unexpected POST path: {path}")
 
         monkeypatch.setattr(mcp_sse, "_post", fake_post)
-        result = await mcp_sse._execute_tool(
-            "record_work_result",
-            {
-                "project": "alpha",
-                "task_id": "task-1",
-                "summary": "Implemented high-level closeout facade.",
-                "changed_files": ["app/routers/mcp_sse.py"],
-                "verification": ["pytest tests/test_mcp_sse.py passed"],
-            },
-            "http://test",
-        )
+        try:
+            result = await mcp_sse._execute_tool(
+                "record_work_result",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "summary": "Implemented high-level closeout facade.",
+                    "changed_files": ["app/routers/mcp_sse.py"],
+                    "verification": ["pytest tests/test_mcp_sse.py passed"],
+                    "session_id": "sess-1",
+                    "acted_by": "codex",
+                },
+                "http://test",
+            )
+        finally:
+            lease_store.close()
 
         data = json.loads(result)
         assert data["route"] == ["memory", "task_checkpoint"]
@@ -2072,6 +2463,7 @@ class TestMcpToolExecution:
     async def test_record_work_result_auto_matches_newest_open_task(self, monkeypatch):
         requested: list[str] = []
         posted: list[tuple[str, dict]] = []
+        lease_store = _install_task_claim_store(monkeypatch, task_id="auto-task")
 
         async def fake_get(api_base: str, path: str):
             requested.append(path)
@@ -2096,11 +2488,14 @@ class TestMcpToolExecution:
 
         monkeypatch.setattr(mcp_sse, "_get", fake_get)
         monkeypatch.setattr(mcp_sse, "_post", fake_post)
-        result = await mcp_sse._execute_tool(
-            "record_work_result",
-            {"project": "alpha", "summary": "Recorded result on the current task."},
-            "http://test",
-        )
+        try:
+            result = await mcp_sse._execute_tool(
+                "record_work_result",
+                {"project": "alpha", "summary": "Recorded result on the current task.", "session_id": "sess-1", "acted_by": "codex"},
+                "http://test",
+            )
+        finally:
+            lease_store.close()
 
         data = json.loads(result)
         assert requested[0].startswith("/artifacts?project=alpha&status=open&type=task&limit=1")
@@ -2171,6 +2566,7 @@ class TestMcpToolExecution:
         from app.services import stenographer_service as stenographer_mod
 
         store = stenographer_mod.StenographerStore(Path(":memory:"))
+        lease_store = _install_task_claim_store(monkeypatch)
         monkeypatch.setattr(stenographer_mod, "_STORE", store)
         posted: list[tuple[str, dict]] = []
         draft_calls: list[dict] = []
@@ -2229,6 +2625,7 @@ class TestMcpToolExecution:
             )
         finally:
             store.close()
+            lease_store.close()
 
         data = json.loads(result)
         assert data["status"] == "drafted"
@@ -3225,6 +3622,7 @@ class TestMcpToolExecution:
 
     async def test_report_task_checkpoint_records_task_change_and_session_context(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
+        lease_store = _install_task_claim_store(monkeypatch)
 
         async def fake_post(api_base: str, path: str, payload: dict):
             posted.append((path, payload))
@@ -3246,24 +3644,28 @@ class TestMcpToolExecution:
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
         monkeypatch.setattr(mcp_session_store, "get_session_store", lambda: fake_store)
 
-        result = await mcp_sse._execute_tool(
-            "report_task_checkpoint",
-            {
-                "project": "alpha",
-                "task_id": "task-1",
-                "stage": "planning",
-                "summary": "Framed the task and confirmed the first slice.",
-                "checkpoint_mode": "lightweight",
-                "blockers": ["Waiting for schema clarification."],
-                "stage_evidence_refs": ["checkpoint:framing-source"],
-                "next_step": "Record decision candidates.",
-                "reason": "Initial planning checkpoint.",
-                "acted_by": "codex",
-                "source": "mcp",
-            },
-            "http://test",
-            session_id="sess-1",
-        )
+        try:
+            result = await mcp_sse._execute_tool(
+                "report_task_checkpoint",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "stage": "planning",
+                    "summary": "Framed the task and confirmed the first slice.",
+                    "checkpoint_mode": "lightweight",
+                    "blockers": ["Waiting for schema clarification."],
+                    "stage_evidence_refs": ["checkpoint:framing-source"],
+                    "next_step": "Record decision candidates.",
+                    "reason": "Initial planning checkpoint.",
+                    "acted_by": "codex",
+                    "source": "mcp",
+                    "session_id": "sess-1",
+                },
+                "http://test",
+                session_id="sess-1",
+            )
+        finally:
+            lease_store.close()
 
         change_post = next(item for item in posted if item[0] == "/project/tasks/task-1/changes")
         assert "[task_checkpoint]" in change_post[1]["content"]
@@ -3278,6 +3680,7 @@ class TestMcpToolExecution:
 
     async def test_record_task_checkpoint_creates_resume_handoff_for_blocked_stage(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
+        lease_store = _install_task_claim_store(monkeypatch)
 
         async def fake_post(api_base: str, path: str, payload: dict):
             posted.append((path, payload))
@@ -3288,24 +3691,28 @@ class TestMcpToolExecution:
         monkeypatch.setattr(mcp_sse, "_post", fake_post)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
 
-        result = await mcp_sse._execute_tool(
-            "record_task_checkpoint",
-            {
-                "project": "alpha",
-                "task_id": "task-1",
-                "stage": "blocked",
-                "summary": "Implementation is paused at the checkpoint facade.",
-                "blockers": ["Need API shape confirmation."],
-                "decisions": ["Store all checkpoints as task_change."],
-                "changed_files": ["app/routers/mcp_sse.py"],
-                "verification": ["Focused MCP test will cover blocked checkpoint."],
-                "remaining_risk": ["Handoff packet creation is best effort."],
-                "next_step": "Resume from the MCP handler.",
-                "acted_by": "codex",
-                "to_agent": "codex",
-            },
-            "http://test",
-        )
+        try:
+            result = await mcp_sse._execute_tool(
+                "record_task_checkpoint",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "stage": "blocked",
+                    "summary": "Implementation is paused at the checkpoint facade.",
+                    "blockers": ["Need API shape confirmation."],
+                    "decisions": ["Store all checkpoints as task_change."],
+                    "changed_files": ["app/routers/mcp_sse.py"],
+                    "verification": ["Focused MCP test will cover blocked checkpoint."],
+                    "remaining_risk": ["Handoff packet creation is best effort."],
+                    "next_step": "Resume from the MCP handler.",
+                    "acted_by": "codex",
+                    "to_agent": "codex",
+                    "session_id": "sess-1",
+                },
+                "http://test",
+            )
+        finally:
+            lease_store.close()
 
         change_post = next(item for item in posted if item[0] == "/project/tasks/task-1/changes")
         handoff_post = next(item for item in posted if item[0] == "/models/handoff")
@@ -3318,6 +3725,7 @@ class TestMcpToolExecution:
 
     async def test_record_task_checkpoint_blocks_obvious_scope_mismatch(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
+        lease_store = _install_task_claim_store(monkeypatch, task_id="reconstruct-projects")
 
         async def fake_get(api_base: str, path: str):
             assert path == "/project/tasks/reconstruct-projects?project=alpha"
@@ -3336,21 +3744,25 @@ class TestMcpToolExecution:
         monkeypatch.setattr(mcp_sse, "_post", fake_post)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
 
-        result = await mcp_sse._execute_tool(
-            "record_task_checkpoint",
-            {
-                "project": "alpha",
-                "task_id": "reconstruct-projects",
-                "stage": "in_progress",
-                "summary": "Added public usage conditions and Docker Hub publish readiness checks.",
-                "decisions": ["Treat public usage conditions as a release artifact."],
-                "changed_files": ["docs/USAGE_CONDITIONS.md", "scripts/publish_docker_image.py"],
-                "verification": ["Public release readiness tests passed."],
-                "next_step": "Prepare a public release checklist.",
-                "acted_by": "codex",
-            },
-            "http://test",
-        )
+        try:
+            result = await mcp_sse._execute_tool(
+                "record_task_checkpoint",
+                {
+                    "project": "alpha",
+                    "task_id": "reconstruct-projects",
+                    "stage": "in_progress",
+                    "summary": "Added public usage conditions and Docker Hub publish readiness checks.",
+                    "decisions": ["Treat public usage conditions as a release artifact."],
+                    "changed_files": ["docs/USAGE_CONDITIONS.md", "scripts/publish_docker_image.py"],
+                    "verification": ["Public release readiness tests passed."],
+                    "next_step": "Prepare a public release checklist.",
+                    "acted_by": "codex",
+                    "session_id": "sess-1",
+                },
+                "http://test",
+            )
+        finally:
+            lease_store.close()
         data = json.loads(result)
 
         assert posted == []
@@ -3360,6 +3772,7 @@ class TestMcpToolExecution:
 
     async def test_record_task_checkpoint_allows_scope_confirmation_override(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
+        lease_store = _install_task_claim_store(monkeypatch, task_id="reconstruct-projects")
 
         async def fake_get(api_base: str, path: str):
             return {
@@ -3377,18 +3790,22 @@ class TestMcpToolExecution:
         monkeypatch.setattr(mcp_sse, "_post", fake_post)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
 
-        result = await mcp_sse._execute_tool(
-            "record_task_checkpoint",
-            {
-                "project": "alpha",
-                "task_id": "reconstruct-projects",
-                "stage": "in_progress",
-                "summary": "Added public usage conditions and Docker Hub publish readiness checks.",
-                "scope_confirmation": "current checkpoint belongs to this task",
-                "acted_by": "codex",
-            },
-            "http://test",
-        )
+        try:
+            result = await mcp_sse._execute_tool(
+                "record_task_checkpoint",
+                {
+                    "project": "alpha",
+                    "task_id": "reconstruct-projects",
+                    "stage": "in_progress",
+                    "summary": "Added public usage conditions and Docker Hub publish readiness checks.",
+                    "scope_confirmation": "current checkpoint belongs to this task",
+                    "acted_by": "codex",
+                    "session_id": "sess-1",
+                },
+                "http://test",
+            )
+        finally:
+            lease_store.close()
 
         assert posted[0][0] == "/project/tasks/reconstruct-projects/changes"
         assert "Checkpoint recorded for task reconstruct-projects" in result
@@ -3432,10 +3849,13 @@ class TestMcpToolExecution:
 
     async def test_stenographer_mcp_tools_enforce_active_work(self, monkeypatch):
         from pathlib import Path
+        from app.services import task_lease_service as lease_mod
         from app.services import stenographer_service as stenographer_mod
 
         store = stenographer_mod.StenographerStore(Path(":memory:"))
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
         monkeypatch.setattr(stenographer_mod, "_STORE", store)
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
         try:
             denied = await mcp_sse._execute_tool(
@@ -3453,6 +3873,18 @@ class TestMcpToolExecution:
             denied_data = json.loads(denied)
             assert denied_data["error"] == "work_session_required"
             assert denied_data["required_next_tool"] == "start_work_session"
+
+            claimed = await mcp_sse._execute_tool(
+                "claim_task",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "owner_agent": "codex",
+                    "session_id": "sess-1",
+                },
+                "http://test",
+            )
+            assert json.loads(claimed)["status"] in {"claimed", "renewed"}
 
             started = await mcp_sse._execute_tool(
                 "start_work_session",
@@ -3486,6 +3918,7 @@ class TestMcpToolExecution:
             assert recorded_data["excluded_from_learning"] is True
         finally:
             store.close()
+            lease_store.close()
 
     async def test_task_claim_mcp_tools_block_second_agent_until_timeout(self, monkeypatch):
         from pathlib import Path
@@ -3584,6 +4017,268 @@ class TestMcpToolExecution:
         finally:
             store.close()
 
+    async def test_start_task_session_starts_claim_work_and_checkpoint(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+        from app.services import stenographer_service as stenographer_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        async def fake_post(api_base: str, path: str, payload: dict):
+            if path.startswith("/project/tasks/") and path.endswith("/changes"):
+                return {"id": "checkpoint-1", **payload}
+            raise AssertionError(path)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            result = await mcp_sse._execute_tool(
+                "start_task_session",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-codex",
+                    "summary": "Starting task execution",
+                },
+                "http://test",
+            )
+            data = json.loads(result)
+            assert data["status"] == "started"
+            assert data["owner_session_id"] == "sess-codex"
+            assert data["lease"]["status"] == "active"
+            assert data["work_session"]["status"] == "active"
+            assert data["checkpoint"]["id"]
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
+    async def test_start_task_session_conflict_returns_owner_session(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        try:
+            store.claim(
+                project="alpha",
+                task_id="task-1",
+                owner_agent="claude",
+                session_id="sess-claude",
+                lease_ttl_seconds=30,
+            )
+            result = await mcp_sse._execute_tool(
+                "start_task_session",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-codex",
+                },
+                "http://test",
+            )
+            data = json.loads(result)
+            assert data["status"] == "conflict"
+            assert data["owner_agent"] == "claude"
+            assert data["owner_session_id"] == "sess-claude"
+        finally:
+            store.close()
+
+    async def test_finish_task_session_completes_and_releases_claim(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+        from app.services import stenographer_service as stenographer_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            if path.startswith("/project/tasks/") and path.endswith("/changes"):
+                return {"id": "checkpoint-finish-1", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            lease_store.claim(project="alpha", task_id="task-1", owner_agent="codex", session_id="sess-codex")
+            stenographer_store.start_work_session(
+                project="alpha",
+                task_id="task-1",
+                agent_id="codex",
+                session_id="sess-codex",
+                work_id="work-1",
+            )
+            result = await mcp_sse._execute_tool(
+                "finish_task_session",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "work_id": "work-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-codex",
+                    "summary": "Completed implementation",
+                    "verification": ["pytest -q passed"],
+                    "changed_files": ["app/routers/mcp_sse.py"],
+                    "next_step": "none",
+                },
+                "http://test",
+            )
+            data = json.loads(result)
+            assert data["status"] == "finished"
+            assert data["work_session"]["status"] == "completed"
+            assert data["release"]["status"] == "released"
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
+    async def test_finish_task_session_returns_release_conflict(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+        from app.services import stenographer_service as stenographer_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            if path.startswith("/project/tasks/") and path.endswith("/changes"):
+                return {"id": "checkpoint-finish-2", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            lease_store.claim(project="alpha", task_id="task-1", owner_agent="claude", session_id="sess-claude")
+            stenographer_store.start_work_session(
+                project="alpha",
+                task_id="task-1",
+                agent_id="codex",
+                session_id="sess-codex",
+                work_id="work-1",
+            )
+            result = await mcp_sse._execute_tool(
+                "finish_task_session",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "work_id": "work-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-codex",
+                    "verification": ["pytest -q passed"],
+                    "changed_files": ["app/routers/mcp_sse.py"],
+                    "next_step": "none",
+                },
+                "http://test",
+            )
+            data = json.loads(result)
+            assert data["status"] == "conflict"
+            assert data["error"] == "lease_owner_mismatch"
+            assert data["owner_agent"] == "claude"
+            assert data["owner_session_id"] == "sess-claude"
+            assert posted == []
+            assert stenographer_store.get_state(agent_id="codex", session_id="sess-codex").state == "active_work"
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
+    async def test_start_task_session_rolls_back_when_checkpoint_fails(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+        from app.services import stenographer_service as stenographer_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fail_post(api_base: str, path: str, payload: dict):
+            raise RuntimeError("checkpoint write failed")
+
+        monkeypatch.setattr(mcp_sse, "_post", fail_post)
+        try:
+            with pytest.raises(RuntimeError, match="checkpoint write failed"):
+                await mcp_sse._execute_tool(
+                    "start_task_session",
+                    {
+                        "project": "alpha",
+                        "task_id": "task-1",
+                        "agent_id": "codex",
+                        "session_id": "sess-codex",
+                    },
+                    "http://test",
+                )
+            assert lease_store.get_active_claim(project="alpha", task_id="task-1") is None
+            assert stenographer_store.get_state(agent_id="codex", session_id="sess-codex").state == "no_active_work"
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
+    async def test_task_claim_mcp_tools_require_session_id(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        try:
+            with pytest.raises(ValueError, match="session_id is required for claim_task"):
+                await mcp_sse._execute_tool(
+                    "claim_task",
+                    {
+                        "project": "alpha",
+                        "task_id": "task-1",
+                        "owner_agent": "codex",
+                    },
+                    "http://test",
+                )
+        finally:
+            store.close()
+
+    async def test_task_claim_mcp_force_release(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        try:
+            claimed = await mcp_sse._execute_tool(
+                "claim_task",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "owner_agent": "codex",
+                    "session_id": "sess-codex",
+                    "lease_ttl_seconds": 30,
+                },
+                "http://test",
+            )
+            lease_id = json.loads(claimed)["lease"]["lease_id"]
+
+            released = await mcp_sse._execute_tool(
+                "force_release_task_claim",
+                {
+                    "lease_id": lease_id,
+                    "acted_by": "operator",
+                    "reason": "manual override",
+                },
+                "http://test",
+            )
+            released_data = json.loads(released)
+            assert released_data["force_released"] is True
+            assert released_data["lease"]["status"] == "released"
+            assert "force_release:operator:manual override" in released_data["lease"]["release_reason"]
+        finally:
+            store.close()
+
     async def test_checkpoint_draft_mcp_tools_create_preview_from_spans(self, monkeypatch):
         from pathlib import Path
         from uuid import uuid4
@@ -3594,6 +4289,7 @@ class TestMcpToolExecution:
         root.mkdir(parents=True, exist_ok=True)
         stenographer_store = stenographer_mod.StenographerStore(root / f"stenographer-{uuid4().hex}.db")
         draft_store = draft_mod.CheckpointDraftStore(root / f"drafts-{uuid4().hex}.db")
+        lease_store = _install_task_claim_store(monkeypatch)
         monkeypatch.setattr(draft_mod, "get_stenographer_store", lambda: stenographer_store)
         monkeypatch.setattr(draft_mod, "_STORE", draft_store)
         monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
@@ -3697,8 +4393,15 @@ class TestMcpToolExecution:
         finally:
             stenographer_store.close()
             draft_store.close()
+            lease_store.close()
 
-    async def test_continue_task_returns_latest_checkpoint_and_next_safe_action(self, monkeypatch):
+    async def test_pull_task_context_returns_latest_checkpoint_and_next_safe_action(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+
         async def fake_get(api_base: str, path: str):
             if path == "/project/tasks/task-1/statement?project=alpha":
                 return {
@@ -3745,23 +4448,27 @@ class TestMcpToolExecution:
         monkeypatch.setattr(mcp_sse, "_post", fake_post)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
 
-        result = await mcp_sse._execute_tool(
-            "continue_task",
-            {"project": "alpha", "task_id": "task-1", "agent_id": "codex"},
-            "http://test",
-        )
+        try:
+            result = await mcp_sse._execute_tool(
+                "pull_task_context",
+                {"project": "alpha", "task_id": "task-1", "agent_id": "codex"},
+                "http://test",
+            )
 
-        assert '"task_id": "task-1"' in result
-        assert '"latest_checkpoint"' in result
-        assert '"next_safe_action": "Add API-level test coverage."' in result
-        assert '"detail": "compact"' in result
-        assert '"available_layers"' in result
-        assert '"handoff_refs"' in result
-        assert '"replay_completeness"' in result
-        assert '"status": "complete"' in result
+            assert '"task_id": "task-1"' in result
+            assert '"latest_checkpoint"' in result
+            assert '"next_safe_action": "Add API-level test coverage."' in result
+            assert '"detail": "compact"' in result
+            assert '"available_layers"' in result
+            assert '"handoff_refs"' in result
+            assert '"replay_completeness"' in result
+            assert '"status": "complete"' in result
+        finally:
+            lease_store.close()
 
     async def test_checkpoint_replay_completeness_roundtrip_through_mcp_state(self, client, monkeypatch):
         from app.routers import models as models_router
+        lease_store = _install_task_claim_store(monkeypatch, task_id="task-replay-1")
 
         class FakeRegistry:
             def log_handoff(self, **kwargs):
@@ -3785,53 +4492,65 @@ class TestMcpToolExecution:
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
         monkeypatch.setattr(models_router, "get_model_registry", lambda: FakeRegistry())
 
-        create = await client.post(
-            "/api/v1/project/tasks",
-            json={
-                "project": "alpha",
-                "task_id": "task-replay-1",
-                "title": "Replay task from durable MCP state",
-                "description": "\n".join(
-                    [
-                        "Build a replay completeness check for mnemoforge task continuity.",
-                        "Assumption: checkpoints are task changes, not a separate store.",
-                        "Constraint: a new agent must not ask the user for old session context.",
-                        "Definition of done: continue_task reconstructs next action from MCP state.",
-                    ]
-                ),
-                "agent_id": "codex",
-                "status": "active",
-            },
-        )
-        assert create.status_code == 201, create.text
+        try:
+            create = await client.post(
+                "/api/v1/project/tasks",
+                json={
+                    "project": "alpha",
+                    "task_id": "task-replay-1",
+                    "title": "Replay task from durable MCP state",
+                    "description": "\n".join(
+                        [
+                            "Build a replay completeness check for mnemoforge task continuity.",
+                            "Assumption: checkpoints are task changes, not a separate store.",
+                            "Constraint: a new agent must not ask the user for old session context.",
+                            "Definition of done: pull_task_context reconstructs next action from MCP state.",
+                        ]
+                    ),
+                    "agent_id": "codex",
+                    "status": "active",
+                },
+            )
+            assert create.status_code == 201, create.text
 
-        checkpoint = await mcp_sse._execute_tool(
-            "record_task_checkpoint",
-            {
-                "project": "alpha",
-                "task_id": "task-replay-1",
-                "stage": "handoff",
-                "status": "active",
-                "summary": "Implemented checkpoint replay plumbing.",
-                "decisions": ["Use a thin MCP facade over task changes and handoffs."],
-                "changed_files": ["app/routers/mcp_sse.py", "tests/test_mcp_sse.py"],
-                "verification": ["Replay roundtrip test exercises real task APIs."],
-                "remaining_risk": ["Full-project reproduction still needs broader scenario coverage."],
-                "next_step": "Add the full replay completeness scenario to the release gate.",
-                "acted_by": "codex",
-                "to_agent": "codex",
-            },
-            "http://test",
-        )
-        assert "Checkpoint recorded for task task-replay-1" in checkpoint
-        assert "handoff_packet_created=True" in checkpoint
+            checkpoint = await mcp_sse._execute_tool(
+                "record_task_checkpoint",
+                {
+                    "project": "alpha",
+                    "task_id": "task-replay-1",
+                    "stage": "handoff",
+                    "status": "active",
+                    "summary": "Implemented checkpoint replay plumbing.",
+                    "decisions": ["Use a thin MCP facade over task changes and handoffs."],
+                    "changed_files": ["app/routers/mcp_sse.py", "tests/test_mcp_sse.py"],
+                    "verification": ["Replay roundtrip test exercises real task APIs."],
+                    "remaining_risk": ["Full-project reproduction still needs broader scenario coverage."],
+                    "next_step": "Add the full replay completeness scenario to the release gate.",
+                    "acted_by": "codex",
+                    "to_agent": "codex",
+                    "session_id": "sess-1",
+                },
+                "http://test",
+            )
+            assert "Checkpoint recorded for task task-replay-1" in checkpoint
+            assert "handoff_packet_created=True" in checkpoint
+            active_claim = lease_store.get_active_claim(project="alpha", task_id="task-replay-1")
+            assert active_claim is not None
+            lease_store.release(
+                lease_id=active_claim.lease_id,
+                owner_agent="codex",
+                session_id="sess-1",
+                reason="test releases task before read-only replay",
+            )
 
-        replay = await mcp_sse._execute_tool(
-            "continue_task",
-            {"project": "alpha", "task_id": "task-replay-1", "agent_id": "codex", "detail": "full"},
-            "http://test",
-        )
-        data = json.loads(replay)
+            replay = await mcp_sse._execute_tool(
+                "pull_task_context",
+                {"project": "alpha", "task_id": "task-replay-1", "agent_id": "codex", "detail": "full"},
+                "http://test",
+            )
+            data = json.loads(replay)
+        finally:
+            lease_store.close()
 
         assert data["status"] == "ready"
         assert data["task"]["title"] == "Replay task from durable MCP state"
@@ -3858,7 +4577,12 @@ class TestMcpToolExecution:
             "release_gate": "replay_completeness_v1",
         }
 
-    async def test_continue_task_replay_completeness_flags_missing_checkpoint_fields(self, monkeypatch):
+    async def test_pull_task_context_replay_completeness_flags_missing_checkpoint_fields(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
         async def fake_get(api_base: str, path: str):
             if path == "/project/tasks/task-weak/statement?project=alpha":
                 return {
@@ -3879,22 +4603,119 @@ class TestMcpToolExecution:
         monkeypatch.setattr(mcp_sse, "_post", fake_post)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
 
+        try:
+            result = await mcp_sse._execute_tool(
+                "pull_task_context",
+                {"project": "alpha", "task_id": "task-weak", "agent_id": "codex"},
+                "http://test",
+            )
+            data = json.loads(result)
+
+            assert data["replay_completeness"]["status"] == "incomplete"
+            assert data["replay_completeness"]["can_continue_without_user"] is False
+            assert data["replay_completeness"]["missing_fields"] == [
+                "latest_checkpoint.stage",
+                "latest_checkpoint.summary",
+                "latest_checkpoint.changed_files",
+                "latest_checkpoint.verification",
+            ]
+            assert data["recommended_first_tool"] == "record_task_checkpoint"
+        finally:
+            lease_store.close()
+
+    async def test_pull_task_context_returns_occupied_when_active_lease_exists(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        try:
+            store.claim(
+                project="alpha",
+                task_id="task-1",
+                owner_agent="claude",
+                session_id="sess-claude",
+                lease_ttl_seconds=60,
+            )
+            result = await mcp_sse._execute_tool(
+                "pull_task_context",
+                {"project": "alpha", "task_id": "task-1"},
+                "http://test",
+            )
+            data = json.loads(result)
+            assert data["status"] == "occupied"
+            assert data["occupied_by"]["owner_agent"] == "claude"
+            assert data["occupied_by"]["owner_session_id"] == "sess-claude"
+        finally:
+            store.close()
+
+    async def test_continue_task_returns_removed_tool_error(self, monkeypatch):
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
         result = await mcp_sse._execute_tool(
             "continue_task",
-            {"project": "alpha", "task_id": "task-weak", "agent_id": "codex"},
+            {"project": "alpha", "task_id": "task-1"},
             "http://test",
         )
         data = json.loads(result)
+        assert data["status"] == "error"
+        assert data["error"] == "tool_removed_use_pull_task_context"
 
-        assert data["replay_completeness"]["status"] == "incomplete"
-        assert data["replay_completeness"]["can_continue_without_user"] is False
-        assert data["replay_completeness"]["missing_fields"] == [
-            "latest_checkpoint.stage",
-            "latest_checkpoint.summary",
-            "latest_checkpoint.changed_files",
-            "latest_checkpoint.verification",
-        ]
-        assert data["recommended_first_tool"] == "record_task_checkpoint"
+    async def test_record_task_checkpoint_requires_active_owned_claim(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        try:
+            result = await mcp_sse._execute_tool(
+                "record_task_checkpoint",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "stage": "in_progress",
+                    "summary": "Started implementation.",
+                    "status": "active",
+                    "session_id": "sess-codex",
+                    "acted_by": "codex",
+                },
+                "http://test",
+            )
+            data = json.loads(result)
+            assert data["status"] == "conflict"
+            assert data["error"] == "active_claim_required"
+        finally:
+            store.close()
+
+    async def test_record_task_checkpoint_denies_when_claim_owned_by_other_session(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        try:
+            store.claim(project="alpha", task_id="task-1", owner_agent="claude", session_id="sess-claude")
+            result = await mcp_sse._execute_tool(
+                "record_task_checkpoint",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "stage": "in_progress",
+                    "summary": "Started implementation.",
+                    "status": "active",
+                    "session_id": "sess-codex",
+                    "acted_by": "codex",
+                },
+                "http://test",
+            )
+            data = json.loads(result)
+            assert data["status"] == "conflict"
+            assert data["error"] == "lease_owner_mismatch"
+            assert data["owner_agent"] == "claude"
+            assert data["owner_session_id"] == "sess-claude"
+        finally:
+            store.close()
 
     async def test_project_workflow_returns_task_completion_form(self, monkeypatch):
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())

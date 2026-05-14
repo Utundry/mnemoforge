@@ -67,7 +67,7 @@ def test_ask_memory_before_code_names_mcp_first_order_and_failure_mode(tmp_path:
     assert "explicit project_id" in action
     assert "list_open_tasks" in action
     assert "list_artifacts" in action
-    assert "continue_task" in action
+    assert "pull_task_context" in action
     assert "get_project_readiness" in action
     assert "Inspect repository files only after MnemoForge narrows the question" in action
     assert "markdown/status files alone while MCP is available" in instinct["failure_if_missing"]

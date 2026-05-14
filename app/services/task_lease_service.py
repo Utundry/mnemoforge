@@ -168,6 +168,8 @@ class TaskLeaseStore:
         session_id = _clean_text(session_id, 256)
         if not project or not task_id or not owner_agent:
             raise ValueError("project, task_id, and owner_agent are required")
+        if not session_id:
+            raise ValueError("session_id is required")
 
         ttl = max(5, int(lease_ttl_seconds or DEFAULT_LEASE_TTL_SECONDS))
         now_dt = now or _utcnow()
@@ -188,7 +190,7 @@ class TaskLeaseStore:
             ).fetchone()
             if active_row:
                 active = self._row_to_lease(active_row)
-                same_owner = active.owner_agent == owner_agent and (not session_id or active.session_id == session_id)
+                same_owner = active.owner_agent == owner_agent and active.session_id == session_id
                 if allow_reentrant and same_owner:
                     self._conn.execute(
                         """
@@ -258,7 +260,7 @@ class TaskLeaseStore:
             lease = self._row_to_lease(row)
             if lease.status != "active":
                 raise ValueError(f"lease_not_active:{lease.status}")
-            if lease.owner_agent != owner_agent or (session_id and lease.session_id != session_id):
+            if lease.owner_agent != owner_agent or lease.session_id != session_id:
                 raise PermissionError("lease_owner_mismatch")
             ttl = max(5, int(lease_ttl_seconds or lease.lease_ttl_seconds or DEFAULT_LEASE_TTL_SECONDS))
             now_ts = _ts(now_dt)
@@ -296,7 +298,7 @@ class TaskLeaseStore:
             if not row:
                 raise ValueError("lease_not_found")
             lease = self._row_to_lease(row)
-            if lease.owner_agent != owner_agent or (session_id and lease.session_id != session_id):
+            if lease.owner_agent != owner_agent or lease.session_id != session_id:
                 raise PermissionError("lease_owner_mismatch")
             if lease.status != "active":
                 return lease
@@ -307,6 +309,43 @@ class TaskLeaseStore:
                  WHERE lease_id = ?
                 """,
                 (status, released_ts, _clean_text(reason, 256) or status, lease_id),
+            )
+            self._conn.commit()
+            updated = self._conn.execute("SELECT * FROM task_leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        return self._row_to_lease(updated)
+
+    def force_release(
+        self,
+        *,
+        lease_id: str,
+        acted_by: str,
+        reason: str = "force_released",
+        status: str = "released",
+        now: datetime | None = None,
+    ) -> TaskLeaseRecord:
+        if status not in {"released", "transferred", "expired"}:
+            raise ValueError("release status must be released, transferred, or expired")
+        lease_id = _clean_text(lease_id, 128)
+        acted_by = _clean_text(acted_by, 128)
+        if not acted_by:
+            raise ValueError("acted_by is required")
+        released_ts = _ts(now)
+        reason_clean = _clean_text(reason, 256) or status
+        audit_reason = _clean_text(f"force_release:{acted_by}:{reason_clean}", 256)
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM task_leases WHERE lease_id = ?", (lease_id,)).fetchone()
+            if not row:
+                raise ValueError("lease_not_found")
+            lease = self._row_to_lease(row)
+            if lease.status != "active":
+                return lease
+            self._conn.execute(
+                """
+                UPDATE task_leases
+                   SET status = ?, released_at = ?, release_reason = ?
+                 WHERE lease_id = ?
+                """,
+                (status, released_ts, audit_reason, lease_id),
             )
             self._conn.commit()
             updated = self._conn.execute("SELECT * FROM task_leases WHERE lease_id = ?", (lease_id,)).fetchone()

@@ -54,7 +54,7 @@ def test_route_pattern_store_masks_uuid_values_for_reuse(tmp_path):
         facade="project_context",
         pattern="details for task 382e7306-cb61-46ee-8398-bc0a9bdfd9ef",
         intent_type="task_details",
-        tool="continue_task",
+        tool="pull_task_context",
         confidence=0.95,
     )
 

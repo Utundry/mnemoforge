@@ -163,7 +163,7 @@ def evaluate_execution_readiness(payload: dict[str, Any]) -> dict[str, Any]:
         "missing_evidence": missing,
         "evidence": evidence,
         "can_choose_next_action_without_user": not missing,
-        "recommended_next_tool": "continue_task" if not missing else "record_task_checkpoint",
+        "recommended_next_tool": "pull_task_context" if not missing else "record_task_checkpoint",
         "recommended_next_action": payload.get("next_safe_action") if not missing else "Record a checkpoint with missing execution evidence.",
     }
 
@@ -209,7 +209,7 @@ def build_replay_drill_decision(payload: dict[str, Any]) -> dict[str, Any]:
             "evidence_used": ["execution_readiness"],
         }
 
-    first_tool = str(context_refs.get("enrichment_tool") or "continue_task").strip() or "continue_task"
+    first_tool = str(context_refs.get("enrichment_tool") or "pull_task_context").strip() or "pull_task_context"
     tool_arguments: dict[str, Any] = {}
     if first_tool == "enrich_task_with_context":
         tool_arguments = {
@@ -217,7 +217,7 @@ def build_replay_drill_decision(payload: dict[str, Any]) -> dict[str, Any]:
             "task": next_action,
             "context_profile": "handoff_compact",
         }
-    elif first_tool == "continue_task":
+    elif first_tool == "pull_task_context":
         tool_arguments = {
             "project": project_id,
             "task_id": task_id,

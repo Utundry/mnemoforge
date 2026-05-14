@@ -30,7 +30,7 @@ _TOOL_STAGES: dict[str, str] = {
     "project_verify": "testing",
     "project_capture": "testing",
     "get_project_reconstruction_bundle": "testing",
-    "continue_task": "testing",
+    "pull_task_context": "testing",
     "draft_task_checkpoint": "testing",
     "get_work_session_state": "testing",
     "start_work_session": "testing",

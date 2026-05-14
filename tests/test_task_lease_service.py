@@ -153,6 +153,61 @@ def test_task_lease_release_removes_active_claim() -> None:
         store.close()
 
 
+def test_task_lease_requires_matching_session_for_release_and_heartbeat() -> None:
+    store = TaskLeaseStore(Path(":memory:"))
+    try:
+        claim = store.claim(
+            project="alpha",
+            task_id="task-1",
+            owner_agent="codex",
+            session_id="sess-a",
+            lease_ttl_seconds=30,
+            now=_now(),
+        )
+        with pytest.raises(PermissionError):
+            store.release(
+                lease_id=claim.lease.lease_id,
+                owner_agent="codex",
+                session_id="sess-b",
+                reason="wrong-session",
+                now=_now() + timedelta(seconds=5),
+            )
+        with pytest.raises(PermissionError):
+            store.heartbeat(
+                lease_id=claim.lease.lease_id,
+                owner_agent="codex",
+                session_id="sess-b",
+                now=_now() + timedelta(seconds=6),
+            )
+    finally:
+        store.close()
+
+
+def test_task_lease_force_release_with_audit_reason() -> None:
+    store = TaskLeaseStore(Path(":memory:"))
+    try:
+        claim = store.claim(
+            project="alpha",
+            task_id="task-1",
+            owner_agent="codex",
+            session_id="sess-codex",
+            lease_ttl_seconds=30,
+            now=_now(),
+        )
+        released = store.force_release(
+            lease_id=claim.lease.lease_id,
+            acted_by="operator",
+            reason="owner-session-lost",
+            status="released",
+            now=_now() + timedelta(seconds=5),
+        )
+        assert released.status == "released"
+        assert released.release_reason == "force_release:operator:owner-session-lost"
+        assert store.get_active_claim(project="alpha", task_id="task-1", now=_now() + timedelta(seconds=6)) is None
+    finally:
+        store.close()
+
+
 def test_task_lease_heartbeat_handle_renews_without_agent_call() -> None:
     store = TaskLeaseStore(Path(":memory:"))
     try:

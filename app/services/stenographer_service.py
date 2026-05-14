@@ -252,7 +252,7 @@ class StenographerStore:
         parked = [self._row_to_work(row) for row in parked_rows]
         state = "active_work" if active else ("parked_parent" if parked else "no_active_work")
         next_tools = {
-            "no_active_work": ["start_work_session", "continue_task", "list_open_tasks", "get_work_session_state"],
+            "no_active_work": ["start_work_session", "pull_task_context", "list_open_tasks", "get_work_session_state"],
             "parked_parent": ["start_work_session", "resume_work_session", "get_work_session_state"],
             "active_work": [
                 "record_stenographer_span",
