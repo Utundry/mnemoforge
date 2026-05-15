@@ -50,6 +50,20 @@ class TaskLeaseConflict(ValueError):
         }
 
 
+class TaskLeaseUnavailable(ValueError):
+    def __init__(self, lease: TaskLeaseRecord, *, reason: str) -> None:
+        super().__init__(f"Task lease {lease.lease_id} is not active: {lease.status}.")
+        self.lease = lease
+        self.reason = reason
+
+    def to_dict(self) -> dict:
+        return {
+            "error": self.reason,
+            "message": str(self),
+            "lease": self.lease.model_dump(mode="json"),
+        }
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -79,6 +93,7 @@ class TaskLeaseStore:
             self._conn.commit()
 
     def close(self) -> None:
+        stop_task_lease_auto_heartbeats_for_store(self)
         with self._lock:
             self._conn.close()
 
@@ -259,7 +274,10 @@ class TaskLeaseStore:
                 raise ValueError("lease_not_found")
             lease = self._row_to_lease(row)
             if lease.status != "active":
-                raise ValueError(f"lease_not_active:{lease.status}")
+                raise TaskLeaseUnavailable(
+                    lease,
+                    reason="lease_expired" if lease.status == "expired" else f"lease_not_active:{lease.status}",
+                )
             if lease.owner_agent != owner_agent or lease.session_id != session_id:
                 raise PermissionError("lease_owner_mismatch")
             ttl = max(5, int(lease_ttl_seconds or lease.lease_ttl_seconds or DEFAULT_LEASE_TTL_SECONDS))
@@ -444,6 +462,36 @@ class TaskLeaseHeartbeatHandle:
                 return
 
 
+_HEARTBEATS: dict[str, TaskLeaseHeartbeatHandle] = {}
+
+
+def start_task_lease_auto_heartbeat(
+    *,
+    store: TaskLeaseStore,
+    lease: TaskLeaseRecord,
+    heartbeat_seconds: float | None = None,
+) -> TaskLeaseHeartbeatHandle:
+    interval = heartbeat_seconds if heartbeat_seconds is not None else max(1.0, lease.lease_ttl_seconds / 3)
+    stop_task_lease_auto_heartbeat(lease.lease_id)
+    handle = TaskLeaseHeartbeatHandle(store=store, lease=lease, heartbeat_seconds=interval).start()
+    _HEARTBEATS[lease.lease_id] = handle
+    return handle
+
+
+def stop_task_lease_auto_heartbeat(lease_id: str, *, release: bool = False, reason: str = "auto_heartbeat_stopped") -> None:
+    lease_id = _clean_text(lease_id, 128)
+    handle = _HEARTBEATS.pop(lease_id, None)
+    if handle is not None:
+        handle.close(release=release, reason=reason)
+
+
+def stop_task_lease_auto_heartbeats_for_store(store: TaskLeaseStore) -> None:
+    for lease_id, handle in list(_HEARTBEATS.items()):
+        if handle.store is store:
+            _HEARTBEATS.pop(lease_id, None)
+            handle.close()
+
+
 def acquire_task_lease_with_heartbeat(
     *,
     store: TaskLeaseStore,
@@ -463,8 +511,11 @@ def acquire_task_lease_with_heartbeat(
         lease_ttl_seconds=lease_ttl_seconds,
         now=now,
     )
-    interval = heartbeat_seconds if heartbeat_seconds is not None else max(1.0, lease_ttl_seconds / 3)
-    return result, TaskLeaseHeartbeatHandle(store=store, lease=result.lease, heartbeat_seconds=interval).start()
+    return result, start_task_lease_auto_heartbeat(
+        store=store,
+        lease=result.lease,
+        heartbeat_seconds=heartbeat_seconds,
+    )
 
 
 _STORE: TaskLeaseStore | None = None
@@ -480,5 +531,6 @@ def get_task_lease_store() -> TaskLeaseStore:
 def close_task_lease_store() -> None:
     global _STORE
     if _STORE is not None:
+        stop_task_lease_auto_heartbeats_for_store(_STORE)
         _STORE.close()
         _STORE = None

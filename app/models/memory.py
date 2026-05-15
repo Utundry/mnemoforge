@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.enums import MemoryType
 
@@ -57,12 +57,24 @@ class MemoryCreate(BaseModel):
     pinned: bool = Field(False, description="Pin this memory — prevents importance decay and auto-deletion.")
     related_ids: list[str] = Field(default_factory=list, description="IDs of related memories (dependency graph).")
     project: Optional[str] = Field(None, max_length=128, description="Project this memory belongs to. Used for project-scoped decay gate.")
+    project_id: Optional[str] = Field(None, max_length=128, description="Compatibility alias for project.")
     expires_at: Optional[datetime] = Field(None, description="Hard expiry for time-sensitive content (status, price, incident). After this datetime the memory is heavily penalised in scoring.")
     # Knowledge tree fields
     topic_path: Optional[str] = Field(None, max_length=256, description="Hierarchical topic path, e.g. 'infra/nginx/reverse-proxy' or 'python/fastapi/errors'. Separate from category (which is a type/class).")
     scope: str = Field("project", description="Abstraction level: config|project|family|domain|principle|meta. Source knowledge usually lives at config/project/family, canonicals at domain/principle/meta.")
     supports: list[str] = Field(default_factory=list, description="For canonical memories: IDs of supporting lower-level memories or canonicals.")
     canonical_id: Optional[str] = Field(None, description="For leaf memories: ID of the canonical (L3+) memory this leaf has been crystallised into.")
+
+    @model_validator(mode="after")
+    def normalize_project_alias(self) -> "MemoryCreate":
+        project = (self.project or self.project_id or "").strip()
+        if project:
+            self.project = project
+            self.project_id = project
+            project_tag = f"project:{project}"
+            if project_tag not in self.tags:
+                self.tags = [*self.tags, project_tag]
+        return self
 
 
 class MemoryUpdate(BaseModel):
@@ -182,10 +194,17 @@ class SearchRequest(BaseModel):
     limit: int = Field(10, ge=1, le=100)
     min_score: float = Field(0.0, ge=0.0, le=1.0)
     since_minutes: Optional[int] = Field(None, ge=1, description="Only return memories added within last N minutes")
+    project: Optional[str] = Field(None, max_length=128, description="Filter to memories explicitly attributed to this project.")
+    project_id: Optional[str] = Field(None, max_length=128, description="Compatibility alias for project.")
     # Context hints for enriched scoring — memories whose tags match these get a score boost
     context_project: Optional[str] = Field(None, max_length=128, description="Boost memories tagged project:<this>")
     context_file: Optional[str] = Field(None, max_length=512, description="Boost memories tagged file:<this>")
     context_task_type: Optional[str] = Field(None, max_length=128, description="Boost memories tagged task_type:<this>")
+
+    @property
+    def project_filter(self) -> Optional[str]:
+        project = (self.project or self.project_id or "").strip()
+        return project or None
 
 
 class SearchResult(BaseModel):

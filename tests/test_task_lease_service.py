@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.task_lease_service import TaskLeaseConflict, TaskLeaseStore, acquire_task_lease_with_heartbeat
+from app.services.task_lease_service import TaskLeaseConflict, TaskLeaseStore, TaskLeaseUnavailable, acquire_task_lease_with_heartbeat
 
 
 def _now() -> datetime:
@@ -123,6 +123,33 @@ def test_task_lease_heartbeat_extends_expiration() -> None:
         assert refreshed.heartbeat_at == _now() + timedelta(seconds=20)
         assert refreshed.expires_at == _now() + timedelta(seconds=110)
         assert store.get_active_claim(project="alpha", task_id="task-1", now=_now() + timedelta(seconds=80)) is not None
+    finally:
+        store.close()
+
+
+def test_task_lease_heartbeat_expired_claim_reports_structured_unavailable() -> None:
+    store = TaskLeaseStore(Path(":memory:"))
+    try:
+        claim = store.claim(
+            project="alpha",
+            task_id="task-1",
+            owner_agent="codex",
+            session_id="sess-codex",
+            lease_ttl_seconds=30,
+            now=_now(),
+        )
+
+        with pytest.raises(TaskLeaseUnavailable) as exc_info:
+            store.heartbeat(
+                lease_id=claim.lease.lease_id,
+                owner_agent="codex",
+                session_id="sess-codex",
+                now=_now() + timedelta(seconds=31),
+            )
+
+        assert exc_info.value.reason == "lease_expired"
+        assert exc_info.value.lease.status == "expired"
+        assert exc_info.value.to_dict()["lease"]["lease_id"] == claim.lease.lease_id
     finally:
         store.close()
 

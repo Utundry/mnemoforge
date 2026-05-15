@@ -237,6 +237,7 @@ async def search_memories(body: SearchRequest, qdrant: QdrantDep, ollama: Ollama
         agent_id=body.agent_id,
         memory_type=body.memory_type,
         category=body.category,
+        project=body.project_filter,
         topic_prefix=body.topic_prefix,
         limit=body.limit,
         since_minutes=body.since_minutes,

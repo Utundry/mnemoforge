@@ -19,6 +19,49 @@ async def client_with_unified_artifacts():
 
 
 @pytest.mark.asyncio
+async def test_open_artifacts_lists_orphan_improvement_without_task_bootstrap(
+    client_with_unified_artifacts,
+    monkeypatch,
+) -> None:
+    client, _fake_queue = client_with_unified_artifacts
+
+    async def _noop_bootstrap_task_for_improvement(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "app.routers.improvements._bootstrap_task_for_improvement",
+        _noop_bootstrap_task_for_improvement,
+    )
+
+    create = await client.post(
+        "/api/v1/improvements",
+        json={
+            "title": "Orphan improvement remains visible",
+            "description": "Governed surfaces must show improvements even before task bootstrap.",
+            "project": "proj-router",
+            "agent_id": "architect",
+            "importance_score": 0.8,
+            "tags": ["visibility"],
+        },
+    )
+    assert create.status_code == 201, create.text
+    improvement_id = create.json()["id"]
+
+    listed = await client.get(
+        "/api/v1/artifacts",
+        params={"project": "proj-router", "status": "open", "limit": 50},
+    )
+    assert listed.status_code == 200, listed.text
+    items = listed.json()["items"]
+    assert any(
+        item["artifact_key"] == f"improvement:proj-router:{improvement_id}"
+        and item["type"] == "improvement"
+        and item["status"] == "open"
+        for item in items
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_artifacts_accepts_status_query_alias(client_with_unified_artifacts) -> None:
     client, _fake_queue = client_with_unified_artifacts
 

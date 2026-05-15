@@ -1475,6 +1475,11 @@ def _tool_input_schema(tool_name: str) -> dict[str, Any]:
 def _tool_example_payload(tool_name: str, *, intent: str, project_id: str = "") -> dict[str, Any]:
     name = str(tool_name or "").strip()
     project_id = str(project_id or "").strip()
+    if name == "pull_task_context":
+        payload = {"task_id": "<task_id>", "detail": "compact"}
+        if project_id:
+            payload["project"] = project_id
+        return payload
     if name == "reopen_task":
         payload = {"task_id": "<task_id>", "status": "active", "reason": intent[:120] or "reopen_task", "acted_by": "user", "source": "mcp"}
         if project_id:
@@ -1547,6 +1552,39 @@ def _tool_example_payload(tool_name: str, *, intent: str, project_id: str = "") 
     return {}
 
 
+def _looks_like_reactivation_intent(text: str) -> bool:
+    lowered = str(text or "").casefold()
+    return any(
+        term in lowered
+        for term in (
+            "reopen task",
+            "reactivate task",
+            "restore task",
+            "make task active",
+            "make it active",
+            "reopen",
+            "reactivate",
+        )
+    )
+
+
+def _looks_like_checkpoint_resume_intent(text: str) -> bool:
+    lowered = str(text or "").casefold()
+    return any(
+        term in lowered
+        for term in (
+            "continue task",
+            "continue this task",
+            "resume task",
+            "resume current task",
+            "resume from checkpoint",
+            "pick up this task",
+            "pull task context",
+            "restore task context",
+        )
+    )
+
+
 def _normalize_mcp_intent_lexical(intent: str, *, project_id: str = "", top_n: int = 3) -> dict[str, Any]:
     text = str(intent or "").strip()
     clean_project = str(project_id or "").strip()
@@ -1555,11 +1593,16 @@ def _normalize_mcp_intent_lexical(intent: str, *, project_id: str = "", top_n: i
     task_id_match = re.search(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b", text)
     extracted_task_id = task_id_match.group(0) if task_id_match else ""
 
-    if any(term in lowered for term in ("resume task", "reopen task", "reactivate task", "resume", "reopen", "reactivate", "restore task")):
+    if _looks_like_reactivation_intent(lowered):
         resolved_tool = "reopen_task"
         resolved_family = "project_knowledge"
         confidence = 0.96
-        rationale = "Task resume intent maps directly to reopen_task."
+        rationale = "Explicit task reactivation maps to reopen_task."
+    elif _looks_like_checkpoint_resume_intent(lowered):
+        resolved_tool = "pull_task_context"
+        resolved_family = "project_knowledge"
+        confidence = 0.94
+        rationale = "Task continuation maps to pull_task_context for read-only checkpoint replay before any mutation."
     elif any(term in lowered for term in ("open tasks", "open work", "list open", "find tasks", "show tasks", "task list")):
         resolved_tool = "list_open_tasks"
         resolved_family = "project_knowledge"
@@ -1661,6 +1704,7 @@ async def _normalize_mcp_intent_llm(intent: str, *, project_id: str = "", top_n:
     from app.dependencies import get_llm_gateway
 
     allowed_tools = [
+        "pull_task_context",
         "reopen_task",
         "list_open_tasks",
         "report_task_checkpoint",
@@ -1714,6 +1758,7 @@ async def _normalize_mcp_intent_llm(intent: str, *, project_id: str = "", top_n:
 async def _normalize_mcp_intent(intent: str, *, project_id: str = "", top_n: int = 3) -> dict[str, Any]:
     lexical = _normalize_mcp_intent_lexical(intent, project_id=project_id, top_n=top_n)
     allowed = {
+        "pull_task_context",
         "reopen_task",
         "list_open_tasks",
         "report_task_checkpoint",
@@ -2317,6 +2362,59 @@ def _annotate_open_tasks_with_assignment_safety(data: dict[str, Any], args: dict
     return enriched
 
 
+def _project_rule_query_tokens(args: dict[str, Any]) -> set[str]:
+    text = " ".join(str(args.get(key) or "") for key in ("query", "intent", "task", "project"))
+    return {token for token in re.findall(r"[a-zA-Z0-9_+-]{3,}", text.casefold())}
+
+
+def _project_context_rule_refs(args: dict[str, Any]) -> list[dict[str, Any]]:
+    project = str(args.get("project") or "").strip()
+    status = str(args.get("status") or "active").strip().lower()
+    if not project or status not in {"active", "all"}:
+        return []
+    tokens = _project_rule_query_tokens(args)
+    should_include_testing_rules = not tokens or bool(
+        tokens
+        & {
+            "test",
+            "tests",
+            "testing",
+            "pytest",
+            "docker",
+            "contour",
+            "verification",
+            "verify",
+            "rules",
+            "laws",
+            "constraints",
+        }
+    )
+    if not should_include_testing_rules:
+        return []
+    try:
+        from app.services.task_execution_context_service import _project_testing_rule_refs
+
+        refs = _project_testing_rule_refs(project)
+    except Exception:
+        return []
+    return [
+        {
+            "id": ref.id,
+            "title": ref.title,
+            "status": ref.status,
+            "scope": ref.scope,
+            "project": project,
+            "topic_path": ref.topic_path,
+            "rationale": ref.rationale,
+            "reason": ref.reason,
+            "is_project_local": True,
+            "source": "project_context",
+        }
+        for ref in refs
+        if status == "all" or ref.status == status
+    ]
+
+
 def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> dict[str, Any]:
     project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
     intent = str(args.get("intent") or "").strip()
@@ -2687,6 +2785,7 @@ def _project_rules_payload_for_intent(args: dict[str, Any], intent_type: str) ->
             "project": project,
             "status": status if status in {"observed", "proposed", "reviewed", "user_confirmed", "active", "suppressed", "superseded", "archived", "all"} else "active",
             "include_promoted": True,
+            "query": intent,
             "limit": min(limit, 200),
         }
     if intent_type == "promote_candidate":
@@ -3016,11 +3115,9 @@ def _format_route_diagnostic(data: dict[str, Any]) -> str:
 
 def _format_route_answer(data: dict[str, Any]) -> str:
     selected = data.get("selected_route") if isinstance(data.get("selected_route"), dict) else {}
-    telemetry = data.get("route_telemetry") if isinstance(data.get("route_telemetry"), dict) else {}
     result = data.get("result")
     preferred_task_id = _extract_task_id_like_from_text(str(data.get("intent") or ""))
     first = _first_route_result_item(result, preferred_task_id=preferred_task_id)
-    warnings = data.get("warnings") or telemetry.get("warnings") or []
     intent_type = str(selected.get("intent_type") or "")
     lines = ["Mnemoforge answer"]
 
@@ -3049,6 +3146,9 @@ def _format_route_answer(data: dict[str, Any]) -> str:
     else:
         lines.append("Answer: Route was selected but not executed.")
 
+    if isinstance(result, str) and result.strip() and not first:
+        compact_result = re.sub(r"\s+", " ", result).strip()
+        lines.append(f"result={compact_result[:900]}")
     if first.get("task_id"):
         lines.append(f"task_id={_diagnostic_value(first.get('task_id'))}")
     if first.get("title"):
@@ -3059,15 +3159,10 @@ def _format_route_answer(data: dict[str, Any]) -> str:
         lines.append(f"artifact_key={_diagnostic_value(first.get('artifact_key'))}")
     if data.get("facade") == "project_work" and intent_type == "next_priority":
         lines.append(f"why={_diagnostic_value(selected.get('reason'))}")
-    lines.extend(
-        [
-            f"route={_diagnostic_value(selected.get('tool'))}",
-            f"intent_type={_diagnostic_value(selected.get('intent_type'))}",
-            f"scorer_backend={_diagnostic_value(telemetry.get('scorer_backend'))}",
-            f"warnings={_diagnostic_value(warnings)}",
-            f"next_safe_action={_diagnostic_value(data.get('next_safe_action'))}",
-        ]
-    )
+    if data.get("warnings"):
+        lines.append(f"warnings={_diagnostic_value(data.get('warnings'))}")
+    if not data.get("executed") and data.get("next_safe_action"):
+        lines.append(f"next_safe_action={_diagnostic_value(data.get('next_safe_action'))}")
     return "\n".join(lines)
 
 
@@ -4479,6 +4574,29 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
     executed = False
     result: Any = None
     semantic_rules = _build_semantic_rule_packet(facade="project_work", route=route, args=args)
+    lease_guard: dict[str, Any] | None = None
+    if (
+        allow_mutation
+        and not semantic_rules.get("blocked")
+        and route["mutating"]
+        and route["tool"] != "start_task_session"
+        and str((route.get("payload") or {}).get("task_id") or "").strip()
+    ):
+        route_payload = route.get("payload") or {}
+        route_task_id = str(route_payload.get("task_id") or "").strip()
+        lease_guard = _task_mutation_requires_owned_claim(
+            project=str(route_payload.get("project") or args.get("project") or "mnemoforge"),
+            task_id=route_task_id,
+            owner_agent=str(
+                route_payload.get("owner_agent")
+                or route_payload.get("agent_id")
+                or args.get("owner_agent")
+                or args.get("agent_id")
+                or "codex"
+            ),
+            owner_session_id=str(route_payload.get("session_id") or args.get("session_id") or session_id or ""),
+            tool_name=f"project_work:{route['tool']}",
+        )
 
     if route["mutating"] and not allow_mutation:
         warnings.append(
@@ -4493,27 +4611,10 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
             "next_safe_action": "Satisfy semantic rule preconditions before mutation.",
         }
         executed = True
-    elif route["mutating"] and route["tool"] != "start_task_session":
-        route_payload = route.get("payload") or {}
-        route_task_id = str(route_payload.get("task_id") or "").strip()
-        if route_task_id:
-            lease_guard = _task_mutation_requires_owned_claim(
-                project=str(route_payload.get("project") or args.get("project") or "mnemoforge"),
-                task_id=route_task_id,
-                owner_agent=str(
-                    route_payload.get("owner_agent")
-                    or route_payload.get("agent_id")
-                    or args.get("owner_agent")
-                    or args.get("agent_id")
-                    or "codex"
-                ),
-                owner_session_id=str(route_payload.get("session_id") or args.get("session_id") or session_id or ""),
-                tool_name=f"project_work:{route['tool']}",
-            )
-            if lease_guard:
-                result = lease_guard
-                executed = True
-                warnings.append("Mutation blocked by task lease ownership policy.")
+    elif lease_guard:
+        result = lease_guard
+        executed = True
+        warnings.append("Mutation blocked by task lease ownership policy.")
     elif route["tool"] == "list_open_tasks":
         query = build_list_open_tasks_query(route["payload"])
         result = await _get(api_base, f"/artifacts?{query}")
@@ -4635,10 +4736,14 @@ def _build_tool_recommendation(task: str, project_id: str = "", top_n: int = 3) 
         spec = _family_spec(family)
         preferred = [name for name in spec.get("preferred_tools", []) if _find_tool_definition(name)]
         lowered = task_text.casefold()
-        if family == "project_knowledge" and any(term in lowered for term in ("resume task", "reopen task", "reactivate task", "resume", "reopen", "reactivate", "restore task")):
+        if family == "project_knowledge" and _looks_like_reactivation_intent(lowered):
             reopen_first = next((name for name in preferred if name == "reopen_task"), "")
             if reopen_first:
                 preferred = [reopen_first] + [name for name in preferred if name != reopen_first]
+        elif family == "project_knowledge" and _looks_like_checkpoint_resume_intent(lowered):
+            pull_first = next((name for name in preferred if name == "pull_task_context"), "")
+            if pull_first:
+                preferred = [pull_first] + [name for name in preferred if name != pull_first]
         if not preferred:
             preferred = [tool["name"] for tool in _family_tools(family)]
         if not preferred:
@@ -4674,12 +4779,30 @@ def _build_tool_recommendation(task: str, project_id: str = "", top_n: int = 3) 
             "why": "Use when the agent wants the system to narrow the next call automatically.",
         },
     ]
-    if any(term in lowered for term in ("resume task", "reopen task", "reactivate task", "resume", "reopen", "reactivate", "restore task")):
+    if _looks_like_reactivation_intent(lowered):
         canonical_surface.extend([
             {
                 "tool": "reopen_task",
                 "family": "project_knowledge",
-                "why": "Use to resume an existing task without guessing internal endpoints.",
+                "why": "Use only when an existing task must be made active again.",
+            },
+            {
+                "tool": "report_task_checkpoint",
+                "family": "project_knowledge",
+                "why": "Use to persist the current stage and make the task recoverable.",
+            },
+        ])
+    elif _looks_like_checkpoint_resume_intent(lowered):
+        canonical_surface.extend([
+            {
+                "tool": "pull_task_context",
+                "family": "project_knowledge",
+                "why": "Use first for read-only checkpoint replay before claiming or mutating task state.",
+            },
+            {
+                "tool": "start_task_session",
+                "family": "project_knowledge",
+                "why": "Use after replay when the agent is ready to execute and needs an owned lease.",
             },
             {
                 "tool": "report_task_checkpoint",
@@ -5551,6 +5674,8 @@ TOOLS = [
                 "source": {"type": "string", "default": "conversation"},
                 "tags": {"type": "array", "items": {"type": "string"}, "default": []},
                 "session_id": {"type": "string"},
+                "project": {"type": "string", "description": "Project this memory belongs to"},
+                "project_id": {"type": "string", "description": "Compatibility alias for project"},
             },
         },
     },
@@ -5569,6 +5694,9 @@ TOOLS = [
                 "agent_id": {"type": "string", "description": "Filter by agent ID (optional)"},
                 "memory_type": {"type": "string", "enum": ["fact", "preference", "experience", "task", "context"]},
                 "category": {"type": "string"},
+                "project": {"type": "string", "description": "Filter to memories attributed to this project"},
+                "project_id": {"type": "string", "description": "Compatibility alias for project"},
+                "context_project": {"type": "string", "description": "Boost memories tagged project:<this> without filtering"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 5},
                 "min_score": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.0},
                 "since_minutes": {"type": "integer", "minimum": 1, "description": "Only memories added within last N minutes"},
@@ -5943,6 +6071,9 @@ TOOLS = [
                 "target_status": {"type": "string", "enum": ["proposed", "user_confirmed", "active"], "default": "proposed"},
                 "confirmed_by": {"type": "string"},
                 "allow_mutation": {"type": "boolean", "default": False},
+                "diagnostic": {"type": "boolean", "default": False, "description": "Return a compact plain-text route diagnostic block."},
+                "answer": {"type": "boolean", "default": False, "description": "Return a compact final-answer-shaped plain-text block."},
+                "response_format": {"type": "string", "enum": ["json", "diagnostic", "answer"], "default": "json"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100},
                 "max_matches": {"type": "integer", "minimum": 0, "maximum": 20, "default": 5},
                 "acted_by": {"type": "string", "default": "codex"},
@@ -7845,7 +7976,7 @@ async def _resolve_work_result_target(api_base: str, args: dict[str, Any]) -> di
 
     if not task_id and not bool(args.get("skip_auto_task_match", False)):
         try:
-            query = build_list_open_tasks_query({"project": project, "limit": 1})
+            query = build_list_open_tasks_query({"project": project, "artifact_type": "task", "limit": 1})
             data = await _get(api_base, f"/artifacts?{query}")
             items = data.get("items") or []
             if items:
@@ -8073,17 +8204,25 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         if args.get("scope"):
             params.append(f"scope={args['scope']}")
         data = await _get(api_base, f"/laws?{'&'.join(params)}")
-        items = data.get("items", [])
+        items = list(data.get("items", []) or [])
+        context_refs = _project_context_rule_refs(args)
+        existing_ids = {str(item.get("id") or "") for item in items if isinstance(item, dict)}
+        items.extend(ref for ref in context_refs if str(ref.get("id") or "") not in existing_ids)
         if not items:
             return "No matching project laws."
         lines = []
         for i, item in enumerate(items, 1):
             locality = "project-local" if item.get("is_project_local") else item.get("scope", "?")
+            source = str(item.get("source") or "laws").strip()
+            source_suffix = f" source={source}" if source != "laws" else ""
             lines.append(
                 f"{i}. [{item.get('status','?')}] {item.get('title','')}\n"
-                f"   scope={item.get('scope','?')} locality={locality} project={item.get('project') or '-'}\n"
+                f"   scope={item.get('scope','?')} locality={locality} project={item.get('project') or '-'}{source_suffix}\n"
                 f"   id={item.get('id')}"
             )
+            rationale = str(item.get("rationale") or "").strip()
+            if rationale:
+                lines.append(f"   rationale={rationale[:240]}")
         project = args.get("project", "all")
         status = args.get("status", "active")
         return f"Project laws ({project}, {status}):\n\n" + "\n\n".join(lines)
@@ -8121,6 +8260,10 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
 
     elif name == "project_rules":
         data = await _build_project_rules_payload(api_base, args, session_id=session_id)
+        if _wants_route_diagnostic(args):
+            return _format_route_diagnostic(data)
+        if _wants_route_answer(args):
+            return _format_route_answer(data)
         return json.dumps(data, indent=2, ensure_ascii=False)
     elif name == "project_context":
         data = await _build_project_context_payload(api_base, args, session_id=session_id)
@@ -9005,6 +9148,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             "agent_id": agent_id,
             "memory_type": "task",
             "category": "work_result",
+            "project": project,
             "importance_score": float(args.get("importance_score") or 0.65),
             "source": source,
             "tags": [
@@ -9025,6 +9169,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         warnings: list[str] = []
 
         if not target.get("task_id") and bool(args.get("create_issue_if_unmatched", False)):
+            source_memory_tag = f"source_memory:{memory_result.get('id')}" if memory_result.get("id") else ""
             created_issue = await _post(
                 api_base,
                 "/improvements",
@@ -9035,7 +9180,11 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                     "agent_id": agent_id,
                     "importance_score": float(args.get("importance_score") or 0.65),
                     "stage": "proposal",
-                    "tags": ["work-result", "mcp-facade", f"project:{project}"],
+                    "tags": [
+                        tag
+                        for tag in ("work-result", "mcp-facade", f"project:{project}", source_memory_tag)
+                        if tag
+                    ],
                 },
             )
             route.append("improvement")
@@ -9168,7 +9317,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
 
     elif name == "start_task_session":
         from app.services.stenographer_service import ProtocolViolation, get_stenographer_store
-        from app.services.task_lease_service import TaskLeaseConflict, get_task_lease_store
+        from app.services.task_lease_service import TaskLeaseConflict, get_task_lease_store, start_task_lease_auto_heartbeat, stop_task_lease_auto_heartbeat
 
         project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
         task_id = str(args["task_id"]).strip()
@@ -9180,6 +9329,8 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         lease_store = get_task_lease_store()
         session_store = get_stenographer_store()
         claim = None
+        auto_heartbeat_enabled = bool(args.get("auto_heartbeat", True))
+        auto_heartbeat = None
         try:
             claim = lease_store.claim(
                 project=project,
@@ -9202,6 +9353,12 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 scope=args.get("scope") or [],
                 summary=str(args.get("summary") or ""),
             )
+            if auto_heartbeat_enabled:
+                auto_heartbeat = start_task_lease_auto_heartbeat(
+                    store=lease_store,
+                    lease=claim.lease,
+                    heartbeat_seconds=float(args["heartbeat_seconds"]) if args.get("heartbeat_seconds") else None,
+                )
         except TaskLeaseConflict as exc:
             data = {
                 "status": "conflict",
@@ -9216,6 +9373,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             return json.dumps(data, indent=2, ensure_ascii=False)
         except ProtocolViolation as exc:
             if claim is not None:
+                stop_task_lease_auto_heartbeat(claim.lease.lease_id)
                 try:
                     lease_store.release(
                         lease_id=claim.lease.lease_id,
@@ -9247,6 +9405,8 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 checkpoint_payload,
             )
         except Exception:
+            if claim is not None:
+                stop_task_lease_auto_heartbeat(claim.lease.lease_id)
             try:
                 session_store.end_work_session(
                     work_id=work.work_id,
@@ -9276,16 +9436,24 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             "owner_session_id": lease_session_id,
             "lease": claim.lease.model_dump(mode="json"),
             "lease_status": claim.status,
+            "auto_heartbeat": {
+                "enabled": auto_heartbeat_enabled,
+                "heartbeat_seconds": auto_heartbeat.heartbeat_seconds if auto_heartbeat is not None else None,
+            },
             "work_session": work.model_dump(mode="json"),
             "checkpoint": checkpoint,
-            "next_safe_action": "Continue implementation and send heartbeat_task_claim while session is active.",
+            "next_safe_action": (
+                "Continue implementation; lease auto-heartbeat is active for this process and finish_task_session will stop it."
+                if auto_heartbeat_enabled
+                else "Continue implementation and send heartbeat_task_claim while session is active."
+            ),
         }
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name == "finish_task_session":
         from app.services.stenographer_service import ProtocolViolation, get_stenographer_store
-        from app.services.task_lease_service import get_task_lease_store
+        from app.services.task_lease_service import get_task_lease_store, stop_task_lease_auto_heartbeat
 
         project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
         task_id = str(args["task_id"]).strip()
@@ -9398,6 +9566,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             reason=str(args.get("release_reason") or "finished"),
             status="released",
         )
+        stop_task_lease_auto_heartbeat(active.lease_id)
         release_payload = {
             "status": released.status,
             "lease": released.model_dump(mode="json"),
@@ -9418,7 +9587,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name in {"claim_task", "heartbeat_task_claim", "release_task_claim", "force_release_task_claim", "list_task_claims"}:
-        from app.services.task_lease_service import TaskLeaseConflict, get_task_lease_store
+        from app.services.task_lease_service import TaskLeaseConflict, TaskLeaseUnavailable, get_task_lease_store, stop_task_lease_auto_heartbeat
 
         store = get_task_lease_store()
         owner_agent = str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex"
@@ -9460,6 +9629,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                     reason=str(args.get("reason") or "released"),
                     status=str(args.get("status") or "released"),
                 )
+                stop_task_lease_auto_heartbeat(lease.lease_id)
                 data = {
                     "status": lease.status,
                     "lease": lease.model_dump(mode="json"),
@@ -9472,6 +9642,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                     reason=str(args.get("reason") or "force_released"),
                     status=str(args.get("status") or "released"),
                 )
+                stop_task_lease_auto_heartbeat(lease.lease_id)
                 data = {
                     "status": lease.status,
                     "lease": lease.model_dump(mode="json"),
@@ -9501,6 +9672,14 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 "owner_session_id": exc.active_lease.session_id,
                 "expires_at": exc.active_lease.expires_at.isoformat(),
                 "next_safe_action": "Do not start this task; choose another task or wait for the claim to expire.",
+            }
+        except TaskLeaseUnavailable as exc:
+            data = {
+                "status": "conflict",
+                "error": exc.to_dict(),
+                "claim_allowed": False,
+                "lease": exc.lease.model_dump(mode="json"),
+                "next_safe_action": "The claim is no longer active; call start_task_session or claim_task again before mutating task state.",
             }
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
@@ -10147,6 +10326,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             "  Start with ask_project for natural human/project questions, project_work for next-step or open-work questions, and get_task_execution_context when you are already inside an active task.\n"
             "  Stay on the compact surface unless you need deep/debug access.\n"
             "  Prefer expert helpers over low-level tools when they can express the request.\n"
+            "  For task continuation, call pull_task_context first for read-only checkpoint replay; use reopen_task only to reactivate a closed/inactive task.\n"
             "  Treat runtime details such as Docker test contours as project-specific hints from project context, not universal rules."
         )
 

@@ -19,6 +19,48 @@ async def test_create_memory(client):
 
 
 @pytest.mark.asyncio
+async def test_create_memory_project_id_is_searchable_immediately_with_project_filter(client):
+    unique = "fresh-project-attribution-probe"
+    create = await client.post(f"{PREFIX}/memories", json={
+        "content": f"{unique} belongs to alpha",
+        "agent_id": "agent-project",
+        "memory_type": "fact",
+        "category": "qa",
+        "project_id": "alpha",
+        "tags": ["probe"],
+    })
+    assert create.status_code == 201, create.text
+    created = create.json()
+    assert created["project"] == "alpha"
+    assert "project:alpha" in created["tags"]
+
+    found = await client.post(f"{PREFIX}/memories/search", json={
+        "query": unique,
+        "agent_id": "agent-project",
+        "memory_type": "fact",
+        "category": "qa",
+        "project_id": "alpha",
+        "limit": 10,
+        "min_score": 0,
+    })
+    assert found.status_code == 200, found.text
+    ids = {item["memory"]["id"] for item in found.json()}
+    assert created["id"] in ids
+
+    other_project = await client.post(f"{PREFIX}/memories/search", json={
+        "query": unique,
+        "agent_id": "agent-project",
+        "memory_type": "fact",
+        "category": "qa",
+        "project_id": "beta",
+        "limit": 10,
+        "min_score": 0,
+    })
+    assert other_project.status_code == 200, other_project.text
+    assert created["id"] not in {item["memory"]["id"] for item in other_project.json()}
+
+
+@pytest.mark.asyncio
 async def test_get_memory(client):
     create = await client.post(f"{PREFIX}/memories", json={
         "content": "Python is great",

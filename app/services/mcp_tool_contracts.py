@@ -980,14 +980,21 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     "list_open_tasks": {
         "name": "list_open_tasks",
         "description": (
-            "List open project tasks through the unified artifact surface. "
+            "List open project work items through the unified artifact surface. "
+            "By default this includes both canonical tasks and orphan improvements so captured improvements remain visible. "
             "Use this when you want open work items and do not want to remember status/type filters. "
-            "This is the preferred MCP surface for open-task inspection."
+            "This is the preferred MCP surface for open-work inspection."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "project": {"type": "string", "default": "mnemoforge"},
+                "artifact_type": {
+                    "type": "string",
+                    "enum": ["all", "task", "improvement"],
+                    "default": "all",
+                    "description": "Filter open work by unified artifact type. all returns tasks and orphan/open improvements.",
+                },
                 "created_after": {
                     "type": "string",
                     "description": "ISO 8601 timestamp; include tasks with created_at >= this value",
@@ -1656,6 +1663,8 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "owner_agent": {"type": "string", "description": "Compatibility alias for agent_id"},
                 "session_id": {"type": "string"},
                 "lease_ttl_seconds": {"type": "integer", "minimum": 5, "maximum": 86400, "default": 900},
+                "auto_heartbeat": {"type": "boolean", "default": True},
+                "heartbeat_seconds": {"type": "number", "minimum": 1},
                 "role": {"type": "string", "default": "worker"},
                 "summary": {"type": "string", "default": "Task claimed; work session started."},
                 "reason": {"type": "string", "default": "start_task_session"},
@@ -2276,12 +2285,16 @@ def build_review_completed_checkpoint_scopes_payload(args: dict[str, Any]) -> di
 
 
 def build_list_open_tasks_query(args: dict[str, Any]) -> str:
+    artifact_type = str(args.get("artifact_type") or args.get("type") or "all").strip().lower()
+    if artifact_type not in {"all", "task", "improvement"}:
+        artifact_type = "all"
     params: list[str] = [
         f"project={quote(str(args.get('project', 'mnemoforge')), safe='')}",
         "status=open",
-        "type=task",
         f"limit={int(args.get('limit', 50))}",
     ]
+    if artifact_type != "all":
+        params.append(f"type={artifact_type}")
     if args.get("created_after"):
         params.append(f"created_after={quote(str(args['created_after']), safe='')}")
     if args.get("created_before"):
@@ -2317,18 +2330,23 @@ def format_list_open_tasks_response(data: dict[str, Any]) -> str:
             return "No claimed open tasks found."
         if data.get("hidden_claimed_count"):
             return f"No available open tasks found. Hidden claimed tasks: {data['hidden_claimed_count']}."
-        return "No open tasks found."
+        return "No open work items found."
     claim_filter = str(data.get("claim_filter") or "available")
+    has_improvements = any(str(item.get("type") or "") == "improvement" for item in items if isinstance(item, dict))
+    noun = "work items" if has_improvements else "tasks"
     if claim_filter == "claimed":
         heading = f"Claimed open tasks: {len(items)}"
     elif claim_filter == "all":
-        heading = f"Open tasks: {len(items)}"
+        heading = f"Open {noun}: {len(items)}"
     else:
-        heading = f"Available open tasks: {len(items)}"
+        heading = f"Available open {noun}: {len(items)}"
     lines = [heading]
     for i, item in enumerate(items, 1):
         linked = item.get("linked_artifact_key") or item.get("linked_status") or ""
         suffix = f" linked={linked}" if linked else ""
+        item_type = str(item.get("type") or "task").strip() or "task"
+        if item_type != "task":
+            suffix += f" type={item_type}"
         claim = item.get("task_claim") or {}
         if claim:
             suffix += (
@@ -3012,7 +3030,7 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
             "Only request mode=full for deep/debug access. "
             "Prefer expert helpers over operating low-level tools directly; helpers should read project-specific runtime hints instead of assuming one universal test or deployment contour. "
             "If you still need to choose a MCP path manually, call normalize_mcp_intent before you guess at tools. "
-            "If you need to resume a task, call reopen_task before you do anything else. "
+            "If you need to continue a task, call pull_task_context first for read-only checkpoint replay; use reopen_task only when a closed/inactive task must be made active again. "
             "If you are working on a task, record a checkpoint at planning and after every meaningful stage transition with report_task_checkpoint. "
             "If storage health may affect retrieval, call get_storage_trust_status."
         ),
@@ -3050,7 +3068,7 @@ def build_mnemoforge_onboarding_basics() -> str:
         "  - If onboarding warns that storage trust is degraded, call get_storage_trust_status before trusting affected retrieval or learning paths.\n"
         "  - If another agent may have contacted you, call pickup_coordination_messages with your agent_id and project.\n"
         "  - If the right MCP path is unclear, call normalize_mcp_intent first.\n"
-        "  - If you need to resume a task, call reopen_task instead of bypassing MCP.\n"
+        "  - If you need to continue a task, call pull_task_context first; use reopen_task only to reactivate a closed/inactive task.\n"
         "  - If you are working on a task, call report_task_checkpoint at planning, blockers, interruptions, handoff, and completion.\n"
         "  - Use send_coordination_message for requests, replies, and handoffs; coordination is operational, not project truth.\n"
         "  - Keep project_id explicit and consistent across retrieval, bootstrap, and coordination."

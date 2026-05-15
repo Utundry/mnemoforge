@@ -17,6 +17,23 @@ Agent:
 **One command turns a chat into a working system.**
 
 
+## ⚠️ Work in Progress
+
+This project is under active architectural evolution.
+
+Mnemoforge is continuously modified while being actively used in real agent workflows.
+
+Because of this:
+
+- features may change rapidly;
+- workflows may temporarily break;
+- MCP behaviors and APIs may evolve;
+- some updates can introduce regressions or temporary dysfunction.
+
+Real-world bug reports and strange behaviors are extremely valuable.
+
+If something breaks — please open an issue.
+
 ## Quick Demo
 
 ![Mnemoforge quick demo](Анимация4.gif)

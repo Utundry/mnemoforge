@@ -360,6 +360,7 @@ class QdrantService:
         agent_id: Optional[str] = None,
         memory_type: Optional[MemoryType] = None,
         category: Optional[str] = None,
+        project: Optional[str] = None,
         topic_prefix: Optional[str] = None,
         limit: int = 10,
         overfetch_factor: int = 2,
@@ -384,6 +385,12 @@ class QdrantService:
             must_conditions.append(
                 qmodels.FieldCondition(
                     key="category", match=qmodels.MatchValue(value=category)
+                )
+            )
+        if project:
+            must_conditions.append(
+                qmodels.FieldCondition(
+                    key="project", match=qmodels.MatchValue(value=project)
                 )
             )
         if since_minutes:

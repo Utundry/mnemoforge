@@ -74,6 +74,22 @@ class TestMcpToolExecution:
         assert "report_issue" in names
         assert "_mnemoforge" not in response["result"]
 
+    async def test_memory_tools_expose_project_scope_fields(self):
+        response = await mcp_sse._handle(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"mode": "full"}},
+            "http://test",
+        )
+
+        tools = {tool["name"]: tool for tool in response["result"]["tools"]}
+        store_props = tools["memory_store"]["inputSchema"]["properties"]
+        search_props = tools["memory_search"]["inputSchema"]["properties"]
+
+        assert "project" in store_props
+        assert "project_id" in store_props
+        assert "project" in search_props
+        assert "project_id" in search_props
+        assert "context_project" in search_props
+
     async def test_tools_list_env_can_restore_full_default(self, monkeypatch):
         monkeypatch.setenv("MCP_TOOL_CATALOG_DEFAULT", "full")
         response = await mcp_sse._handle(
@@ -378,6 +394,8 @@ class TestMcpToolExecution:
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "list_open_tasks")
         props = tool["inputSchema"]["properties"]
         assert "project" in props
+        assert props["artifact_type"]["default"] == "all"
+        assert props["artifact_type"]["enum"] == ["all", "task", "improvement"]
         assert "limit" in props
         assert "status" not in props
 
@@ -392,6 +410,10 @@ class TestMcpToolExecution:
         assert "project" in claim_tool["inputSchema"]["required"]
         assert "task_id" in claim_tool["inputSchema"]["required"]
         assert claim_props["lease_ttl_seconds"]["default"] == 900
+        start_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "start_task_session")
+        start_props = start_tool["inputSchema"]["properties"]
+        assert start_props["auto_heartbeat"]["default"] is True
+        assert start_props["heartbeat_seconds"]["minimum"] == 1
 
     def test_reconcile_completed_checkpoints_tool_is_exposed_report_only_by_default(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "reconcile_completed_checkpoints")
@@ -471,6 +493,9 @@ class TestMcpToolExecution:
         assert props["allow_mutation"]["default"] is False
         assert "candidate_id" in props
         assert "law_id" in props
+        assert props["response_format"]["enum"] == ["json", "diagnostic", "answer"]
+        assert props["diagnostic"]["default"] is False
+        assert props["answer"]["default"] is False
         assert props["target_status"]["enum"] == ["proposed", "user_confirmed", "active"]
         assert "rule-governance facade" in tool["description"]
 
@@ -967,7 +992,7 @@ class TestMcpToolExecution:
                 "linked_artifact_key": None,
             }
         ]
-        assert requested[0].startswith("/artifacts?project=alpha&status=open&type=task&limit=5")
+        assert requested[0].startswith("/artifacts?project=alpha&status=open&limit=5")
         assert data["result"]["items"][0]["artifact_key"] == "task:alpha:task-1"
 
     async def test_project_work_next_priority_skips_claimed_tasks(self, monkeypatch):
@@ -1114,9 +1139,10 @@ class TestMcpToolExecution:
         assert "title=First task" in text
         assert "task_status=open" in text
         assert "artifact_key=task:alpha:task-1" in text
-        assert "route=list_open_tasks" in text
-        assert "intent_type=next_priority" in text
         assert "why=" in text
+        assert "route=list_open_tasks" not in text
+        assert "intent_type=next_priority" not in text
+        assert "scorer_backend=" not in text
         assert "selected_route" not in text
 
     async def test_project_work_catalog_matches_priority_paraphrase(self, monkeypatch):
@@ -1289,6 +1315,52 @@ class TestMcpToolExecution:
         finally:
             lease_store.close()
 
+    async def test_project_work_allow_mutation_executes_finish_with_owned_claim(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
+            calls.append((name, args))
+            assert name == "finish_task_session"
+            assert args["project"] == "alpha"
+            assert args["task_id"] == "task-1"
+            assert args["work_id"] == "work-1"
+            assert args["session_id"] == "sess-1"
+            return json.dumps({"status": "finished", "task_id": "task-1"})
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute_tool)
+
+        try:
+            lease_store.claim(project="alpha", task_id="task-1", owner_agent="codex", session_id="sess-1")
+            data = await mcp_sse._build_project_work_payload(
+                "http://test",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "work_id": "work-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-1",
+                    "intent": "finish task session",
+                    "summary": "Completed lifecycle work.",
+                    "verification": ["scripts/run_pytest_docker.ps1 focused tests passed"],
+                    "changed_files": ["app/routers/mcp_sse.py"],
+                    "next_step": "none",
+                    "allow_mutation": True,
+                },
+            )
+            assert data["status"] == "executed"
+            assert data["action_status"] == "executed"
+            assert data["selected_route"]["tool"] == "finish_task_session"
+            assert data["result"]["status"] == "finished", data["result"]
+            assert calls
+        finally:
+            lease_store.close()
+
     async def test_project_work_catalog_matches_closeout_paraphrase(self):
         result = await mcp_sse._execute_tool(
             "project_work",
@@ -1337,6 +1409,41 @@ class TestMcpToolExecution:
         assert data["weak_model_guardrail"]["confirmation_required"] is True
         assert data["weak_model_guardrail"]["do_not_claim_created"] is True
         assert "No task" in data["weak_model_guardrail"]["plain_instruction"]
+
+    async def test_project_work_allow_mutation_executes_create_task_without_existing_task_claim(self, monkeypatch):
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
+            calls.append((name, args))
+            assert name == "record_work_result"
+            assert args["task_id"] == ""
+            assert args["create_issue_if_unmatched"] is True
+            assert args["skip_auto_task_match"] is True
+            return json.dumps({
+                "status": "recorded",
+                "route": ["memory", "improvement"],
+                "created_issue": {"id": "issue-1", "status": "open"},
+            })
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute_tool)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        data = await mcp_sse._build_project_work_payload(
+            "http://test",
+            {
+                "project": "alpha",
+                "intent": "create improvement task for memory attribution",
+                "summary": "Create a governed backlog item for memory attribution.",
+                "allow_mutation": True,
+                "scorer_backend": "lexical",
+            },
+        )
+
+        assert data["status"] == "executed"
+        assert data["action_status"] == "executed"
+        assert data["executed"] is True
+        assert data["result"]["created_issue"]["id"] == "issue-1"
+        assert calls
 
     async def test_project_work_routes_localized_new_task_creation_via_learned_pattern(self, monkeypatch):
         class FakeRoutePatternStore:
@@ -1641,6 +1748,83 @@ class TestMcpToolExecution:
         assert data["selected_route"]["tool"] == "list_project_laws"
         assert data["selected_route"]["intent_type"] == "list_laws"
         assert seen[0] == "/laws?status=active&limit=100&include_promoted=true&project=supermemory"
+
+    async def test_project_rules_includes_project_context_testing_rules_when_laws_empty(self, monkeypatch):
+        seen: list[str] = []
+
+        async def fake_get(api_base: str, path: str):
+            seen.append(path)
+            return {"items": []}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(
+            mcp_sse,
+            "_project_context_rule_refs",
+            lambda args: [
+                {
+                    "id": "docker-rule-1",
+                    "title": "MnemoForge Docker test contour",
+                    "status": "active",
+                    "scope": "project",
+                    "project": args["project"],
+                    "topic_path": "mnemoforge/testing/docker-test-contour",
+                    "rationale": "Use scripts/run_pytest_docker.ps1; do not run host pytest.",
+                    "is_project_local": True,
+                    "source": "project_context",
+                }
+            ],
+        )
+
+        result = await mcp_sse._execute_tool(
+            "project_rules",
+            {
+                "project": "mnemoforge",
+                "intent": "Which active rules mention Docker test contour and host pytest?",
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["status"] == "executed"
+        assert data["selected_route"]["tool"] == "list_project_laws"
+        assert seen[0] == "/laws?status=active&limit=100&include_promoted=true&project=mnemoforge"
+        assert "MnemoForge Docker test contour" in data["result"]
+        assert "source=project_context" in data["result"]
+        assert "No matching project laws" not in data["result"]
+
+    async def test_project_rules_answer_is_compact_and_omits_route_metadata(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            return {
+                "items": [
+                    {
+                        "id": "law-1",
+                        "title": "Use Docker test contour",
+                        "status": "active",
+                        "scope": "project",
+                        "project": "alpha",
+                        "is_project_local": True,
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        full = await mcp_sse._execute_tool(
+            "project_rules",
+            {"project": "alpha", "intent": "check active project laws"},
+            "http://test",
+        )
+        answer = await mcp_sse._execute_tool(
+            "project_rules",
+            {"project": "alpha", "intent": "check active project laws", "response_format": "answer"},
+            "http://test",
+        )
+
+        assert answer.startswith("Mnemoforge answer\n")
+        assert "project_rules executed route list_project_laws" in answer
+        assert "Use Docker test contour" in answer
+        assert "route_telemetry" not in answer
+        assert "route_candidates" not in answer
+        assert len(answer) < len(full) * 0.35
 
     async def test_project_rules_auto_uses_expert_and_learns_unknown_rule_query(self, monkeypatch):
         recorded: list[dict] = []
@@ -2221,10 +2405,10 @@ class TestMcpToolExecution:
         assert "task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef" in text
         assert "title=Add shared semantic or LLM route matching" in text
         assert "task_status=done" in text
-        assert "route=list_artifacts" in text
-        assert "intent_type=task_lookup" in text
-        assert "scorer_backend=lexical" in text
         assert "warnings=Partial task_id detected" in text
+        assert "route=list_artifacts" not in text
+        assert "intent_type=task_lookup" not in text
+        assert "scorer_backend=lexical" not in text
         assert "selected_route" not in text
         assert "route_candidates" not in text
 
@@ -2258,8 +2442,8 @@ class TestMcpToolExecution:
         )
 
         assert "Answer: No mutation was executed." in text
-        assert "route=record_work_result" in text
         assert "next_safe_action=Review the plan before setting allow_mutation=true." in text
+        assert "route=record_work_result" not in text
 
     async def test_project_context_executes_reconstruction_bundle(self, monkeypatch):
         called: list[tuple[str, dict]] = []
@@ -2498,7 +2682,7 @@ class TestMcpToolExecution:
             lease_store.close()
 
         data = json.loads(result)
-        assert requested[0].startswith("/artifacts?project=alpha&status=open&type=task&limit=1")
+        assert requested[0].startswith("/artifacts?project=alpha&status=open&limit=1&type=task")
         assert data["target"]["target_source"] == "newest_open_task"
         assert data["target"]["task_id"] == "auto-task"
         assert posted[1][0] == "/project/tasks/auto-task/changes"
@@ -2535,8 +2719,10 @@ class TestMcpToolExecution:
         assert data["route"] == ["memory", "improvement"]
         assert data["target"]["target_source"] == "unmatched"
         assert data["created_issue"]["id"] == "issue-1"
+        assert posted[0][1]["project"] == "alpha"
         assert posted[1][0] == "/improvements"
         assert posted[1][1]["title"] == "Add task leasing"
+        assert "source_memory:memory-1" in posted[1][1]["tags"]
 
     async def test_record_work_result_falls_back_to_memory_only_when_unmatched(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
@@ -3154,8 +3340,53 @@ class TestMcpToolExecution:
 
         result = await mcp_sse._execute_tool("list_open_tasks", {"project": "alpha", "limit": 5}, "http://test")
 
-        assert seen["path"] == "/artifacts?project=alpha&status=open&type=task&limit=5"
-        assert "No open tasks found." in result
+        assert seen["path"] == "/artifacts?project=alpha&status=open&limit=5"
+        assert "No open work items found." in result
+
+    async def test_list_open_tasks_can_request_tasks_only(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {"items": []}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        await mcp_sse._execute_tool(
+            "list_open_tasks",
+            {"project": "alpha", "artifact_type": "task", "limit": 5},
+            "http://test",
+        )
+
+        assert seen["path"] == "/artifacts?project=alpha&status=open&limit=5&type=task"
+
+    async def test_list_open_tasks_surfaces_orphan_open_improvements(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            assert path == "/artifacts?project=alpha&status=open&limit=5"
+            return {
+                "items": [
+                    {
+                        "artifact_key": "improvement:alpha:imp-1",
+                        "type": "improvement",
+                        "id": "imp-1",
+                        "title": "Fix memory attribution",
+                        "description": "Raw memory must become visible governed work.",
+                        "status": "open",
+                        "linked_artifact_key": None,
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool("list_open_tasks", {"project": "alpha", "limit": 5}, "http://test")
+
+        assert "Available open work items: 1" in result
+        assert "Fix memory attribution" in result
+        assert "type=improvement" in result
+        assert "Raw memory must become visible governed work." in result
 
     async def test_list_open_tasks_tool_url_encodes_datetime_filters(self, monkeypatch):
         seen: dict[str, str] = {}
@@ -3544,16 +3775,34 @@ class TestMcpToolExecution:
 
         result = await mcp_sse._execute_tool(
             "normalize_mcp_intent",
+            {"intent": "Resume task 84c4e534-d722-4132-8660-4a56ed93f44a from checkpoint", "project_id": "mnemoforge", "top_n": 3},
+            "http://test",
+        )
+
+        assert '"resolved_tool": "pull_task_context"' in result
+        assert '"submit_to": "pull_task_context"' in result
+        assert '"cache"' in result
+        assert '"canonical_surface"' in result
+        assert '"normalize_mcp_intent"' in result
+        assert '"ready_to_execute": true' in result
+
+    async def test_normalize_mcp_intent_routes_explicit_reactivation_to_reopen_task(self, monkeypatch):
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        monkeypatch.setattr(mcp_sse, "_learned_route_match", lambda **kwargs: None)
+
+        async def fake_llm(intent: str, *, project_id: str = "", top_n: int = 3):
+            return {}
+
+        monkeypatch.setattr(mcp_sse, "_normalize_mcp_intent_llm", fake_llm)
+
+        result = await mcp_sse._execute_tool(
+            "normalize_mcp_intent",
             {"intent": "Reopen task 84c4e534-d722-4132-8660-4a56ed93f44a", "project_id": "mnemoforge", "top_n": 3},
             "http://test",
         )
 
         assert '"resolved_tool": "reopen_task"' in result
         assert '"submit_to": "reopen_task"' in result
-        assert '"cache"' in result
-        assert '"canonical_surface"' in result
-        assert '"normalize_mcp_intent"' in result
-        assert '"ready_to_execute": true' in result
 
     async def test_normalize_mcp_intent_uses_learned_route_pattern(self, monkeypatch):
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
@@ -4017,6 +4266,41 @@ class TestMcpToolExecution:
         finally:
             store.close()
 
+    async def test_heartbeat_task_claim_returns_structured_expired_conflict(self, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        try:
+            old_now = datetime.now(timezone.utc) - timedelta(seconds=30)
+            claim = store.claim(
+                project="alpha",
+                task_id="task-1",
+                owner_agent="codex",
+                session_id="sess-codex",
+                lease_ttl_seconds=5,
+                now=old_now,
+            )
+            heartbeat = await mcp_sse._execute_tool(
+                "heartbeat_task_claim",
+                {
+                    "lease_id": claim.lease.lease_id,
+                    "agent_id": "codex",
+                    "session_id": "sess-codex",
+                },
+                "http://test",
+            )
+            data = json.loads(heartbeat)
+            assert data["status"] == "conflict"
+            assert data["error"]["error"] == "lease_expired"
+            assert data["lease"]["status"] == "expired"
+            assert "claim_task again" in data["next_safe_action"]
+        finally:
+            store.close()
+
     async def test_start_task_session_starts_claim_work_and_checkpoint(self, monkeypatch):
         from pathlib import Path
         from app.services import task_lease_service as lease_mod
@@ -4048,8 +4332,66 @@ class TestMcpToolExecution:
             assert data["status"] == "started"
             assert data["owner_session_id"] == "sess-codex"
             assert data["lease"]["status"] == "active"
+            assert data["auto_heartbeat"]["enabled"] is True
             assert data["work_session"]["status"] == "active"
             assert data["checkpoint"]["id"]
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
+    async def test_finish_task_session_stops_start_session_auto_heartbeat(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+        from app.services import stenographer_service as stenographer_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            if path.startswith("/project/tasks/") and path.endswith("/changes"):
+                return {"id": f"checkpoint-{len(path)}", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            started = await mcp_sse._execute_tool(
+                "start_task_session",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-codex",
+                    "lease_ttl_seconds": 30,
+                    "heartbeat_seconds": 1,
+                    "summary": "Starting task execution",
+                },
+                "http://test",
+            )
+            start_data = json.loads(started)
+            lease_id = start_data["lease"]["lease_id"]
+            assert lease_id in lease_mod._HEARTBEATS
+
+            finished = await mcp_sse._execute_tool(
+                "finish_task_session",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "work_id": start_data["work_session"]["work_id"],
+                    "agent_id": "codex",
+                    "session_id": "sess-codex",
+                    "summary": "Completed implementation",
+                    "verification": ["scripts/run_pytest_docker.ps1 focused tests passed"],
+                    "changed_files": ["app/routers/mcp_sse.py"],
+                    "next_step": "none",
+                },
+                "http://test",
+            )
+            finish_data = json.loads(finished)
+            assert finish_data["status"] == "finished"
+            assert lease_id not in lease_mod._HEARTBEATS
         finally:
             lease_store.close()
             stenographer_store.close()
@@ -4833,21 +5175,35 @@ class TestMcpToolExecution:
         assert '"project_recommended_calls"' in result
         assert '"project_context_summary"' in result
 
-    async def test_tool_recommend_prefers_reopen_task_for_resume_requests(self, monkeypatch):
+    async def test_tool_recommend_prefers_pull_task_context_for_checkpoint_resume_requests(self, monkeypatch):
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
 
         result = await mcp_sse._execute_tool(
             "tool_recommend",
-            {"task": "Resume task 84c4e534-d722-4132-8660-4a56ed93f44a"},
+            {"task": "Resume task 84c4e534-d722-4132-8660-4a56ed93f44a from checkpoint"},
             "http://test",
         )
 
-        assert '"tool": "reopen_task"' in result
+        assert '"tool": "pull_task_context"' in result
+        assert '"tool": "start_task_session"' in result
         assert '"tool": "normalize_mcp_intent"' in result
         assert '"canonical_surface"' in result
         assert '"stage": "testing"' in result
         assert '"feedback_expected": true' in result
         assert '"follow_up": "tool_feedback"' in result
+        assert result.index('"tool": "pull_task_context"') < result.index('"tool": "start_task_session"')
+
+    async def test_tool_recommend_prefers_reopen_task_for_reactivation_requests(self, monkeypatch):
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool(
+            "tool_recommend",
+            {"task": "Reopen task 84c4e534-d722-4132-8660-4a56ed93f44a"},
+            "http://test",
+        )
+
+        assert '"tool": "reopen_task"' in result
+        assert '"tool": "normalize_mcp_intent"' in result
         assert result.index('"tool": "reopen_task"') < result.index('"tool": "report_task_checkpoint"')
 
     async def test_tool_explain_marks_testing_tools_for_feedback(self, monkeypatch):
@@ -4950,6 +5306,8 @@ class TestMcpToolExecution:
         assert "expert helpers" in info["tip"]
         assert "project_work" in info["tip"]
         assert "pickup_coordination_messages" in info["tip"]
+        assert "pull_task_context first" in info["tip"]
+        assert "use reopen_task only" in info["tip"]
         assert info["tool_catalog"]["preferred_mode"] == "compact"
         assert info["tool_catalog"]["compact_request"] == {"method": "tools/list", "params": {"mode": "compact"}}
         assert info["tool_catalog"]["full_request"] == {"method": "tools/list", "params": {"mode": "full"}}
@@ -5026,6 +5384,8 @@ class TestMcpToolExecution:
         assert "Start with ask_project" in result
         assert "get_task_execution_context" in result
         assert "project-specific hints" in result
+        assert "pull_task_context first" in result
+        assert "use reopen_task only" in result
 
     async def test_get_onboarding_degrades_gracefully_when_skill_pack_http500(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
