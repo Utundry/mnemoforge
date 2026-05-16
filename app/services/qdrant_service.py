@@ -339,9 +339,12 @@ class QdrantService:
 
     async def mark_used(self, memory_ids: list[UUID], project: Optional[str] = None) -> None:
         """Use event: update last_access_ts for retrieved memories (called from /context)."""
+        now = datetime.now(timezone.utc)
+        # Update project activity tracker FIRST (must happen even with empty memory_ids)
+        if project:
+            _update_project_activity(project, now.timestamp())
         if not memory_ids:
             return
-        now = datetime.now(timezone.utc)
         iso_now = now.isoformat()
         for mid in memory_ids:
             await self._client.set_payload(
@@ -350,9 +353,6 @@ class QdrantService:
                 points=[str(mid)],
             )
             await _sync_memory_store(mid, metadata_patch={"last_access_ts": iso_now})
-        # Update project activity tracker (module-level dict, survives within process lifetime)
-        if project:
-            _update_project_activity(project, now.timestamp())
 
     async def search(
         self,
@@ -1264,3 +1264,5 @@ async def _remove_memory_from_store(memory_id: UUID) -> None:
     from app.services.memory_store import get_memory_store
 
     await get_memory_store().delete(str(memory_id))
+
+
