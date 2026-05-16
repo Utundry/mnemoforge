@@ -2464,6 +2464,7 @@ def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], tex
             "next_step_scope": "operator_review" if any(token in _route_tokens(text) for token in {"close", "tail"}) else "unknown",
             "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
             "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
+            "session_id": str(args.get("session_id") or "").strip(),
             "source": "project_work",
         }
     elif route["intent_type"] == "create_task":
