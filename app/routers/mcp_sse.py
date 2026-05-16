@@ -3218,6 +3218,12 @@ def _ask_project_select_route_lexical(args: dict[str, Any]) -> dict[str, Any]:
             reason="Question contains a full or partial task id; route to project_context task lookup.",
             confidence=0.9,
         )
+    elif any(term in text for term in ("memory", "find in memory", "search memory", "recall", "remember", "memory_store", "memory_search")):
+        route.update(
+            facade="project_context",
+            reason="Question asks to find/search/recall memory content; route to project_context for memory lookup.",
+            confidence=0.88,
+        )
     elif any(term in text for term in ("next", "priority", "open work", "open tasks", "what should i do", "continue", "backlog")):
         route.update(
             facade="project_work",
@@ -11026,3 +11032,6 @@ async def sse_post(sessionId: str, request: Request) -> Response:
         await _touch_session(sessionId)
 
     return Response(status_code=202)
+
+
+
