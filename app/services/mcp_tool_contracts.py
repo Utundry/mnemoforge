@@ -1655,13 +1655,15 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "inputSchema": {
             "type": "object",
-            "required": ["project", "task_id", "session_id"],
+            "required": ["project", "task_id"],
             "properties": {
                 "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string"},
                 "agent_id": {"type": "string", "default": "codex"},
                 "owner_agent": {"type": "string", "description": "Compatibility alias for agent_id"},
-                "session_id": {"type": "string"},
+                "session_id": {"type": "string", "description": "Required unless danger_mode is set with danger_confirmation"},
+                "danger_mode": {"type": "boolean", "default": False, "description": "Allow bypassing session_id requirement with explicit confirmation"},
+                "danger_confirmation": {"type": "string", "description": "Must be 'authorize_session_bypass' when danger_mode=true to auto-generate session_id"},
                 "lease_ttl_seconds": {"type": "integer", "minimum": 5, "maximum": 86400, "default": 900},
                 "auto_heartbeat": {"type": "boolean", "default": True},
                 "heartbeat_seconds": {"type": "number", "minimum": 1},
