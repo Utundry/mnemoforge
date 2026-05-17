@@ -207,6 +207,49 @@ class StenographerStore:
             ).fetchone()
         return self._row_to_work(row) if row else None
 
+    def get_active_work_by_task(
+        self, *, project: str, task_id: str, agent_id: str, session_id: str
+    ) -> WorkSessionRecord | None:
+        """Find active work session for given task/agent/session. Used for auto-detecting work_id."""
+        project = _clean_text(project, 128)
+        task_id = _clean_text(task_id, 256)
+        agent_id = _clean_text(agent_id, 128)
+        session_id = _clean_text(session_id, 256)
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT * FROM work_sessions
+                 WHERE project = ? AND task_id = ? AND agent_id = ? AND session_id = ? AND status = 'active'
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+                """,
+                (project, task_id, agent_id, session_id),
+            ).fetchone()
+        return self._row_to_work(row) if row else None
+
+    def get_active_work_by_task_any_session(
+        self, *, project: str, task_id: str, agent_id: str
+    ) -> WorkSessionRecord | None:
+        """Find active work session for given task/agent, ignoring session_id.
+        
+        Used when work_token proves ownership but the original SSE session
+        is no longer available (e.g. after server restart).
+        """
+        project = _clean_text(project, 128)
+        task_id = _clean_text(task_id, 256)
+        agent_id = _clean_text(agent_id, 128)
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT * FROM work_sessions
+                 WHERE project = ? AND task_id = ? AND agent_id = ? AND status = 'active'
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+                """,
+                (project, task_id, agent_id),
+            ).fetchone()
+        return self._row_to_work(row) if row else None
+
     def _work(self, work_id: str) -> WorkSessionRecord | None:
         with self._lock:
             row = self._conn.execute("SELECT * FROM work_sessions WHERE work_id = ?", (work_id,)).fetchone()
@@ -463,6 +506,49 @@ class StenographerStore:
             )
             self._conn.commit()
         return self._work(work_id)  # type: ignore[return-value]
+
+    def end_work_session_by_work_id(
+        self,
+        *,
+        work_id: str,
+        status: str,
+        result: str = "",
+    ) -> WorkSessionRecord | None:
+        """End a work session by work_id only, without checking session_id.
+
+        Used when work_token proves ownership but the original SSE session
+        is no longer available (e.g. after server restart).
+        """
+        status = _clean_text(status, 32)
+        if status not in _VALID_TERMINAL_STATUSES:
+            raise ProtocolViolation("invalid_terminal_status", "End status must be completed, blocked, failed, interrupted, or cancelled.")
+        work = self._work(work_id)
+        if not work or work.status not in ("active", "parked"):
+            raise ProtocolViolation(
+                "work_not_active",
+                f"Work session {work_id} is not active (status={work.status if work else 'not_found'}).",
+                required_next_tool="get_work_session_state",
+            )
+        if status == "completed":
+            closeout = self._closeout_review(work)
+            if not closeout["ready"]:
+                raise ProtocolViolation(
+                    "closeout_required",
+                    "Completed work requires explicit closeout evidence: verification, changed_files, and next_step spans.",
+                    required_next_tool="record_stenographer_span",
+                    state={
+                        **self.get_state(agent_id=work.agent_id, session_id=work.session_id).model_dump(mode="json"),
+                        "closeout_missing": closeout["missing"],
+                    },
+                )
+        now = _ts()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE work_sessions SET status=?, result=?, updated_at=?, ended_at=? WHERE work_id=?",
+                (status, _clean_text(result, 2000), now, now, work_id),
+            )
+            self._conn.commit()
+        return self._work(work_id)
 
     def record_span(
         self,

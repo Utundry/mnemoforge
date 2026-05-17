@@ -24,6 +24,8 @@ class TaskLeaseRecord(BaseModel):
     release_reason: str = ""
     lease_ttl_seconds: int
     previous_lease_id: str = ""
+    work_token_hash: str = ""
+    work_token_preview: str = ""
 
 
 class TaskLeaseClaimResult(BaseModel):
@@ -31,4 +33,5 @@ class TaskLeaseClaimResult(BaseModel):
     lease: TaskLeaseRecord
     previous_claim_expired: bool = False
     previous_lease: Optional[TaskLeaseRecord] = None
+    work_token: str = ""
 

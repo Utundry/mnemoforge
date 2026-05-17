@@ -16,8 +16,8 @@ def _install_task_claim_store(monkeypatch, *, project: str = "alpha", task_id: s
 
     store = lease_mod.TaskLeaseStore(Path(":memory:"))
     monkeypatch.setattr(lease_mod, "_STORE", store)
-    store.claim(project=project, task_id=task_id, owner_agent=agent_id, session_id=session_id)
-    return store
+    result = store.claim(project=project, task_id=task_id, owner_agent=agent_id, session_id=session_id)
+    return store, result.work_token
 
 
 class _FakeHandle:
@@ -846,11 +846,13 @@ class TestMcpToolExecution:
         lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
         monkeypatch.setattr(lease_mod, "_STORE", lease_store)
         try:
-            await mcp_sse._execute_tool(
+            claimed = await mcp_sse._execute_tool(
                 "claim_task",
                 {"project": "alpha", "task_id": "task-1", "owner_agent": "codex", "session_id": "sess-1"},
                 "http://test",
             )
+            claimed_data = json.loads(claimed)
+            work_token = claimed_data.get("work_token", "")
             result = await mcp_sse._execute_tool(
                 "operational_tray",
                 {
@@ -860,6 +862,7 @@ class TestMcpToolExecution:
                     "state": "implementation",
                     "action": "execute",
                     "tray_action": "record_stage_evidence",
+                    "work_token": work_token,
                     "args": {
                         "stage": "planning",
                         "summary": "Task framing recorded.",
@@ -900,11 +903,13 @@ class TestMcpToolExecution:
         lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
         monkeypatch.setattr(lease_mod, "_STORE", lease_store)
         try:
-            await mcp_sse._execute_tool(
+            claimed = await mcp_sse._execute_tool(
                 "claim_task",
                 {"project": "alpha", "task_id": "task-1", "owner_agent": "codex", "session_id": "sess-1"},
                 "http://test",
             )
+            claimed_data = json.loads(claimed)
+            work_token = claimed_data.get("work_token", "")
             result = await mcp_sse._execute_tool(
                 "operational_tray",
                 {
@@ -914,6 +919,7 @@ class TestMcpToolExecution:
                     "state": "documentation",
                     "action": "execute",
                     "tool": "record_checkpoint",
+                    "work_token": work_token,
                     "arguments": {
                         "stage": "completed",
                         "summary": "Documentation projection knowledge recorded.",
@@ -1336,7 +1342,8 @@ class TestMcpToolExecution:
         monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute_tool)
 
         try:
-            lease_store.claim(project="alpha", task_id="task-1", owner_agent="codex", session_id="sess-1")
+            claim_result = lease_store.claim(project="alpha", task_id="task-1", owner_agent="codex", session_id="sess-1")
+            work_token = claim_result.work_token
             data = await mcp_sse._build_project_work_payload(
                 "http://test",
                 {
@@ -1351,6 +1358,7 @@ class TestMcpToolExecution:
                     "changed_files": ["app/routers/mcp_sse.py"],
                     "next_step": "none",
                     "allow_mutation": True,
+                    "work_token": work_token,
                 },
             )
             assert data["status"] == "executed"
@@ -2607,7 +2615,7 @@ class TestMcpToolExecution:
 
     async def test_record_work_result_uses_provided_task_and_records_memory_checkpoint(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
-        lease_store = _install_task_claim_store(monkeypatch)
+        lease_store, work_token = _install_task_claim_store(monkeypatch)
 
         async def fake_post(api_base: str, path: str, payload: dict):
             posted.append((path, payload))
@@ -2629,6 +2637,7 @@ class TestMcpToolExecution:
                     "verification": ["pytest tests/test_mcp_sse.py passed"],
                     "session_id": "sess-1",
                     "acted_by": "codex",
+                    "work_token": work_token,
                 },
                 "http://test",
             )
@@ -2647,7 +2656,7 @@ class TestMcpToolExecution:
     async def test_record_work_result_auto_matches_newest_open_task(self, monkeypatch):
         requested: list[str] = []
         posted: list[tuple[str, dict]] = []
-        lease_store = _install_task_claim_store(monkeypatch, task_id="auto-task")
+        lease_store, work_token = _install_task_claim_store(monkeypatch, task_id="auto-task")
 
         async def fake_get(api_base: str, path: str):
             requested.append(path)
@@ -2675,7 +2684,7 @@ class TestMcpToolExecution:
         try:
             result = await mcp_sse._execute_tool(
                 "record_work_result",
-                {"project": "alpha", "summary": "Recorded result on the current task.", "session_id": "sess-1", "acted_by": "codex"},
+                {"project": "alpha", "summary": "Recorded result on the current task.", "session_id": "sess-1", "acted_by": "codex", "work_token": work_token},
                 "http://test",
             )
         finally:
@@ -2752,7 +2761,7 @@ class TestMcpToolExecution:
         from app.services import stenographer_service as stenographer_mod
 
         store = stenographer_mod.StenographerStore(Path(":memory:"))
-        lease_store = _install_task_claim_store(monkeypatch)
+        lease_store, work_token = _install_task_claim_store(monkeypatch)
         monkeypatch.setattr(stenographer_mod, "_STORE", store)
         posted: list[tuple[str, dict]] = []
         draft_calls: list[dict] = []
@@ -2805,6 +2814,7 @@ class TestMcpToolExecution:
                     "work_id": "work-1",
                     "agent_id": "codex",
                     "session_id": "sess-1",
+                    "work_token": work_token,
                     "summary": "Closeout with stenographer evidence.",
                 },
                 "http://test",
@@ -3871,7 +3881,7 @@ class TestMcpToolExecution:
 
     async def test_report_task_checkpoint_records_task_change_and_session_context(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
-        lease_store = _install_task_claim_store(monkeypatch)
+        lease_store, work_token = _install_task_claim_store(monkeypatch)
 
         async def fake_post(api_base: str, path: str, payload: dict):
             posted.append((path, payload))
@@ -3909,6 +3919,7 @@ class TestMcpToolExecution:
                     "acted_by": "codex",
                     "source": "mcp",
                     "session_id": "sess-1",
+                    "work_token": work_token,
                 },
                 "http://test",
                 session_id="sess-1",
@@ -3929,7 +3940,7 @@ class TestMcpToolExecution:
 
     async def test_record_task_checkpoint_creates_resume_handoff_for_blocked_stage(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
-        lease_store = _install_task_claim_store(monkeypatch)
+        lease_store, work_token = _install_task_claim_store(monkeypatch)
 
         async def fake_post(api_base: str, path: str, payload: dict):
             posted.append((path, payload))
@@ -3957,6 +3968,7 @@ class TestMcpToolExecution:
                     "acted_by": "codex",
                     "to_agent": "codex",
                     "session_id": "sess-1",
+                    "work_token": work_token,
                 },
                 "http://test",
             )
@@ -3974,7 +3986,7 @@ class TestMcpToolExecution:
 
     async def test_record_task_checkpoint_blocks_obvious_scope_mismatch(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
-        lease_store = _install_task_claim_store(monkeypatch, task_id="reconstruct-projects")
+        lease_store, work_token = _install_task_claim_store(monkeypatch, task_id="reconstruct-projects")
 
         async def fake_get(api_base: str, path: str):
             assert path == "/project/tasks/reconstruct-projects?project=alpha"
@@ -4007,6 +4019,7 @@ class TestMcpToolExecution:
                     "next_step": "Prepare a public release checklist.",
                     "acted_by": "codex",
                     "session_id": "sess-1",
+                    "work_token": work_token,
                 },
                 "http://test",
             )
@@ -4021,7 +4034,7 @@ class TestMcpToolExecution:
 
     async def test_record_task_checkpoint_allows_scope_confirmation_override(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
-        lease_store = _install_task_claim_store(monkeypatch, task_id="reconstruct-projects")
+        lease_store, work_token = _install_task_claim_store(monkeypatch, task_id="reconstruct-projects")
 
         async def fake_get(api_base: str, path: str):
             return {
@@ -4050,6 +4063,7 @@ class TestMcpToolExecution:
                     "scope_confirmation": "current checkpoint belongs to this task",
                     "acted_by": "codex",
                     "session_id": "sess-1",
+                    "work_token": work_token,
                 },
                 "http://test",
             )
@@ -4133,7 +4147,9 @@ class TestMcpToolExecution:
                 },
                 "http://test",
             )
-            assert json.loads(claimed)["status"] in {"claimed", "renewed"}
+            claimed_data = json.loads(claimed)
+            assert claimed_data["status"] in {"claimed", "renewed"}
+            work_token = claimed_data.get("work_token", "")
 
             started = await mcp_sse._execute_tool(
                 "start_work_session",
@@ -4143,6 +4159,7 @@ class TestMcpToolExecution:
                     "agent_id": "codex",
                     "session_id": "sess-1",
                     "work_id": "work-1",
+                    "work_token": work_token,
                 },
                 "http://test",
             )
@@ -4477,6 +4494,88 @@ class TestMcpToolExecution:
             lease_store.close()
             stenographer_store.close()
 
+    async def test_finish_task_session_auto_detects_work_id(self, monkeypatch):
+        """finish_task_session should auto-detect work_id from active work session."""
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+        from app.services import stenographer_service as stenographer_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            if path.startswith("/project/tasks/") and path.endswith("/changes"):
+                return {"id": "checkpoint-auto-work", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            lease_store.claim(project="alpha", task_id="task-1", owner_agent="codex", session_id="sess-codex")
+            stenographer_store.start_work_session(
+                project="alpha",
+                task_id="task-1",
+                agent_id="codex",
+                session_id="sess-codex",
+                work_id="auto-work-123",
+            )
+            result = await mcp_sse._execute_tool(
+                "finish_task_session",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-codex",
+                    "summary": "Auto-detected work_id",
+                    "verification": ["auto-detection works"],
+                    "changed_files": ["app/routers/mcp_sse.py"],
+                    "next_step": "none",
+                },
+                "http://test",
+            )
+            data = json.loads(result)
+            assert data["status"] == "finished"
+            assert data["work_session"]["work_id"] == "auto-work-123"
+            assert data["work_session"]["status"] == "completed"
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
+    async def test_finish_task_session_returns_work_session_not_found_without_work_id(self, monkeypatch):
+        """finish_task_session should error when no active work session exists and work_id not provided."""
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+        from app.services import stenographer_service as stenographer_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        monkeypatch.setattr(mcp_sse, "_post", AsyncMock())
+
+        try:
+            lease_store.claim(project="alpha", task_id="task-1", owner_agent="codex", session_id="sess-codex")
+            # No work session started
+            result = await mcp_sse._execute_tool(
+                "finish_task_session",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-codex",
+                },
+                "http://test",
+            )
+            data = json.loads(result)
+            assert data["status"] == "conflict"
+            assert data["error"] == "work_session_not_found"
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
     async def test_finish_task_session_returns_release_conflict(self, monkeypatch):
         from pathlib import Path
         from app.services import task_lease_service as lease_mod
@@ -4631,7 +4730,7 @@ class TestMcpToolExecution:
         root.mkdir(parents=True, exist_ok=True)
         stenographer_store = stenographer_mod.StenographerStore(root / f"stenographer-{uuid4().hex}.db")
         draft_store = draft_mod.CheckpointDraftStore(root / f"drafts-{uuid4().hex}.db")
-        lease_store = _install_task_claim_store(monkeypatch)
+        lease_store, work_token = _install_task_claim_store(monkeypatch)
         monkeypatch.setattr(draft_mod, "get_stenographer_store", lambda: stenographer_store)
         monkeypatch.setattr(draft_mod, "_STORE", draft_store)
         monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
@@ -4725,6 +4824,7 @@ class TestMcpToolExecution:
                     "session_id": "sess-1",
                     "status": "completed",
                     "result": "Approved clerk draft by reference.",
+                    "work_token": work_token,
                 },
                 "http://test",
             )
@@ -4810,7 +4910,7 @@ class TestMcpToolExecution:
 
     async def test_checkpoint_replay_completeness_roundtrip_through_mcp_state(self, client, monkeypatch):
         from app.routers import models as models_router
-        lease_store = _install_task_claim_store(monkeypatch, task_id="task-replay-1")
+        lease_store, work_token = _install_task_claim_store(monkeypatch, task_id="task-replay-1")
 
         class FakeRegistry:
             def log_handoff(self, **kwargs):
@@ -4871,6 +4971,7 @@ class TestMcpToolExecution:
                     "acted_by": "codex",
                     "to_agent": "codex",
                     "session_id": "sess-1",
+                    "work_token": work_token,
                 },
                 "http://test",
             )

@@ -442,7 +442,7 @@ class ModelMirror:
                         MODEL_MIRROR_LOOKBACK_HOURS,
                     )
                 else:
-                    logger.info(
+                    logger.debug(
                         "Model mirror: no events in last %.0fh — skipping",
                         MODEL_MIRROR_LOOKBACK_HOURS,
                     )

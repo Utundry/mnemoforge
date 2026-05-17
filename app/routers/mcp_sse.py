@@ -2427,6 +2427,10 @@ def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], tex
     if detail not in {"compact", "full"}:
         detail = "compact"
 
+    # Extract danger_mode and danger_confirmation from args (may be used by start/finish task session payloads)
+    danger_mode = bool(args.get("danger_mode", False))
+    danger_confirmation = str(args.get("danger_confirmation") or "")
+
     if route["intent_type"] == "next_priority":
         claim_filter = str(args.get("claim_filter") or "").strip().lower()
         if claim_filter not in {"available", "claimed", "all"}:
@@ -2465,6 +2469,7 @@ def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], tex
             "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
             "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
             "session_id": str(args.get("session_id") or "").strip(),
+            "work_token": str(args.get("work_token") or "").strip(),
             "source": "project_work",
         }
     elif route["intent_type"] == "create_task":
@@ -2520,12 +2525,18 @@ def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], tex
             "task_id": task_id,
             "work_id": str(args.get("work_id") or "").strip(),
             "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
+            "owner_agent": str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex",
+            "acted_by": str(args.get("acted_by") or args.get("agent_id") or "codex").strip() or "codex",
             "session_id": str(args.get("session_id") or "").strip(),
             "status": str(args.get("status") or "completed").strip(),
             "summary": str(args.get("summary") or intent or "Task session finished.").strip(),
             "verification": verification,
             "changed_files": changed_files,
-            "next_step": str(args.get("next_step") or "none").strip(),
+            "next_step": str(args.get("next_step") or "").strip(),
+            "checkpoint_mode": str(args.get("checkpoint_mode") or "standard").strip(),
+            "work_token": str(args.get("work_token") or "").strip(),
+            "danger_mode": danger_mode,
+            "danger_confirmation": danger_confirmation,
             "reason": str(args.get("reason") or "project_work:finish_task_session").strip(),
             "source": "project_work",
         }
@@ -2685,6 +2696,15 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
                 for item in (result.get("candidates") or [])[:5]
                 if isinstance(item, dict)
             ],
+        }
+    if route.get("tool") == "start_task_session" and isinstance(result, dict):
+        return {
+            "status": result.get("status"),
+            "task_id": result.get("task_id"),
+            "work_token": result.get("work_token"),
+            "lease_id": (result.get("lease") or {}).get("lease_id"),
+            "work_session_id": (result.get("work_session") or {}).get("work_id"),
+            "auto_heartbeat": result.get("auto_heartbeat"),
         }
     return result
 
@@ -3172,6 +3192,12 @@ def _format_route_answer(data: dict[str, Any]) -> str:
         lines.append(f"task_status={_diagnostic_value(first.get('status'))}")
     if first.get("artifact_key"):
         lines.append(f"artifact_key={_diagnostic_value(first.get('artifact_key'))}")
+    if first.get("work_token"):
+        lines.append(f"work_token={_diagnostic_value(first.get('work_token'))}")
+    if first.get("lease_id"):
+        lines.append(f"lease_id={_diagnostic_value(first.get('lease_id'))}")
+    if first.get("work_session_id"):
+        lines.append(f"work_session_id={_diagnostic_value(first.get('work_session_id'))}")
     if data.get("facade") == "project_work" and intent_type == "next_priority":
         lines.append(f"why={_diagnostic_value(selected.get('reason'))}")
     if data.get("warnings"):
@@ -4260,6 +4286,7 @@ def _project_capture_route(
                 "next_step_scope": args.get("next_step_scope") or "unknown",
                 "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
                 "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
+                "work_token": str(args.get("work_token") or "").strip(),
                 "source": "project_capture",
                 "danger_mode": bool(args.get("danger_mode", False)),
                 "danger_confirmation": str(args.get("danger_confirmation") or ""),
@@ -4623,6 +4650,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
             ),
             owner_session_id=str(route_payload.get("session_id") or args.get("session_id") or session_id or ""),
             tool_name=f"project_work:{route['tool']}",
+            work_token=str(route_payload.get("work_token") or args.get("work_token") or ""),
             danger_mode=bool(args.get("danger_mode", False)),
             danger_confirmation=str(args.get("danger_confirmation") or ""),
         )
@@ -6219,6 +6247,11 @@ TOOLS = [
                 "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
                 "agent_id": {"type": "string", "default": "codex"},
                 "acted_by": {"type": "string", "default": "codex"},
+                "work_token": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Work token from start_task_session for mutating operations. Required when allow_mutation=true and a task is claimed.",
+                },
             },
         },
     },
@@ -7676,15 +7709,18 @@ def _task_mutation_requires_owned_claim(
     owner_agent: str,
     owner_session_id: str,
     tool_name: str,
+    work_token: str = "",
     danger_mode: bool = False,
     danger_confirmation: str = "",
 ) -> dict[str, Any] | None:
-    from app.services.task_lease_service import get_task_lease_store
+    from app.services.task_lease_service import get_task_lease_store, verify_work_token_for_mutation
 
     project_clean = str(project or "mnemoforge").strip() or "mnemoforge"
     task_clean = str(task_id or "").strip()
     owner_clean = str(owner_agent or "codex").strip() or "codex"
     session_clean = str(owner_session_id or "").strip()
+    work_token_clean = str(work_token or "").strip()
+
     if not task_clean:
         return {
             "status": "conflict",
@@ -7693,18 +7729,6 @@ def _task_mutation_requires_owned_claim(
             "claim_allowed": False,
             "next_safe_action": "Provide task_id for mutating task operations.",
         }
-    if not session_clean:
-        if danger_mode and str(danger_confirmation).strip().lower() == "authorize_session_bypass":
-            import uuid
-            session_clean = f"danger-mode-{uuid.uuid4().hex[:8]}"
-        else:
-            return {
-                "status": "conflict",
-                "error": "session_id_required_for_mutation",
-                "tool": tool_name,
-                "claim_allowed": False,
-                "next_safe_action": "Claim task first and pass session_id for mutating operations.",
-            }
 
     active = get_task_lease_store().get_active_claim(project=project_clean, task_id=task_clean)
     if active is None:
@@ -7719,6 +7743,36 @@ def _task_mutation_requires_owned_claim(
                 "next_safe_action": "Call claim_task or start_task_session before mutating task state.",
             }
         return None
+
+    # ── work_token as primary proof of ownership ──────────────────────────
+    # If a valid work_token is provided, it proves ownership regardless of
+    # session_id or owner_agent. This allows CLI tools that cannot keep an
+    # SSE session open to continue working with a claimed task.
+    if work_token_clean and verify_work_token_for_mutation(
+        store=get_task_lease_store(),
+        lease_id=active.lease_id,
+        work_token=work_token_clean,
+        task_id=task_clean,
+        project=project_clean,
+    ):
+        return None
+
+    # ── session_id + owner_agent as fallback proof of ownership ───────────
+    # Only when work_token is missing or invalid do we fall back to checking
+    # the SSE session identity.
+    if not session_clean:
+        if danger_mode and str(danger_confirmation).strip().lower() == "authorize_session_bypass":
+            import uuid
+            session_clean = f"danger-mode-{uuid.uuid4().hex[:8]}"
+        else:
+            return {
+                "status": "conflict",
+                "error": "session_id_required_for_mutation",
+                "tool": tool_name,
+                "claim_allowed": False,
+                "next_safe_action": "Claim task first and pass session_id for mutating operations.",
+            }
+
     if active.owner_agent != owner_clean or active.session_id != session_clean:
         if not (danger_mode and str(danger_confirmation).strip().lower() == "authorize_session_bypass"):
             return {
@@ -7734,6 +7788,26 @@ def _task_mutation_requires_owned_claim(
                 "claim_allowed": False,
                 "next_safe_action": "Do not mutate this task; coordinate handoff or wait for lease release/expiry.",
             }
+
+    if not work_token_clean:
+        if not (danger_mode and str(danger_confirmation).strip().lower() == "authorize_session_bypass"):
+            return {
+                "status": "conflict",
+                "error": "work_token_required",
+                "tool": tool_name,
+                "lease_id": active.lease_id,
+                "claim_allowed": False,
+                "next_safe_action": "Pass work_token from start_task_session for mutating operations.",
+            }
+    elif not verify_work_token_for_mutation(store=get_task_lease_store(), lease_id=active.lease_id, work_token=work_token_clean, task_id=task_clean, project=project_clean):
+        return {
+            "status": "conflict",
+            "error": "work_token_invalid",
+            "tool": tool_name,
+            "lease_id": active.lease_id,
+            "claim_allowed": False,
+            "next_safe_action": "Do not mutate this task; work_token verification failed.",
+        }
     return None
 
 
@@ -9153,6 +9227,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 owner_agent=str(args.get("owner_agent") or args.get("agent_id") or args.get("acted_by") or "codex"),
                 owner_session_id=str(args.get("session_id") or session_id or ""),
                 tool_name=name,
+                work_token=str(args.get("work_token") or ""),
                 danger_mode=bool(args.get("danger_mode", False)),
                 danger_confirmation=str(args.get("danger_confirmation") or ""),
             )
@@ -9484,6 +9559,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             "owner_session_id": lease_session_id,
             "lease": claim.lease.model_dump(mode="json"),
             "lease_status": claim.status,
+            "work_token": claim.work_token,
             "auto_heartbeat": {
                 "enabled": auto_heartbeat_enabled,
                 "heartbeat_seconds": auto_heartbeat.heartbeat_seconds if auto_heartbeat is not None else None,
@@ -9501,44 +9577,107 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
 
     elif name == "finish_task_session":
         from app.services.stenographer_service import ProtocolViolation, get_stenographer_store
-        from app.services.task_lease_service import get_task_lease_store, stop_task_lease_auto_heartbeat
+        from app.services.task_lease_service import get_task_lease_store, stop_task_lease_auto_heartbeat, verify_work_token_for_mutation
+        import uuid
 
         project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
         task_id = str(args["task_id"]).strip()
-        work_id = str(args["work_id"]).strip()
         owner_agent = str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex"
         lease_session_id = str(args.get("session_id") or session_id or "").strip()
-        if not lease_session_id:
-            raise ValueError("session_id is required for finish_task_session")
+        work_token = str(args.get("work_token") or "").strip()
+
+        # danger_mode: auto-generate session_id if confirmed by user
+        danger_mode = bool(args.get("danger_mode", False))
+        danger_confirmation = str(args.get("danger_confirmation", "")).strip().lower()
+        if not lease_session_id and not work_token:
+            if danger_mode and danger_confirmation == "authorize_session_bypass":
+                lease_session_id = f"danger-mode-{uuid.uuid4().hex[:8]}"
+            else:
+                raise ValueError("session_id is required for finish_task_session. Set danger_mode=true with danger_confirmation='authorize_session_bypass' for recovery operations.")
 
         lease_store = get_task_lease_store()
         active = lease_store.get_active_claim(project=project, task_id=task_id)
         if active is None:
-            data = {
-                "status": "conflict",
-                "error": "active_claim_required",
-                "project": project,
-                "task_id": task_id,
-                "claim_allowed": False,
-                "next_safe_action": "Call start_task_session before finishing task work.",
-            }
-            data = _annotate_structured_tool_payload(name, data)
-            return json.dumps(data, indent=2, ensure_ascii=False)
-        if active.owner_agent != owner_agent or active.session_id != lease_session_id:
-            data = {
-                "status": "conflict",
-                "error": "lease_owner_mismatch",
-                "project": project,
-                "task_id": task_id,
-                "owner_agent": active.owner_agent,
-                "owner_session_id": active.session_id,
-                "lease_id": active.lease_id,
-                "expires_at": active.expires_at.isoformat(),
-                "claim_allowed": False,
-                "next_safe_action": "Do not finish or mutate this task; coordinate handoff or wait for lease release/expiry.",
-            }
-            data = _annotate_structured_tool_payload(name, data)
-            return json.dumps(data, indent=2, ensure_ascii=False)
+            if danger_mode and danger_confirmation == "authorize_session_bypass":
+                pass  # bypass: no active claim needed when recovery mode is authorized
+            else:
+                data = {
+                    "status": "conflict",
+                    "error": "active_claim_required",
+                    "project": project,
+                    "task_id": task_id,
+                    "claim_allowed": False,
+                    "next_safe_action": "Call start_task_session before finishing task work.",
+                }
+                data = _annotate_structured_tool_payload(name, data)
+                return json.dumps(data, indent=2, ensure_ascii=False)
+
+        # ── work_token as primary proof of ownership ──────────────────
+        # If a valid work_token is provided, it proves ownership regardless
+        # of session_id. This allows CLI tools and post-restart scenarios
+        # to finish a task session without the original SSE session.
+        work_token_valid = False
+        if active is not None and work_token:
+            work_token_valid = verify_work_token_for_mutation(
+                store=lease_store,
+                lease_id=active.lease_id,
+                work_token=work_token,
+                task_id=task_id,
+                project=project,
+            )
+
+        if active is not None and not work_token_valid and (active.owner_agent != owner_agent or active.session_id != lease_session_id):
+            if danger_mode and danger_confirmation == "authorize_session_bypass":
+                pass  # bypass: owner/session mismatch allowed in recovery mode
+            else:
+                data = {
+                    "status": "conflict",
+                    "error": "lease_owner_mismatch",
+                    "project": project,
+                    "task_id": task_id,
+                    "owner_agent": active.owner_agent,
+                    "owner_session_id": active.session_id,
+                    "lease_id": active.lease_id,
+                    "expires_at": active.expires_at.isoformat(),
+                    "claim_allowed": False,
+                    "next_safe_action": "Do not finish or mutate this task; coordinate handoff or wait for lease release/expiry.",
+                }
+                data = _annotate_structured_tool_payload(name, data)
+                return json.dumps(data, indent=2, ensure_ascii=False)
+
+        # Auto-detect work_id from active work session if not explicitly provided
+        session_store = get_stenographer_store()
+        explicit_work_id = str(args.get("work_id") or "").strip()
+        if explicit_work_id:
+            work_id = explicit_work_id
+        else:
+            # Primary: search by session_id (original SSE session owner)
+            active_work = session_store.get_active_work_by_task(
+                project=project,
+                task_id=task_id,
+                agent_id=owner_agent,
+                session_id=lease_session_id,
+            )
+            # Fallback: if work_token proves ownership, search without session_id
+            # (handles server restart / session loss scenarios)
+            if active_work is None and work_token_valid:
+                active_work = session_store.get_active_work_by_task_any_session(
+                    project=project,
+                    task_id=task_id,
+                    agent_id=owner_agent,
+                )
+            if active_work is None:
+                data = {
+                    "status": "conflict",
+                    "error": "work_session_not_found",
+                    "project": project,
+                    "task_id": task_id,
+                    "message": "No active work session found for this task. Provide work_id explicitly or start a work session first.",
+                    "next_safe_action": "Provide work_id parameter or call start_work_session first.",
+                }
+                data = _annotate_structured_tool_payload(name, data)
+                return json.dumps(data, indent=2, ensure_ascii=False)
+            work_id = active_work.work_id
 
         checkpoint_payload = build_report_task_checkpoint_payload(
             {
@@ -9596,29 +9735,43 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                     content=next_step_text,
                 )
         try:
-            work = session_store.end_work_session(
-                work_id=work_id,
-                task_id=task_id,
-                agent_id=owner_agent,
-                session_id=lease_session_id,
-                status=str(args.get("status") or "completed"),
-                result=str(args.get("result") or ""),
-            )
+            # When work_token proves ownership, bypass session_id-based checks
+            if work_token_valid:
+                work = session_store.end_work_session_by_work_id(
+                    work_id=work_id,
+                    status=str(args.get("status") or "completed"),
+                    result=str(args.get("result") or ""),
+                )
+            else:
+                work = session_store.end_work_session(
+                    work_id=work_id,
+                    task_id=task_id,
+                    agent_id=owner_agent,
+                    session_id=lease_session_id,
+                    status=str(args.get("status") or "completed"),
+                    result=str(args.get("result") or ""),
+                )
         except ProtocolViolation as exc:
             raise ValueError(str(exc)) from exc
 
-        released = lease_store.release(
-            lease_id=active.lease_id,
-            owner_agent=owner_agent,
-            session_id=lease_session_id,
-            reason=str(args.get("release_reason") or "finished"),
-            status="released",
-        )
-        stop_task_lease_auto_heartbeat(active.lease_id)
-        release_payload = {
-            "status": released.status,
-            "lease": released.model_dump(mode="json"),
-        }
+        if active is not None:
+            released = lease_store.release(
+                lease_id=active.lease_id,
+                owner_agent=owner_agent,
+                session_id=lease_session_id,
+                reason=str(args.get("release_reason") or "finished"),
+                status="released",
+            )
+            stop_task_lease_auto_heartbeat(active.lease_id)
+            release_payload = {
+                "status": released.status,
+                "lease": released.model_dump(mode="json"),
+            }
+        else:
+            release_payload = {
+                "status": "bypassed",
+                "note": "No active lease to release; danger_mode bypass was used.",
+            }
 
         data = {
             "status": "finished",
@@ -9756,6 +9909,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                     owner_agent=agent_id,
                     owner_session_id=protocol_session_id,
                     tool_name=name,
+                    work_token=str(args.get("work_token") or ""),
                     danger_mode=bool(args.get("danger_mode", False)),
                     danger_confirmation=str(args.get("danger_confirmation") or ""),
                 )
@@ -9801,6 +9955,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                     owner_agent=agent_id,
                     owner_session_id=protocol_session_id,
                     tool_name=name,
+                    work_token=str(args.get("work_token") or ""),
                     danger_mode=bool(args.get("danger_mode", False)),
                     danger_confirmation=str(args.get("danger_confirmation") or ""),
                 )
@@ -10004,6 +10159,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             owner_agent=str(args.get("owner_agent") or args.get("agent_id") or args.get("acted_by") or "codex"),
             owner_session_id=str(args.get("session_id") or session_id or ""),
             tool_name=name,
+            work_token=str(args.get("work_token") or ""),
             danger_mode=bool(args.get("danger_mode", False)),
             danger_confirmation=str(args.get("danger_confirmation") or ""),
         )
@@ -10642,6 +10798,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             "project": args.get("project", "mnemoforge"),
             "task_id": args.get("task_id", ""),
         }
+        work_token = str(args.get("work_token") or "").strip()
         if tray_action == "record_stage_evidence":
             stage = str(action_args.get("stage") or _checkpoint_stage_for_state(str(args["state"]))).strip()
             checkpoint_args = {
@@ -10652,6 +10809,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 "checkpoint_mode": action_args.get("checkpoint_mode") or "lightweight",
                 "source": action_args.get("source") or "operational_tray",
                 "acted_by": action_args.get("acted_by") or "codex",
+                "work_token": work_token,
             }
             return await _execute_tool("record_task_checkpoint", checkpoint_args, api_base, session_id=session_id)
         if tray_action == "record_checkpoint":
@@ -10662,6 +10820,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 "summary": action_args.get("summary") or f"Checkpoint recorded for {args['state']}.",
                 "source": action_args.get("source") or "operational_tray",
                 "acted_by": action_args.get("acted_by") or "codex",
+                "work_token": work_token,
             }
             return await _execute_tool("record_task_checkpoint", checkpoint_args, api_base, session_id=session_id)
         if tray_action == "draft_checkpoint":

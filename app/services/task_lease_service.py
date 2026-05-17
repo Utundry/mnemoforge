@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,6 +13,8 @@ from app.models.task_lease import TaskLeaseClaimResult, TaskLeaseRecord
 
 _DB_PATH = Path("qdrant_data") / "task_leases.db"
 DEFAULT_LEASE_TTL_SECONDS = 15 * 60
+_WORK_TOKEN_BYTES = 32
+_WORK_TOKEN_PREVIEW_LEN = 8
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS task_leases (
@@ -26,7 +30,9 @@ CREATE TABLE IF NOT EXISTS task_leases (
     released_at         REAL,
     release_reason      TEXT NOT NULL DEFAULT '',
     lease_ttl_seconds   INTEGER NOT NULL,
-    previous_lease_id   TEXT NOT NULL DEFAULT ''
+    previous_lease_id   TEXT NOT NULL DEFAULT '',
+    work_token_hash     TEXT NOT NULL DEFAULT '',
+    work_token_preview  TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_task_leases_project_task_status
     ON task_leases(project, task_id, status, expires_at);
@@ -62,6 +68,24 @@ class TaskLeaseUnavailable(ValueError):
             "message": str(self),
             "lease": self.lease.model_dump(mode="json"),
         }
+
+
+class WorkTokenMismatch(PermissionError):
+    def __init__(self, lease_id: str) -> None:
+        super().__init__(f"Work token mismatch for lease {lease_id}.")
+        self.lease_id = lease_id
+
+
+def _generate_work_token() -> str:
+    return secrets.token_hex(_WORK_TOKEN_BYTES)
+
+
+def _hash_work_token(token: str) -> str:
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
+def _work_token_preview(token: str) -> str:
+    return token[:_WORK_TOKEN_PREVIEW_LEN]
 
 
 def _utcnow() -> datetime:
@@ -224,13 +248,16 @@ class TaskLeaseStore:
                 raise TaskLeaseConflict(active)
 
             lease_id = str(uuid4())
+            work_token = _generate_work_token()
+            work_token_hash = _hash_work_token(work_token)
             self._conn.execute(
                 """
                 INSERT INTO task_leases (
                     lease_id, project, task_id, owner_agent, session_id, status,
                     claimed_at, heartbeat_at, expires_at, released_at,
-                    release_reason, lease_ttl_seconds, previous_lease_id
-                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, '', ?, ?)
+                    release_reason, lease_ttl_seconds, previous_lease_id,
+                    work_token_hash, work_token_preview
+                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, '', ?, ?, ?, ?)
                 """,
                 (
                     lease_id,
@@ -243,6 +270,8 @@ class TaskLeaseStore:
                     expires_ts,
                     ttl,
                     previous.lease_id if previous else "",
+                    work_token_hash,
+                    _work_token_preview(work_token),
                 ),
             )
             self._conn.commit()
@@ -252,6 +281,7 @@ class TaskLeaseStore:
             lease=self._row_to_lease(row),
             previous_claim_expired=previous is not None,
             previous_lease=previous,
+            work_token=work_token,
         )
 
     def heartbeat(
@@ -410,6 +440,27 @@ class TaskLeaseStore:
             ).fetchall()
         return [self._row_to_lease(row) for row in rows]
 
+    def verify_work_token(self, *, lease_id: str, work_token: str) -> bool:
+        """Verify a work_token against the stored hash. Only works for active leases."""
+        lease_id = _clean_text(lease_id, 128)
+        work_token = str(work_token or "").strip()
+        if not lease_id or not work_token:
+            return False
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT work_token_hash, status FROM task_leases WHERE lease_id = ?",
+                (lease_id,),
+            ).fetchone()
+        if not row:
+            return False
+        if str(row["status"]) != "active":
+            return False
+        stored_hash = str(row["work_token_hash"] or "")
+        if not stored_hash:
+            return False
+        computed = _hash_work_token(work_token)
+        return stored_hash == computed
+
 
 class TaskLeaseHeartbeatHandle:
     def __init__(
@@ -534,3 +585,26 @@ def close_task_lease_store() -> None:
         stop_task_lease_auto_heartbeats_for_store(_STORE)
         _STORE.close()
         _STORE = None
+
+
+def verify_work_token_for_mutation(
+    *,
+    store: TaskLeaseStore,
+    lease_id: str,
+    work_token: str,
+    task_id: str,
+    project: str = "mnemoforge",
+) -> bool:
+    """Verify work token for a mutating operation. Returns True if valid.
+    
+    Work token recovery is only possible via TTL timeout — there is no lookup
+    or recovery path for lost tokens.
+    """
+    return store.verify_work_token(lease_id=lease_id, work_token=work_token)
+
+
+def redact_work_token_from_result(result: dict) -> dict:
+    """Remove work_token from any result dict for safe public/log output."""
+    if isinstance(result, dict):
+        result.pop("work_token", None)
+    return result

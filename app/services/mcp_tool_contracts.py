@@ -1348,6 +1348,11 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 },
                 "agent_id": {"type": "string", "default": "codex"},
                 "acted_by": {"type": "string", "default": "codex"},
+                "work_token": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Work token from start_task_session for mutating operations on claimed tasks.",
+                },
                 "source": {"type": "string", "default": "record_work_result"},
             },
         },
@@ -1412,6 +1417,11 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100},
                 "acted_by": {"type": "string", "default": "codex"},
                 "agent_id": {"type": "string", "default": "codex"},
+                "work_token": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Work token from start_task_session for mutating operations. Required when allow_mutation=true and a task is claimed.",
+                },
             },
         },
     },
