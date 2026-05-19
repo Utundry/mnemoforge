@@ -450,6 +450,11 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "type": "string",
                     "description": "Optional rule id/title to pull full details for one available rule during inspect mode.",
                 },
+                "work_token": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Work token from start_task_session for mutating tray actions. May also be supplied inside args for compact clients.",
+                },
             },
         },
     },
@@ -1328,8 +1333,8 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 },
                 "use_clerk": {
                     "type": "boolean",
-                    "default": True,
-                    "description": "When stenographer spans are available, create a review-only clerk draft before direct checkpointing.",
+                    "default": False,
+                    "description": "When true and stenographer spans are available, create a review-only clerk draft instead of direct checkpointing.",
                 },
                 "force_direct_checkpoint": {
                     "type": "boolean",
@@ -1379,6 +1384,9 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 },
                 "summary": {"type": "string", "description": "Optional work summary for checkpoint/closeout routes"},
                 "raw_notes": {"type": "string", "description": "Optional raw notes for capture/checkpoint routes"},
+                "draft_id": {"type": "string", "description": "Checkpoint draft id for approve/reject draft routes"},
+                "version": {"type": "integer", "description": "Checkpoint draft version for approve/reject draft routes"},
+                "reason": {"type": "string", "description": "Optional reason for mutating lifecycle routes"},
                 "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
                 "verification": {"type": "array", "items": {"type": "string"}, "default": []},
                 "allow_mutation": {

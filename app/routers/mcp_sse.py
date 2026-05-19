@@ -1839,8 +1839,7 @@ _PROJECT_WORK_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
         "examples": (
             "what is the next priority",
             "what should i do next",
-            "show open work",
-            "list open tasks",
+            "what is the current task",
             "find the next task",
             "current priority task",
             "give another agent an independent task",
@@ -1848,6 +1847,25 @@ _PROJECT_WORK_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
             "delegate a safe task to another agent",
         ),
         "reason": "Priority/open-work intent maps to the unified open-task surface.",
+    },
+    {
+        "intent_type": "list_all_tasks",
+        "tool": "list_open_tasks",
+        "family": "project_knowledge",
+        "mutating": False,
+        "examples": (
+            "list open tasks",
+            "list all open tasks",
+            "show all tasks",
+            "show open work",
+            "what tasks are available",
+            "show me every task",
+            "list every open task",
+            "full list of tasks",
+            "list all tasks",
+            "show all open work",
+        ),
+        "reason": "Explicit list-all intent maps to list_open_tasks with claim_filter=all.",
     },
     {
         "intent_type": "pull_task_context",
@@ -1965,6 +1983,34 @@ _PROJECT_WORK_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
         "reason": "Task-framing review intent maps to the task capture candidate review surface before promotion or rejection.",
     },
     {
+        "intent_type": "approve_checkpoint_draft",
+        "tool": "approve_checkpoint_draft",
+        "family": "project_knowledge",
+        "mutating": True,
+        "examples": (
+            "approve checkpoint draft",
+            "approve draft checkpoint",
+            "accept checkpoint draft",
+            "save approved checkpoint draft",
+            "persist checkpoint draft",
+        ),
+        "reason": "Checkpoint draft approval maps directly to approve_checkpoint_draft.",
+    },
+    {
+        "intent_type": "reject_checkpoint_draft",
+        "tool": "reject_checkpoint_draft",
+        "family": "project_knowledge",
+        "mutating": True,
+        "examples": (
+            "reject checkpoint draft",
+            "reject draft checkpoint",
+            "decline checkpoint draft",
+            "discard checkpoint draft",
+            "mark checkpoint draft rejected",
+        ),
+        "reason": "Checkpoint draft rejection maps directly to reject_checkpoint_draft.",
+    },
+    {
         "intent_type": "rule_work",
         "tool": "project_rules",
         "family": "project_knowledge",
@@ -2035,6 +2081,10 @@ def _project_work_catalog_scores(text: str, args: dict[str, Any]) -> list[dict[s
             best_score += 0.08
         if route["intent_type"] == "review_task_capture" and any(token in intent_tokens for token in {"capture", "draft", "drafts", "candidate", "candidates", "framing"}):
             best_score += 0.08
+        if route["intent_type"] == "approve_checkpoint_draft" and any(token in intent_tokens for token in {"approve", "approved", "accept", "save", "persist"}):
+            best_score += 0.2
+        if route["intent_type"] == "reject_checkpoint_draft" and any(token in intent_tokens for token in {"reject", "rejected", "decline", "discard"}):
+            best_score += 0.2
         if route["intent_type"] == "create_task":
             best_score = best_score + 0.5 if has_create_task_intent else 0.0
 
@@ -2446,6 +2496,14 @@ def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], tex
             "include_claims": True,
             "assignment_filter": assignment_filter,
         }
+    elif route["intent_type"] == "list_all_tasks":
+        route["payload"] = {
+            "project": project,
+            "limit": limit,
+            "claim_filter": "all",
+            "include_claims": True,
+            "assignment_filter": "all",
+        }
     elif route["intent_type"] == "pull_task_context":
         route["payload"] = {
             "project": project,
@@ -2506,6 +2564,14 @@ def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], tex
         }
     elif route["intent_type"] == "review_task_capture":
         route["payload"] = {"project": project, "task_id": task_id, "limit": limit}
+    elif route["intent_type"] in {"approve_checkpoint_draft", "reject_checkpoint_draft"}:
+        route["payload"] = {
+            "draft_id": str(args.get("draft_id") or "").strip(),
+            "version": int(args.get("version") or 1),
+            "approved_by": str(args.get("approved_by") or args.get("acted_by") or "codex").strip() or "codex",
+            "rejected_by": str(args.get("rejected_by") or args.get("acted_by") or "codex").strip() or "codex",
+            "reason": str(args.get("reason") or "").strip(),
+        }
     elif route["intent_type"] == "start_task_session":
         route["payload"] = {
             "project": project,
@@ -4709,6 +4775,16 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
                 api_base,
                 f"/project/tasks/{quote(task_id, safe='')}/capture-candidates?project={project}&limit={limit}",
             )
+            executed = True
+    elif route["tool"] in {"approve_checkpoint_draft", "reject_checkpoint_draft"}:
+        if not str(route["payload"].get("draft_id") or "").strip():
+            warnings.append("Checkpoint draft approval/rejection requires draft_id.")
+        else:
+            result_text = await _execute_tool(route["tool"], route["payload"], api_base, session_id=session_id)
+            try:
+                result = json.loads(result_text)
+            except Exception:
+                result = result_text
             executed = True
     elif route["tool"] == "record_work_result":
         result_text = await _execute_tool("record_work_result", route["payload"], api_base, session_id=session_id)
@@ -8040,7 +8116,7 @@ def _parse_artifact_key_ref(artifact_key: str) -> dict[str, str]:
 
 
 def _available_stenographer_spans(args: dict[str, Any], *, default_project: str, default_task_id: str = "") -> list[Any]:
-    if not bool(args.get("use_clerk", True)) or bool(args.get("force_direct_checkpoint", False)):
+    if not bool(args.get("use_clerk", False)) or bool(args.get("force_direct_checkpoint", False)):
         return []
     try:
         from app.services.stenographer_service import get_stenographer_store
@@ -9584,7 +9660,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         task_id = str(args["task_id"]).strip()
         owner_agent = str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex"
         lease_session_id = str(args.get("session_id") or session_id or "").strip()
-        work_token = str(args.get("work_token") or "").strip()
+        work_token = str(args.get("work_token") or action_args.get("work_token") or "").strip()
 
         # danger_mode: auto-generate session_id if confirmed by user
         danger_mode = bool(args.get("danger_mode", False))
@@ -9686,6 +9762,10 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 "stage": "completed",
                 "summary": str(args.get("summary") or "Task session finished."),
                 "status": "done",
+                "changed_files": _string_list_arg(args.get("changed_files")),
+                "verification": _string_list_arg(args.get("verification")),
+                "next_step": str(args.get("next_step") or "").strip(),
+                "next_step_scope": str(args.get("next_step_scope") or "none").strip() or "none",
                 "reason": str(args.get("reason") or "finish_task_session"),
                 "acted_by": str(args.get("acted_by") or owner_agent),
                 "source": str(args.get("source") or "finish_task_session"),
@@ -9755,10 +9835,11 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             raise ValueError(str(exc)) from exc
 
         if active is not None:
+            release_session_id = active.session_id if work_token_valid else lease_session_id
             released = lease_store.release(
                 lease_id=active.lease_id,
                 owner_agent=owner_agent,
-                session_id=lease_session_id,
+                session_id=release_session_id,
                 reason=str(args.get("release_reason") or "finished"),
                 status="released",
             )
@@ -9772,6 +9853,50 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 "status": "bypassed",
                 "note": "No active lease to release; danger_mode bypass was used.",
             }
+
+        # ── Resolve unified artifact (improvement or task) ────────
+        # finish_task_session завершает work session и освобождает lease,
+        # но не меняет статус самого task/improvement item.
+        # Пытаемся resolve improvement (созданный record_work_result),
+        # затем task, и только как fallback — reopen project task.
+        _resolved = False
+        for artifact_type in ("improvement", "task"):
+            artifact_key = f"{artifact_type}:{quote(project, safe='')}:{quote(task_id, safe='')}"
+            try:
+                artifact = await _get(api_base, f"/artifacts/{quote(artifact_key, safe='')}")
+                if artifact and artifact.get("status") in ("open", "active"):
+                    await _post(
+                        api_base,
+                        f"/artifacts/{quote(artifact_key, safe='')}/resolve",
+                        {
+                            "acted_by": owner_agent,
+                            "action_source": "finish_task_session",
+                            "reason": "Task session finished.",
+                        },
+                    )
+                    _resolved = True
+                    break
+            except Exception:
+                continue
+
+        if not _resolved:
+            # Fallback: попробовать reopen project task в Qdrant
+            try:
+                await _post(
+                    api_base,
+                    f"/project/tasks/{quote(task_id, safe='')}/reopen",
+                    {
+                        "status": "done",
+                        "reason": "finish_task_session",
+                        "acted_by": owner_agent,
+                        "source": "finish_task_session",
+                    },
+                )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).info(
+                    "finish_task_session: no artifact or project task to close for task %s", task_id
+                )
 
         data = {
             "status": "finished",
@@ -10809,6 +10934,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 "checkpoint_mode": action_args.get("checkpoint_mode") or "lightweight",
                 "source": action_args.get("source") or "operational_tray",
                 "acted_by": action_args.get("acted_by") or "codex",
+                "session_id": action_args.get("session_id") or args.get("session_id", ""),
                 "work_token": work_token,
             }
             return await _execute_tool("record_task_checkpoint", checkpoint_args, api_base, session_id=session_id)
@@ -10820,6 +10946,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 "summary": action_args.get("summary") or f"Checkpoint recorded for {args['state']}.",
                 "source": action_args.get("source") or "operational_tray",
                 "acted_by": action_args.get("acted_by") or "codex",
+                "session_id": action_args.get("session_id") or args.get("session_id", ""),
                 "work_token": work_token,
             }
             return await _execute_tool("record_task_checkpoint", checkpoint_args, api_base, session_id=session_id)

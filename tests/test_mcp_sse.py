@@ -556,7 +556,7 @@ class TestMcpToolExecution:
         assert "artifact_key" in props
         assert props["should_resolve_artifact"]["default"] is False
         assert props["create_issue_if_unmatched"]["default"] is False
-        assert props["use_clerk"]["default"] is True
+        assert props["use_clerk"]["default"] is False
 
     def test_clerk_draft_report_tool_is_first_class_closeout_surface(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "clerk_draft_report")
@@ -575,6 +575,7 @@ class TestMcpToolExecution:
         assert "args" in schema["properties"]
         assert "tool" in schema["properties"]
         assert "arguments" in schema["properties"]
+        assert "work_token" in schema["properties"]
 
     def test_upsert_knowledge_tree_node_tool_is_exposed(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "upsert_knowledge_tree_node")
@@ -1688,6 +1689,45 @@ class TestMcpToolExecution:
         assert data["action_status"] == "ready"
         assert "requires task_id" in data["warnings"][0]
 
+    async def test_project_work_routes_checkpoint_draft_rejection_directly(self):
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "intent": "reject checkpoint draft",
+                "draft_id": "draft-1",
+                "version": 2,
+                "reason": "Needs clearer verification.",
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["status"] == "planned"
+        assert data["selected_route"]["tool"] == "reject_checkpoint_draft"
+        assert data["selected_route"]["intent_type"] == "reject_checkpoint_draft"
+        assert data["submit_payload"]["draft_id"] == "draft-1"
+        assert data["submit_payload"]["version"] == 2
+        assert data["submit_payload"]["reason"] == "Needs clearer verification."
+
+    async def test_project_work_routes_checkpoint_draft_approval_directly(self):
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "intent": "approve checkpoint draft",
+                "draft_id": "draft-1",
+                "version": 1,
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["status"] == "planned"
+        assert data["selected_route"]["tool"] == "approve_checkpoint_draft"
+        assert data["selected_route"]["intent_type"] == "approve_checkpoint_draft"
+        assert data["submit_payload"]["draft_id"] == "draft-1"
+
     async def test_project_work_routes_rule_capture_to_guarded_project_rules_plan(self):
         result = await mcp_sse._execute_tool(
             "project_work",
@@ -2755,7 +2795,7 @@ class TestMcpToolExecution:
         assert data["memory"]["id"] == "memory-only"
         assert "memory-only result" in data["warnings"][0]
 
-    async def test_record_work_result_prefers_clerk_draft_when_stenographer_spans_exist(self, monkeypatch):
+    async def test_record_work_result_uses_explicit_clerk_draft_when_stenographer_spans_exist(self, monkeypatch):
         from pathlib import Path
         from app.services import checkpoint_draft_service as draft_mod
         from app.services import stenographer_service as stenographer_mod
@@ -2816,6 +2856,7 @@ class TestMcpToolExecution:
                     "session_id": "sess-1",
                     "work_token": work_token,
                     "summary": "Closeout with stenographer evidence.",
+                    "use_clerk": True,
                 },
                 "http://test",
             )
@@ -2830,6 +2871,65 @@ class TestMcpToolExecution:
         assert posted == [("/memories", posted[0][1])]
         assert draft_calls[0]["work_id"] == "work-1"
         assert "review-only clerk draft" in data["warnings"][0]
+
+    async def test_record_work_result_records_direct_checkpoint_by_default_with_stenographer_spans(self, monkeypatch):
+        from pathlib import Path
+        from app.services import stenographer_service as stenographer_mod
+
+        store = stenographer_mod.StenographerStore(Path(":memory:"))
+        lease_store, work_token = _install_task_claim_store(monkeypatch)
+        monkeypatch.setattr(stenographer_mod, "_STORE", store)
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            if path == "/memories":
+                return {"id": "memory-1"}
+            if path == "/project/tasks/task-1/changes":
+                return {"id": "change-1"}
+            raise AssertionError(f"unexpected POST path: {path}")
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            store.start_work_session(
+                project="alpha",
+                task_id="task-1",
+                agent_id="codex",
+                session_id="sess-1",
+                work_id="work-1",
+            )
+            store.record_span(
+                project="alpha",
+                task_id="task-1",
+                agent_id="codex",
+                session_id="sess-1",
+                work_id="work-1",
+                kind="verification",
+                source="pytest",
+                content="pytest passed",
+            )
+            result = await mcp_sse._execute_tool(
+                "record_work_result",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "work_id": "work-1",
+                    "agent_id": "codex",
+                    "session_id": "sess-1",
+                    "work_token": work_token,
+                    "summary": "Closeout with stenographer evidence.",
+                },
+                "http://test",
+            )
+        finally:
+            store.close()
+            lease_store.close()
+
+        data = json.loads(result)
+        assert data["status"] == "recorded"
+        assert data["route"] == ["memory", "task_checkpoint"]
+        assert data["checkpoint"]["stage_evidence"] == "checkpoint:change-1"
+        assert [path for path, _ in posted] == ["/memories", "/project/tasks/task-1/changes"]
 
     async def test_clerk_draft_report_from_raw_notes_uses_memory_scribe_without_mutating(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
