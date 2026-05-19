@@ -1,0 +1,50 @@
+{
+  "id": "planning",
+  "version": 1,
+  "purpose": "Frame the work, load project context, and choose the smallest safe implementation slice before code edits.",
+  "required_evidence": [],
+  "allowed_tools": [
+    {
+      "name": "project_context",
+      "reason": "Load compact project context and relevant architecture principles before repository inspection."
+    },
+    {
+      "name": "operational_tray",
+      "reason": "Inspect state readiness, rules, allowed actions, and forbidden patterns."
+    },
+    {
+      "name": "list_open_tasks",
+      "reason": "Avoid starting under the wrong task or duplicating existing open work."
+    },
+    {
+      "name": "tool_recommend",
+      "reason": "Narrow MCP families when the next tool is unclear."
+    }
+  ],
+  "forbidden_patterns": [],
+  "feature_toggles": [
+    {
+      "id": "project_capture_facade",
+      "effect": "mark_unavailable",
+      "reason": "If the capture facade is disabled for this agent/session, omit it from planning recommendations and show replacement tools."
+    }
+  ],
+  "packet": {
+    "template": "packets/operation_tray.compact.md",
+    "compact": true,
+    "max_required_rules": 3,
+    "max_recommended_rules": 3,
+    "include_debug": false
+  },
+  "transitions": [
+    {
+      "to": "implementation",
+      "when": "scope_is_framed",
+      "requires": ["task_framing"]
+    },
+    {
+      "to": "operator_review",
+      "when": "scope_or_task_identity_is_ambiguous"
+    }
+  ]
+}

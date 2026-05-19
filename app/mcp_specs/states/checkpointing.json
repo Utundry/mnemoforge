@@ -1,0 +1,60 @@
+{
+  "id": "checkpointing",
+  "version": 1,
+  "purpose": "Persist the smallest durable record that makes the current work resumable and reviewable.",
+  "required_evidence": ["summary"],
+  "allowed_tools": [
+    {
+      "name": "record_task_checkpoint",
+      "reason": "Persist governed task progress when a task id and claim are available."
+    },
+    {
+      "name": "clerk_draft_report",
+      "reason": "Prepare a review-only draft from anchored evidence before governed mutation."
+    },
+    {
+      "name": "memory_store",
+      "reason": "Fallback only for project context or framing evidence when task lifecycle capture is unavailable."
+    }
+  ],
+  "forbidden_patterns": [
+    {
+      "id": "silent_closure",
+      "match": ["resolve artifact", "finish task"],
+      "message": "Do not close or resolve lifecycle artifacts without explicit closeout evidence and operator intent."
+    }
+  ],
+  "feature_toggles": [
+    {
+      "id": "clerk_checkpoint_draft",
+      "effect": "mark_unavailable",
+      "reason": "If Clerk drafting is disabled for this agent/session, route to direct governed checkpoint tools or memory fallback."
+    },
+    {
+      "id": "project_capture_facade",
+      "effect": "disable_tool",
+      "reason": "If project_capture is known broken, remove it from checkpointing recommendations for this agent/session."
+    }
+  ],
+  "packet": {
+    "template": "packets/operation_tray.compact.md",
+    "compact": true,
+    "max_required_rules": 3,
+    "max_recommended_rules": 3,
+    "include_debug": false
+  },
+  "transitions": [
+    {
+      "to": "implementation",
+      "when": "checkpoint_saved_and_work_continues"
+    },
+    {
+      "to": "handoff",
+      "when": "checkpoint_saved_and_work_pauses"
+    },
+    {
+      "to": "operator_review",
+      "when": "draft_requires_review"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "id": "set_feature_gate",
+  "title": "Set feature gate",
+  "purpose": "Enable or disable a runtime feature for a bounded scope without exposing internal tools.",
+  "states": ["planning", "implementation", "verification", "live_validation", "checkpointing", "handoff", "operator_review"],
+  "mode": "transition",
+  "required_fields": ["feature_id", "enabled", "scope"],
+  "optional_fields": ["scope_id", "reason", "updated_by"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "feature_id": {"type": "string"},
+      "enabled": {"type": "boolean"},
+      "scope": {"type": "string", "enum": ["session", "runtime_profile", "agent", "project", "global"]},
+      "scope_id": {"type": "string"},
+      "reason": {"type": "string"},
+      "updated_by": {"type": "string"}
+    },
+    "required": ["feature_id", "enabled", "scope"]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "none"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": [],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "feature_gate_updated",
+      "mutation": true
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "feature_id", "scope", "enabled"]
+  },
+  "public_hint": "Use this to quarantine broken functionality for your session/runtime/project without changing code."
+}

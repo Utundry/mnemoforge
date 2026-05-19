@@ -1,0 +1,44 @@
+{
+  "id": "create_improvement",
+  "title": "Create improvement",
+  "purpose": "Create a backlog improvement without routing it through checkpoint draft capture.",
+  "states": ["planning", "implementation", "checkpointing"],
+  "mode": "write",
+  "required_fields": ["project", "title", "summary", "next_step"],
+  "optional_fields": ["risk", "evidence_refs", "importance_score"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "title": {"type": "string"},
+      "summary": {"type": "string"},
+      "next_step": {"type": "string"},
+      "risk": {"type": "string"},
+      "evidence_refs": {"type": "array", "items": {"type": "string"}},
+      "importance_score": {"type": "number", "default": 0.7}
+    },
+    "required": ["project", "title", "summary", "next_step"]
+  },
+  "assistance": {
+    "clerk_available": true,
+    "can_use_stenography": true,
+    "default_mode": "autofill"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["record_progress"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "artifact_created",
+      "artifact_type": "improvement",
+      "mutation": true,
+      "review_mode": false
+    },
+    "forbidden_metadata": {
+      "result_kind": ["checkpoint_draft_created"],
+      "artifact_type": ["task_checkpoint"],
+      "internal_tool": ["clerk_draft_report"]
+    },
+    "required_receipt_fields": ["status", "artifact_key", "id"]
+  },
+  "public_hint": "Use this for new backlog work; Clerk may help fill fields, but final write requires reviewed form data."
+}

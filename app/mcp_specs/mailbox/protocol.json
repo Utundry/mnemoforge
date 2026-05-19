@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "purpose": "Minimal external mailroom protocol. Agents receive state packets, submit allowed forms, and fetch receipts/artifacts; internal tools stay server-private.",
+  "default_action": "mailbox_state",
+  "external_actions": [
+    {
+      "id": "mailbox_state",
+      "purpose": "Return the current public state packet with allowed forms.",
+      "mutating": false,
+      "public_response": true
+    },
+    {
+      "id": "mailbox_submit",
+      "purpose": "Submit one allowed form/action for server-side routing.",
+      "mutating": true,
+      "public_response": true
+    },
+    {
+      "id": "mailbox_get",
+      "purpose": "Fetch a public receipt, draft, artifact, or state packet by reference.",
+      "mutating": false,
+      "public_response": true
+    }
+  ]
+}

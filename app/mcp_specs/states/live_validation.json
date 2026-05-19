@@ -1,0 +1,43 @@
+{
+  "id": "live_validation",
+  "version": 1,
+  "purpose": "Validate runtime behavior after approved verification or restart-sensitive changes.",
+  "required_evidence": ["verification_evidence"],
+  "allowed_tools": [
+    {
+      "name": "mailbox_state",
+      "reason": "Return the current public state packet and allowed validation forms."
+    },
+    {
+      "name": "project_verify",
+      "reason": "Resolve live validation risk controls and approved health checks."
+    }
+  ],
+  "forbidden_patterns": [
+    {
+      "id": "skip_stale_window",
+      "match": ["immediate restart validation", "ignore stale window"],
+      "message": "Respect the runtime owner stale window after Docker restart when project rules require it."
+    }
+  ],
+  "feature_toggles": [],
+  "packet": {
+    "template": "packets/operation_tray.compact.md",
+    "compact": true,
+    "max_required_rules": 5,
+    "max_recommended_rules": 3,
+    "include_debug": false
+  },
+  "transitions": [
+    {
+      "to": "checkpointing",
+      "when": "live_validation_passed",
+      "requires": ["verification_evidence"]
+    },
+    {
+      "to": "implementation",
+      "when": "live_validation_failed",
+      "requires": ["failure_evidence"]
+    }
+  ]
+}

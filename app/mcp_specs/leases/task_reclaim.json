@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "purpose": "Declarative task lease identity and safe reclaim policy for crash recovery and TTL expiry.",
+  "claim_identity_fields": [
+    "agent_id",
+    "agent_fingerprint",
+    "runtime_profile_id",
+    "session_id",
+    "work_token_hash"
+  ],
+  "primary_ownership_key": "agent_fingerprint",
+  "work_id_semantics": "work_id identifies one concrete work session/span chain. It should not be used as the stable ownership identity. Reclaim decisions should compare agent_fingerprint and use work_token_hash/audit policy as supporting evidence.",
+  "reclaim_policies": [
+    {
+      "id": "same_fingerprint_after_ttl",
+      "purpose": "Allow the same stable CLI/model identity to reacquire a task after its previous lease expired by TTL.",
+      "ownership_keys": ["project", "task_id", "agent_fingerprint"],
+      "allow_when": [
+        "no_active_lease_exists",
+        "latest_lease_status_is_expired_or_released",
+        "incoming_agent_fingerprint_matches_latest_claim",
+        "incoming_project_and_task_id_match_latest_claim"
+      ],
+      "deny_when": [
+        "active_lease_owned_by_different_fingerprint",
+        "incoming_agent_fingerprint_missing",
+        "latest_claim_has_no_agent_fingerprint",
+        "task_was_explicitly_handed_off_to_another_fingerprint"
+      ],
+      "required_audit_events": [
+        "task_reclaimed_after_ttl",
+        "same_agent_fingerprint_reclaim"
+      ],
+      "replacement_for": ["force_release_task_claim"]
+    },
+    {
+      "id": "same_fingerprint_after_session_crash",
+      "purpose": "Allow the same stable CLI/model identity to resume when the SSE session id was lost but ownership proof remains tied to the recorded fingerprint.",
+      "ownership_keys": ["project", "task_id", "agent_fingerprint", "work_token_hash"],
+      "allow_when": [
+        "active_or_latest_claim_matches_agent_fingerprint",
+        "work_token_valid_or_active_session_missing",
+        "no_conflicting_handoff_exists"
+      ],
+      "deny_when": [
+        "agent_fingerprint_differs_from_claim",
+        "active_lease_owned_by_different_fingerprint",
+        "work_token_present_but_invalid",
+        "force_release_required_by_policy"
+      ],
+      "required_audit_events": [
+        "task_resumed_after_session_loss",
+        "same_agent_fingerprint_reclaim"
+      ],
+      "replacement_for": ["danger_mode_session_bypass"]
+    }
+  ]
+}

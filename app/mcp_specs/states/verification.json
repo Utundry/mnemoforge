@@ -1,0 +1,51 @@
+{
+  "id": "verification",
+  "version": 1,
+  "purpose": "Verify a completed implementation slice using the project-approved contour before reporting success.",
+  "required_evidence": ["implementation_checkpoint", "verification_contour"],
+  "allowed_tools": [
+    {
+      "name": "project_verify",
+      "reason": "Resolve the approved verification contour and risk controls before test execution."
+    },
+    {
+      "name": "operational_tray",
+      "reason": "Inspect verification readiness and forbidden commands."
+    },
+    {
+      "name": "record_task_checkpoint",
+      "reason": "Record verification evidence after approved checks finish."
+    }
+  ],
+  "forbidden_patterns": [
+    {
+      "id": "host_pytest",
+      "match": ["python -m pytest", "pytest"],
+      "message": "Do not run host pytest when project rules require the Docker test contour."
+    }
+  ],
+  "packet": {
+    "template": "packets/operation_tray.compact.md",
+    "compact": true,
+    "max_required_rules": 5,
+    "max_recommended_rules": 3,
+    "include_debug": false
+  },
+  "transitions": [
+    {
+      "to": "live_validation",
+      "when": "verification_passed_and_runtime_validation_needed",
+      "requires": ["verification_evidence"]
+    },
+    {
+      "to": "implementation",
+      "when": "verification_failed",
+      "requires": ["failure_evidence"]
+    },
+    {
+      "to": "checkpointing",
+      "when": "verification_passed",
+      "requires": ["verification_evidence"]
+    }
+  ]
+}

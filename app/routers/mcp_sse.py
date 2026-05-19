@@ -95,6 +95,16 @@ from app.services.operational_instincts_service import (
 from app.services.mcp_tool_registry import get_tool_stage, observe_tool_use, record_tool_feedback, tool_feedback_expected
 from app.services.replay_completeness_service import build_replay_drill_decision, build_token_budget, evaluate_execution_readiness, evaluate_replay_completeness
 from app.services.route_pattern_store import get_route_pattern_store
+from app.services.mcp_mailbox import (
+    build_mailbox_get_packet,
+    build_mailbox_mutation_packet,
+    build_mailbox_state_packet,
+    build_mailbox_submit_receipt,
+    evaluate_mailbox_postconditions,
+    mailbox_form_by_id,
+    mailbox_form_disabled_features,
+    mailbox_form_state_names,
+)
 
 router = APIRouter(prefix="/mcp")
 discovery_router = APIRouter()
@@ -164,7 +174,7 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
     "project_knowledge": {
         "title": "Project knowledge & artifact lifecycle",
         "description": "Unified discovery for tasks, improvements, readiness, canonical knowledge, lifecycle checkpoints, reopen/resume flows, and lifecycle changes.",
-        "entrypoints": ["ask_project", "project_work", "project_rules", "project_context", "project_verify", "project_capture", "operational_tray", "record_work_result", "clerk_draft_report", "project_workflow", "pull_task_context", "get_task_execution_context", "get_project_reconstruction_bundle", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_task_session", "finish_task_session", "start_work_session", "claim_task", "heartbeat_task_claim", "release_task_claim", "force_release_task_claim", "list_task_claims", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
+        "entrypoints": ["mailbox_state", "mailbox_submit", "mailbox_get", "ask_project", "project_work", "project_rules", "project_context", "project_verify", "project_capture", "operational_tray", "record_work_result", "clerk_draft_report", "project_workflow", "pull_task_context", "get_task_execution_context", "get_project_reconstruction_bundle", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_task_session", "finish_task_session", "start_work_session", "claim_task", "heartbeat_task_claim", "release_task_claim", "force_release_task_claim", "list_task_claims", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
         "keywords": [
             "task",
             "tasks",
@@ -189,6 +199,9 @@ _TOOL_FAMILY_SPECS: dict[str, dict[str, Any]] = {
             "search",
         ],
         "preferred_tools": [
+            "mailbox_state",
+            "mailbox_submit",
+            "mailbox_get",
             "project_work",
             "project_rules",
             "project_context",
@@ -613,9 +626,9 @@ def _unknown_tool_error_message(name: str, args: dict[str, Any]) -> str:
     hints: list[str] = []
     if close:
         hints.append("closest_tools=" + ", ".join(close))
-    hints.append("start with ask_project for human project questions")
-    hints.append("use project_work for open work, next priority, or task list questions")
-    hints.append("use tool_recommend when the intended MCP family is unclear")
+    hints.append("start with mailbox_state for the current public workflow packet")
+    hints.append("use mailbox_submit or mailbox_get for the public mailroom protocol")
+    hints.append("use ask_project/project_work only when the mailbox packet directs a facade fallback")
     return f"Unknown tool: {name}. " + "; ".join(hints) + "."
 
 
@@ -686,6 +699,9 @@ def _tool_catalog() -> list[dict[str, Any]]:
 
 
 _COMPACT_TOOL_NAMES = (
+    "mailbox_state",
+    "mailbox_submit",
+    "mailbox_get",
     "ask_project",
     "project_work",
     "project_rules",
@@ -768,8 +784,8 @@ def _tools_list_payload(params: dict[str, Any] | None = None) -> dict[str, Any]:
             "full_catalog_available": True,
             "full_catalog_request": {"method": "tools/list", "params": {"mode": "full"}},
             "full_schema_request": {"method": "tools/list", "params": {"mode": "compact", "schema_mode": "full"}},
-            "recommended_first_tool": "ask_project",
-            "reason": "Compact mode exposes thematic facades and staged discovery tools before the full flat catalog; use get_task_execution_context for active task work and project_work for next-step questions.",
+            "recommended_first_tool": "mailbox_state",
+            "reason": "Compact mode starts with the Mailbox/MCP FSM protocol; use mailbox_state to get the current public form packet, then mailbox_submit or mailbox_get before falling back to expert facades.",
             "total_tools_available": len(_tool_catalog()),
             "returned_tools": len(tools),
         }
@@ -2497,10 +2513,14 @@ def _project_work_apply_payload(route: dict[str, Any], args: dict[str, Any], tex
             "assignment_filter": assignment_filter,
         }
     elif route["intent_type"] == "list_all_tasks":
+        tokens = _route_tokens(text)
+        claim_filter = str(args.get("claim_filter") or "").strip().lower()
+        if claim_filter not in {"available", "claimed", "all"}:
+            claim_filter = "claimed" if tokens & {"claimed", "claim", "busy", "occupied", "leased"} else "all"
         route["payload"] = {
             "project": project,
             "limit": limit,
-            "claim_filter": "all",
+            "claim_filter": claim_filter,
             "include_claims": True,
             "assignment_filter": "all",
         }
@@ -6525,6 +6545,9 @@ TOOLS = [
     },
     tool_definition("get_artifact"),
     tool_definition("list_artifacts"),
+    tool_definition("mailbox_state"),
+    tool_definition("mailbox_submit"),
+    tool_definition("mailbox_get"),
     tool_definition("list_open_tasks"),
     tool_definition("normalize_mcp_intent"),
     tool_definition("project_work"),
@@ -7150,6 +7173,9 @@ sync_tool_definitions(
     "update_coordination_message_status",
     "get_artifact",
     "list_artifacts",
+    "mailbox_state",
+    "mailbox_submit",
+    "mailbox_get",
     "list_open_tasks",
     "operational_tray",
     "upsert_knowledge_tree_node",
@@ -8188,6 +8214,304 @@ async def _resolve_work_result_target(api_base: str, args: dict[str, Any]) -> di
     }
 
 
+async def _build_mailbox_submit_packet(
+    *,
+    args: dict[str, Any],
+    payload: dict[str, Any],
+    api_base: str,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    form_id = str(args.get("form_id") or "").strip()
+    state = str(args.get("state") or "planning").strip() or "planning"
+    project = str(args.get("project") or payload.get("project") or "mnemoforge").strip() or "mnemoforge"
+    runtime_profile_id = str(args.get("runtime_profile_id") or "unknown_cli")
+    diagnostic = bool(args.get("diagnostic", False))
+
+    preflight = build_mailbox_submit_receipt(
+        form_id=form_id,
+        payload=payload,
+        state=state,
+        project=project,
+        runtime_profile_id=runtime_profile_id,
+        diagnostic=diagnostic,
+    )
+    if preflight.get("receipt", {}).get("status") in {"rejected", "needs_input"}:
+        return preflight
+
+    form = mailbox_form_by_id(form_id)
+    if form is None or state not in mailbox_form_state_names(form):
+        return preflight
+    disabled_features = mailbox_form_disabled_features(
+        form,
+        project=project,
+        runtime_profile_id=runtime_profile_id,
+    )
+    if disabled_features:
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "feature_disabled",
+                "form_id": form.id,
+                "message": "This mailbox form depends on disabled functionality.",
+                "disabled_features": sorted(disabled_features),
+                "replacement_form_ids": form.replacement_form_ids,
+                "next_safe_action": "Request mailbox_state and choose an available replacement form.",
+            },
+        }
+
+    if form_id == "create_improvement":
+        return await _mailbox_create_improvement(
+            form=form,
+            payload=payload,
+            state=state,
+            project=project,
+            runtime_profile_id=runtime_profile_id,
+            diagnostic=diagnostic,
+        )
+    if form_id == "record_progress":
+        return await _mailbox_record_progress(
+            form=form,
+            payload=payload,
+            state=state,
+            project=project,
+            runtime_profile_id=runtime_profile_id,
+            diagnostic=diagnostic,
+            api_base=api_base,
+            session_id=session_id,
+        )
+    if form_id == "set_feature_gate":
+        return _mailbox_set_feature_gate(
+            form=form,
+            payload=payload,
+            state=state,
+            project=project,
+            runtime_profile_id=runtime_profile_id,
+            diagnostic=diagnostic,
+        )
+
+    return preflight
+
+
+async def _mailbox_create_improvement(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+) -> dict[str, Any]:
+    from app.services.improvements_store import get_improvements_store
+
+    title = str(payload["title"]).strip()
+    summary = str(payload["summary"]).strip()
+    next_step = str(payload["next_step"]).strip()
+    risk = str(payload.get("risk") or "").strip()
+    description_parts = [summary, f"Next step: {next_step}"]
+    if risk:
+        description_parts.append(f"Risk: {risk}")
+    evidence_refs = _string_list_arg(payload.get("evidence_refs"))
+    if evidence_refs:
+        description_parts.append("Evidence refs: " + ", ".join(evidence_refs))
+    uid, created = await get_improvements_store().upsert_by_title(
+        title=title,
+        description="\n".join(description_parts),
+        project=project,
+        agent_id=_mailbox_actor(payload),
+        importance_score=float(payload.get("importance_score") or 0.7),
+        tags=["mailbox", "mcp-fsm", "mcp-improvement"],
+    )
+    row = await get_improvements_store().get(uid)
+    result = {
+        "id": str(uid),
+        "artifact_key": f"improvement:{project}:{uid}",
+        "created": bool(created),
+        "title": row.get("title") if row else title,
+    }
+    actual_metadata = {
+        "result_kind": "artifact_created",
+        "artifact_type": "improvement",
+        "mutation": True,
+        "review_mode": False,
+        "internal_tool": "improvements_store.upsert_by_title",
+        "route_id": "mailbox.create_improvement.v1",
+    }
+    return build_mailbox_mutation_packet(
+        form=form,
+        payload=payload,
+        state=state,
+        project=project,
+        actual_metadata=actual_metadata,
+        result=result,
+        runtime_profile_id=runtime_profile_id,
+        diagnostic=diagnostic,
+    )
+
+
+def _mailbox_set_feature_gate(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+) -> dict[str, Any]:
+    from app.services.mcp_feature_gates import get_mcp_feature_gate_store
+
+    scope = str(payload.get("scope") or "session").strip().lower()
+    scope_id = str(payload.get("scope_id") or "").strip()
+    if not scope_id:
+        scope_id = {
+            "project": project,
+            "runtime_profile": runtime_profile_id,
+            "global": "global",
+        }.get(scope, str(payload.get("agent_fingerprint") or payload.get("agent_id") or "default").strip() or "default")
+    gate = get_mcp_feature_gate_store().set_gate(
+        feature_id=str(payload["feature_id"]).strip(),
+        scope=scope,
+        scope_id=scope_id,
+        enabled=bool(payload["enabled"]),
+        reason=str(payload.get("reason") or "mailbox_submit"),
+        updated_by=_mailbox_actor(payload),
+    )
+    packet = build_mailbox_mutation_packet(
+        form=form,
+        payload=payload,
+        state=state,
+        project=project,
+        actual_metadata={
+            "result_kind": "feature_gate_updated",
+            "mutation": True,
+            "internal_tool": "mcp_feature_gate_store.set_gate",
+            "route_id": "mailbox.set_feature_gate.v1",
+        },
+        result={
+            "id": f"{gate['feature_id']}:{gate['scope']}:{gate['scope_id']}",
+            "artifact_key": f"feature_gate:{gate['scope']}:{gate['scope_id']}:{gate['feature_id']}",
+        },
+        runtime_profile_id=runtime_profile_id,
+        diagnostic=diagnostic,
+    )
+    packet["receipt"].update(
+        {
+            "feature_id": gate["feature_id"],
+            "scope": gate["scope"],
+            "scope_id": gate["scope_id"],
+            "enabled": gate["enabled"],
+        }
+    )
+    return packet
+
+
+async def _mailbox_record_progress(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+    api_base: str,
+    session_id: str | None,
+) -> dict[str, Any]:
+    task_id = str(payload.get("task_id") or "").strip()
+    stage = str(payload.get("stage") or "in_progress").strip().lower() or "in_progress"
+    if task_id:
+        lease_guard = _task_mutation_requires_owned_claim(
+            project=project,
+            task_id=task_id,
+            owner_agent=_mailbox_actor(payload),
+            owner_session_id=str(payload.get("session_id") or session_id or ""),
+            tool_name="mailbox_submit.record_progress",
+            work_token=str(payload.get("work_token") or ""),
+            danger_mode=bool(payload.get("danger_mode", False)),
+            danger_confirmation=str(payload.get("danger_confirmation") or ""),
+        )
+        if lease_guard:
+            return {
+                "state": state,
+                "project": project,
+                "receipt": {
+                    "status": "conflict",
+                    "form_id": form.id,
+                    "message": "Task progress requires an active owned claim when task_id is provided.",
+                    "next_safe_action": lease_guard.get("next_safe_action", "Claim the task before recording task progress."),
+                },
+            }
+        checkpoint_args = {
+            "project": project,
+            "task_id": task_id,
+            "stage": stage,
+            "summary": str(payload["summary"]).strip(),
+            "changed_files": _string_list_arg(payload.get("changed_files")),
+            "verification": _string_list_arg(payload.get("verification")),
+            "next_step": str(payload.get("next_step") or "").strip(),
+            "status": str(payload.get("status") or "active").strip() or "active",
+            "reason": str(payload.get("reason") or "mailbox_record_progress").strip(),
+            "acted_by": _mailbox_actor(payload),
+            "source": "mailbox_submit.record_progress",
+            "checkpoint_mode": "lightweight",
+        }
+        checkpoint_payload = build_report_task_checkpoint_payload(checkpoint_args)
+        result = await _post(api_base, f"/project/tasks/{quote(task_id, safe='')}/changes", checkpoint_payload)
+        if result.get("id"):
+            result["artifact_key"] = f"task:{project}:{task_id}"
+            result["stage"] = stage
+        actual_metadata = {
+            "result_kind": "progress_recorded",
+            "mutation": True,
+            "artifact_type": "task_checkpoint",
+            "internal_tool": "project_task_change",
+            "route_id": "mailbox.record_progress.task_checkpoint.v1",
+        }
+        return build_mailbox_mutation_packet(
+            form=form,
+            payload=payload,
+            state=state,
+            project=project,
+            actual_metadata=actual_metadata,
+            result=result,
+            runtime_profile_id=runtime_profile_id,
+            diagnostic=diagnostic,
+        )
+
+    memory_payload = {
+        "content": str(payload["summary"]).strip(),
+        "memory_type": "context",
+        "category": "mnemoforge:progress",
+        "project": project,
+        "agent_id": _mailbox_actor(payload),
+        "importance_score": 0.5,
+        "tags": ["mailbox", "progress", f"stage:{stage}"],
+        "source": "mailbox_submit.record_progress",
+    }
+    result = await _post(api_base, "/memories", memory_payload)
+    result["stage"] = stage
+    actual_metadata = {
+        "result_kind": "progress_recorded",
+        "mutation": True,
+        "artifact_type": "memory",
+        "internal_tool": "memory_store",
+        "route_id": "mailbox.record_progress.memory.v1",
+    }
+    return build_mailbox_mutation_packet(
+        form=form,
+        payload=payload,
+        state=state,
+        project=project,
+        actual_metadata=actual_metadata,
+        result=result,
+        runtime_profile_id=runtime_profile_id,
+        diagnostic=diagnostic,
+    )
+
+
+def _mailbox_actor(payload: dict[str, Any]) -> str:
+    return str(payload.get("updated_by") or payload.get("agent_id") or "codex").strip() or "codex"
+
+
 async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None) -> str:
     await _session_observe(session_id, name, args)
     try:
@@ -9221,6 +9545,30 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         query = build_list_artifacts_query(args)
         data = await _get(api_base, f"/artifacts?{query}")
         return json.dumps(data, indent=2, ensure_ascii=False)
+    elif name == "mailbox_state":
+        data = build_mailbox_state_packet(
+            state=str(args.get("state") or "planning"),
+            project=str(args.get("project") or "mnemoforge"),
+            runtime_profile_id=str(args.get("runtime_profile_id") or "unknown_cli"),
+            diagnostic=bool(args.get("diagnostic", False)),
+        )
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    elif name == "mailbox_submit":
+        payload = args.get("payload") if isinstance(args.get("payload"), dict) else {}
+        data = await _build_mailbox_submit_packet(args=args, payload=payload, api_base=api_base, session_id=session_id)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    elif name == "mailbox_get":
+        data = build_mailbox_get_packet(
+            ref=str(args.get("ref") or ""),
+            state=str(args.get("state") or "planning"),
+            project=str(args.get("project") or "mnemoforge"),
+            runtime_profile_id=str(args.get("runtime_profile_id") or "unknown_cli"),
+            diagnostic=bool(args.get("diagnostic", False)),
+        )
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
     elif name == "reconcile_completed_checkpoints":
         payload = build_reconcile_completed_checkpoints_payload(args)
         data = await _post(api_base, "/artifacts/reconcile-completed-checkpoints", payload)
@@ -9660,7 +10008,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         task_id = str(args["task_id"]).strip()
         owner_agent = str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex"
         lease_session_id = str(args.get("session_id") or session_id or "").strip()
-        work_token = str(args.get("work_token") or action_args.get("work_token") or "").strip()
+        work_token = str(args.get("work_token") or "").strip()
 
         # danger_mode: auto-generate session_id if confirmed by user
         danger_mode = bool(args.get("danger_mode", False))
@@ -10658,9 +11006,11 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
 
         sections.append(
             "EXPERT HELPER GUIDANCE:\n"
-            "  Start with ask_project for natural human/project questions, project_work for next-step or open-work questions, and get_task_execution_context when you are already inside an active task.\n"
+            "  Start project work with mailbox_state for the current public workflow packet.\n"
+            "  Use mailbox_submit/mailbox_get for the public workflow protocol before falling back to specialized tools.\n"
+            "  Use ask_project/project_work only when the mailbox packet directs a facade fallback or for natural human/project questions.\n"
+            "  Use get_task_execution_context when the mailbox packet explicitly directs task-context enrichment.\n"
             "  Stay on the compact surface unless you need deep/debug access.\n"
-            "  Prefer expert helpers over low-level tools when they can express the request.\n"
             "  For task continuation, call pull_task_context first for read-only checkpoint replay; use reopen_task only to reactivate a closed/inactive task.\n"
             "  Treat runtime details such as Docker test contours as project-specific hints from project context, not universal rules."
         )

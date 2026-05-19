@@ -1287,6 +1287,134 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "mailbox_state": {
+        "name": "mailbox_state",
+        "description": (
+            "Read-only Mailbox/MCP FSM entrypoint. Returns a public state packet with allowed forms for the current "
+            "workflow state; internal routes, tools, postconditions, and diagnostics are hidden unless diagnostic=true "
+            "and the runtime profile permits internal diagnostics."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["state"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "state": {
+                    "type": "string",
+                    "enum": [
+                        "planning",
+                        "implementation",
+                        "verification",
+                        "live_validation",
+                        "checkpointing",
+                        "handoff",
+                        "operator_review",
+                    ],
+                    "description": "Current workflow state for the mailbox packet.",
+                },
+                "runtime_profile_id": {
+                    "type": "string",
+                    "default": "unknown_cli",
+                    "description": "Runtime profile preset such as weak_mcp_operator, unknown_cli, strong_mcp_operator, or diagnostic_operator.",
+                },
+                "diagnostic": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Request internal metadata. Honored only for diagnostic-capable runtime profiles.",
+                },
+            },
+        },
+    },
+    "mailbox_submit": {
+        "name": "mailbox_submit",
+        "description": (
+            "Submit one public Mailbox/MCP FSM form and receive a public receipt. "
+            "The server validates state, required fields, and safe next actions; mutating forms are guarded during "
+            "the architecture migration and return review receipts instead of calling internal routes directly."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["form_id", "payload"],
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "state": {
+                    "type": "string",
+                    "default": "planning",
+                    "enum": [
+                        "planning",
+                        "implementation",
+                        "verification",
+                        "live_validation",
+                        "checkpointing",
+                        "handoff",
+                        "operator_review",
+                    ],
+                    "description": "Current workflow state that made the submitted form available.",
+                },
+                "form_id": {
+                    "type": "string",
+                    "description": "Form identifier from the latest mailbox_state packet.",
+                },
+                "payload": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "description": "Filled public form payload. Required fields depend on form_id.",
+                },
+                "runtime_profile_id": {
+                    "type": "string",
+                    "default": "unknown_cli",
+                    "description": "Runtime profile preset such as weak_mcp_operator, unknown_cli, strong_mcp_operator, or diagnostic_operator.",
+                },
+                "diagnostic": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Request internal metadata. Honored only for diagnostic-capable runtime profiles.",
+                },
+            },
+        },
+    },
+    "mailbox_get": {
+        "name": "mailbox_get",
+        "description": (
+            "Fetch a public mailbox packet by reference. This is the read-only receive side of the "
+            "Mailbox/MCP FSM protocol; unknown or internal references return public not_found receipts."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["ref"],
+            "properties": {
+                "ref": {
+                    "type": "string",
+                    "description": "Public reference such as mailbox_state:mnemoforge:planning.",
+                },
+                "project": {"type": "string", "default": "mnemoforge"},
+                "state": {
+                    "type": "string",
+                    "default": "planning",
+                    "enum": [
+                        "planning",
+                        "implementation",
+                        "verification",
+                        "live_validation",
+                        "checkpointing",
+                        "handoff",
+                        "operator_review",
+                    ],
+                    "description": "Fallback workflow state when the reference does not include one.",
+                },
+                "runtime_profile_id": {
+                    "type": "string",
+                    "default": "unknown_cli",
+                    "description": "Runtime profile preset such as weak_mcp_operator, unknown_cli, strong_mcp_operator, or diagnostic_operator.",
+                },
+                "diagnostic": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Request internal metadata. Honored only for diagnostic-capable runtime profiles.",
+                },
+            },
+        },
+    },
     "record_work_result": {
         "name": "record_work_result",
         "description": (
@@ -3046,7 +3174,7 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
         "tip": (
             "Call get_onboarding at the start of a session or when you are lost. "
             "If you collaborate on a project, call pickup_coordination_messages for your agent_id and project. "
-            "The default tools/list response is compact; start with ask_project for human project questions or project_work for explicit project work, and use get_task_execution_context when you are already inside a task. "
+            "The default tools/list response is compact; start with mailbox_state for the current public workflow packet, then use mailbox_submit/mailbox_get or expert helpers such as project_work/get_task_execution_context as directed. "
             "Only request mode=full for deep/debug access. "
             "Prefer expert helpers over operating low-level tools directly; helpers should read project-specific runtime hints instead of assuming one universal test or deployment contour. "
             "If you still need to choose a MCP path manually, call normalize_mcp_intent before you guess at tools. "
@@ -3056,7 +3184,7 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
         ),
         "semantic_defaults": [
             "Prefer project-scoped operations and keep project_id consistent.",
-            "Start with expert helpers such as ask_project for human questions, project_work for explicit workflows, and get_task_execution_context for active task work, before falling back to specialized tools.",
+            "Start with mailbox_state to get the current public workflow packet; use mailbox_submit/mailbox_get before falling back to specialized tools.",
             "When a task is already underway, use get_task_execution_context before browsing the full catalog.",
             "Treat runtime details such as Docker test contours as project-specific hints, not global rules for every project.",
             "Use coordination messages for requests, replies, and handoff status; they do not become project truth automatically.",
@@ -3067,8 +3195,8 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
             "preferred_mode": "compact",
             "compact_request": {"method": "tools/list", "params": {"mode": "compact"}},
             "full_request": {"method": "tools/list", "params": {"mode": "full"}},
-            "recommended_first_tool": "ask_project",
-            "reason": "Default tools/list is the compact expert-helper surface; use get_task_execution_context for active task work and request the full flat catalog only for deeper/debug access.",
+            "recommended_first_tool": "mailbox_state",
+            "reason": "Default tools/list starts with the Mailbox/MCP FSM surface; request the full flat catalog only for deeper/debug access.",
         },
         "l0_policy": build_l0_policy(),
         "instruction_layers": {
@@ -3087,7 +3215,8 @@ def build_mnemoforge_onboarding_basics() -> str:
         "  - Call get_onboarding at session start or when you lose context.\n"
         "  - If onboarding warns that storage trust is degraded, call get_storage_trust_status before trusting affected retrieval or learning paths.\n"
         "  - If another agent may have contacted you, call pickup_coordination_messages with your agent_id and project.\n"
-        "  - If the right MCP path is unclear, call normalize_mcp_intent first.\n"
+        "  - Start project work with mailbox_state; use mailbox_submit/mailbox_get for the public workflow protocol.\n"
+        "  - If the right MCP path is unclear after mailbox_state, call normalize_mcp_intent.\n"
         "  - If you need to continue a task, call pull_task_context first; use reopen_task only to reactivate a closed/inactive task.\n"
         "  - If you are working on a task, call report_task_checkpoint at planning, blockers, interruptions, handoff, and completion.\n"
         "  - Use send_coordination_message for requests, replies, and handoffs; coordination is operational, not project truth.\n"

@@ -83,6 +83,27 @@ def _reset_project_tasks_store():
         _pts._STORE = None
 
 
+@pytest.fixture(autouse=True)
+def _reset_mcp_feature_gate_store():
+    """Use fresh in-memory MCP feature gates for each test."""
+    import app.services.mcp_feature_gates as _fg
+    from pathlib import Path
+
+    if _fg._STORE is not None:
+        try:
+            _fg._STORE.close()
+        except Exception:
+            pass
+    _fg._STORE = _fg.McpFeatureGateStore(Path(":memory:"))
+    yield
+    if _fg._STORE is not None:
+        try:
+            _fg._STORE.close()
+        except Exception:
+            pass
+        _fg._STORE = None
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_learning_store():
     """Use fresh in-memory learning store for each test — avoids leaking background writer tasks."""

@@ -1,0 +1,38 @@
+{
+  "id": "run_verification",
+  "title": "Run verification",
+  "purpose": "Request the project-approved verification contour and submit verification evidence.",
+  "states": ["verification"],
+  "mode": "transition",
+  "required_fields": ["project", "changed_files"],
+  "optional_fields": ["task_id", "requested_checks"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "task_id": {"type": "string"},
+      "changed_files": {"type": "array", "items": {"type": "string"}},
+      "requested_checks": {"type": "array", "items": {"type": "string"}}
+    },
+    "required": ["project", "changed_files"]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "none"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": [],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "verification_contour",
+      "mutation": false
+    },
+    "forbidden_metadata": {
+      "command": ["python -m pytest", "pytest"],
+      "execution_context": ["host"]
+    },
+    "required_receipt_fields": ["status", "approved_command", "forbidden_patterns"]
+  },
+  "public_hint": "Use the returned approved command; do not run host pytest for MnemoForge."
+}

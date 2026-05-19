@@ -1,0 +1,41 @@
+{
+  "id": "operator_review",
+  "version": 1,
+  "purpose": "Pause for human/operator review when intent, scope, or mutation risk is ambiguous.",
+  "required_evidence": ["review_question"],
+  "allowed_tools": [
+    {
+      "name": "mailbox_state",
+      "reason": "Return public review forms without exposing internal routing details."
+    },
+    {
+      "name": "get_task_context",
+      "reason": "Gather compact context before asking for review."
+    }
+  ],
+  "forbidden_patterns": [
+    {
+      "id": "mutate_without_review",
+      "match": ["force apply", "skip review"],
+      "message": "Do not perform guarded mutation while operator review is required."
+    }
+  ],
+  "feature_toggles": [],
+  "packet": {
+    "template": "packets/operation_tray.compact.md",
+    "compact": true,
+    "max_required_rules": 3,
+    "max_recommended_rules": 3,
+    "include_debug": false
+  },
+  "transitions": [
+    {
+      "to": "planning",
+      "when": "operator_clarified_scope"
+    },
+    {
+      "to": "implementation",
+      "when": "operator_approved_implementation"
+    }
+  ]
+}

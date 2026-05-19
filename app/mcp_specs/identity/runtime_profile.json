@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "purpose": "Describe how MnemoForge should distinguish logical agent labels from concrete CLI/runtime/model profiles for workflow packets and feature gates.",
+  "stable_identity_file": ".mnemoforge/agent_identity.json",
+  "fingerprint_fields": [
+    {
+      "name": "workspace_root",
+      "source": "workspace",
+      "required": true,
+      "privacy": "hashed"
+    },
+    {
+      "name": "git_remote",
+      "source": "workspace",
+      "required": false,
+      "privacy": "hashed"
+    },
+    {
+      "name": "client_name",
+      "source": "client",
+      "required": true,
+      "privacy": "plain"
+    },
+    {
+      "name": "client_version",
+      "source": "client",
+      "required": false,
+      "privacy": "plain"
+    },
+    {
+      "name": "model_provider",
+      "source": "model",
+      "required": false,
+      "privacy": "plain"
+    },
+    {
+      "name": "model_name",
+      "source": "model",
+      "required": false,
+      "privacy": "plain"
+    },
+    {
+      "name": "tool_competence_profile",
+      "source": "operator",
+      "required": false,
+      "privacy": "plain"
+    }
+  ],
+  "profile_presets": [
+    {
+      "id": "strong_mcp_operator",
+      "description": "Agent/runtime profile that reliably follows MCP workflow, uses staged discovery, and respects verification contours.",
+      "default_disabled_features": [],
+      "packet_profile": "compact",
+      "allow_internal_diagnostics": false
+    },
+    {
+      "id": "weak_mcp_operator",
+      "description": "Agent/runtime profile that tends to skip workflow, over-call broad facades, or misunderstand nested MCP payloads.",
+      "default_disabled_features": ["project_capture_facade", "clerk_checkpoint_draft", "llm_route_fallback"],
+      "packet_profile": "minimal",
+      "allow_internal_diagnostics": false
+    },
+    {
+      "id": "unknown_cli",
+      "description": "Default profile when the CLI/model identity is incomplete or aliases a generic agent_id such as codex.",
+      "default_disabled_features": ["project_capture_facade"],
+      "packet_profile": "compact",
+      "allow_internal_diagnostics": false
+    },
+    {
+      "id": "diagnostic_operator",
+      "description": "Trusted debugging profile allowed to request internal route and health metadata explicitly.",
+      "default_disabled_features": [],
+      "packet_profile": "diagnostic",
+      "allow_internal_diagnostics": true
+    }
+  ]
+}

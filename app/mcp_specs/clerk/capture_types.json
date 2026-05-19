@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "purpose": "Declarative capture types for Clerk review packets. Clerk should classify anchored quotes into one of these types before proposing mutation.",
+  "capture_types": [
+    {
+      "id": "task_checkpoint",
+      "purpose": "Record resumable progress for a known task.",
+      "anchor_tags": ["mcp-decision", "mcp-risk", "mcp-next-step"],
+      "review_tool": "clerk_draft_report",
+      "mutation_tool": "record_task_checkpoint"
+    },
+    {
+      "id": "improvement",
+      "purpose": "Create or update a backlog improvement without pretending it is task progress.",
+      "anchor_tags": ["mcp-improvement", "mcp-risk", "mcp-next-step"],
+      "review_tool": "clerk_review_packet",
+      "mutation_tool": "record_work_result"
+    },
+    {
+      "id": "project_rule_candidate",
+      "purpose": "Capture a user-confirmed or strongly evidenced project rule candidate.",
+      "anchor_tags": ["mcp-rule-candidate", "mcp-decision"],
+      "review_tool": "get_rule_candidate_review_packet",
+      "mutation_tool": "project_rules"
+    },
+    {
+      "id": "architecture_principle",
+      "purpose": "Capture durable architecture direction that should guide future implementation.",
+      "anchor_tags": ["mcp-decision", "mcp-improvement", "mcp-assumption"],
+      "review_tool": "clerk_review_packet",
+      "mutation_tool": "memory_store"
+    }
+  ]
+}

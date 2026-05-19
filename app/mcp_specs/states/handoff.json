@@ -1,0 +1,31 @@
+{
+  "id": "handoff",
+  "version": 1,
+  "purpose": "Package current work so another agent or a future session can resume safely.",
+  "required_evidence": ["summary", "next_step"],
+  "allowed_tools": [
+    {
+      "name": "mailbox_state",
+      "reason": "Return public handoff forms and next safe action."
+    },
+    {
+      "name": "record_task_checkpoint",
+      "reason": "Persist resumable checkpoint evidence before handoff."
+    }
+  ],
+  "forbidden_patterns": [],
+  "feature_toggles": [],
+  "packet": {
+    "template": "packets/operation_tray.compact.md",
+    "compact": true,
+    "max_required_rules": 3,
+    "max_recommended_rules": 3,
+    "include_debug": false
+  },
+  "transitions": [
+    {
+      "to": "planning",
+      "when": "handoff_complete"
+    }
+  ]
+}

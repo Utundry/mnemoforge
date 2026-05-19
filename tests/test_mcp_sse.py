@@ -51,7 +51,7 @@ class TestMcpToolExecution:
 
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
-        assert names[:6] == ["ask_project", "project_work", "project_rules", "project_context", "project_verify", "project_capture"]
+        assert names[:6] == ["mailbox_state", "mailbox_submit", "mailbox_get", "ask_project", "project_work", "project_rules"]
         assert len(names) <= 12
         assert len(names) < len(mcp_sse.TOOLS)
         assert "report_issue" not in names
@@ -59,8 +59,8 @@ class TestMcpToolExecution:
         assert "get_task_execution_context" not in names
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["full_catalog_request"] == {"method": "tools/list", "params": {"mode": "full"}}
-        assert "get_task_execution_context" in result["_mnemoforge"]["reason"]
-        assert "project_work" in result["_mnemoforge"]["reason"]
+        assert result["_mnemoforge"]["recommended_first_tool"] == "mailbox_state"
+        assert "Mailbox/MCP FSM" in result["_mnemoforge"]["reason"]
 
     async def test_tools_list_full_mode_returns_full_catalog(self):
         response = await mcp_sse._handle(
@@ -108,12 +108,12 @@ class TestMcpToolExecution:
 
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
-        assert names[0] == "ask_project"
+        assert names[0] == "mailbox_state"
         assert len(names) == 4
         assert len(names) < len(mcp_sse.TOOLS)
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["schema_mode"] == "summary"
-        assert result["_mnemoforge"]["recommended_first_tool"] == "ask_project"
+        assert result["_mnemoforge"]["recommended_first_tool"] == "mailbox_state"
         assert result["_mnemoforge"]["full_catalog_available"] is True
         assert "inputSummary" in result["tools"][0]
         assert result["tools"][0]["inputSchema"]["type"] == "object"
@@ -159,7 +159,7 @@ class TestMcpToolExecution:
         )
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
-        assert names[0] == "ask_project"
+        assert names[0] == "mailbox_state"
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["schema_mode"] == "summary"
         assert "inputSummary" in result["tools"][0]
@@ -541,6 +541,39 @@ class TestMcpToolExecution:
         assert "raw_notes" in props
         assert "stenographer/clerk drafts" in tool["description"]
 
+    def test_mailbox_state_tool_is_public_read_only_entrypoint(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "mailbox_state")
+        schema = tool["inputSchema"]
+        assert schema["required"] == ["state"]
+        props = schema["properties"]
+        assert "planning" in props["state"]["enum"]
+        assert "verification" in props["state"]["enum"]
+        assert props["runtime_profile_id"]["default"] == "unknown_cli"
+        assert props["diagnostic"]["default"] is False
+        assert "public state packet" in tool["description"]
+
+    def test_mailbox_submit_tool_is_public_guarded_entrypoint(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "mailbox_submit")
+        schema = tool["inputSchema"]
+        assert schema["required"] == ["form_id", "payload"]
+        props = schema["properties"]
+        assert "planning" in props["state"]["enum"]
+        assert "verification" in props["state"]["enum"]
+        assert props["runtime_profile_id"]["default"] == "unknown_cli"
+        assert props["diagnostic"]["default"] is False
+        assert "public receipt" in tool["description"]
+
+    def test_mailbox_get_tool_is_public_read_entrypoint(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "mailbox_get")
+        schema = tool["inputSchema"]
+        assert schema["required"] == ["ref"]
+        props = schema["properties"]
+        assert "planning" in props["state"]["enum"]
+        assert "verification" in props["state"]["enum"]
+        assert props["runtime_profile_id"]["default"] == "unknown_cli"
+        assert props["diagnostic"]["default"] is False
+        assert "public mailbox packet" in tool["description"]
+
     def test_report_issue_tool_accepts_human_importance_scale_hint(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "report_issue")
         importance = tool["inputSchema"]["properties"]["importance_score"]
@@ -633,6 +666,206 @@ class TestMcpToolExecution:
         assert posted[0][1]["stage_evidence"] == ["checkpoint:implementation-1"]
         assert posted[0][1]["prior_stage_recorded"] is True
         assert '"stage": "testing"' in result or '"stage": "stable"' in result
+
+    async def test_mailbox_state_returns_public_packet_without_internal_metadata(self):
+        result = await mcp_sse._execute_tool(
+            "mailbox_state",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "runtime_profile_id": "weak_mcp_operator",
+                "diagnostic": True,
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["state"] == "planning"
+        assert data["project"] == "alpha"
+        assert "_internal" not in data
+        assert any(form["form_id"] == "create_improvement" for form in data["forms"])
+        assert all("postconditions" not in form for form in data["forms"])
+        assert "Internal diagnostics are not available" in data["warnings"][-1]
+
+    async def test_mailbox_state_diagnostic_profile_can_return_internal_metadata(self):
+        result = await mcp_sse._execute_tool(
+            "mailbox_state",
+            {
+                "project": "alpha",
+                "state": "verification",
+                "runtime_profile_id": "diagnostic_operator",
+                "diagnostic": True,
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["state"] == "verification"
+        assert "_internal" in data
+        assert data["_internal"]["visibility"] == "internal"
+        assert any(form["form_id"] == "run_verification" for form in data["forms"])
+        assert any(form["form_id"] == "run_verification" for form in data["_internal"]["forms"])
+
+    async def test_mailbox_submit_run_verification_returns_public_receipt(self):
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "verification",
+                "form_id": "run_verification",
+                "payload": {"project": "alpha", "changed_files": ["app/services/mcp_mailbox.py"]},
+                "runtime_profile_id": "weak_mcp_operator",
+                "diagnostic": True,
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["state"] == "verification"
+        assert data["project"] == "alpha"
+        assert "_internal" not in data
+        assert data["receipt"]["status"] == "ready"
+        assert data["receipt"]["approved_command"].startswith("./scripts/run_pytest_docker.ps1 -NoBuild")
+        assert "pytest" in data["receipt"]["forbidden_patterns"]
+
+    async def test_mailbox_submit_create_improvement_executes_governed_write(self):
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "create_improvement",
+                "payload": {
+                    "project": "alpha",
+                    "title": "Mailbox FSM",
+                    "summary": "Keep external forms stable while internals migrate.",
+                    "next_step": "Implement governed mutation later.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["mode"] == "write"
+        assert data["receipt"]["artifact_key"].startswith("improvement:alpha:")
+        assert data["receipt"]["id"]
+        assert "_internal" not in data
+
+    async def test_mailbox_submit_create_improvement_diagnostic_includes_health_metadata(self):
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "create_improvement",
+                "payload": {
+                    "project": "alpha",
+                    "title": "Mailbox FSM diagnostic",
+                    "summary": "Expose actual metadata only to diagnostic profiles.",
+                    "next_step": "Review postcondition health.",
+                },
+                "runtime_profile_id": "diagnostic_operator",
+                "diagnostic": True,
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["_internal"]["postcondition_health"]["ok"] is True
+        assert data["_internal"]["actual_metadata"]["artifact_type"] == "improvement"
+
+    async def test_mailbox_submit_set_feature_gate_updates_runtime_gate(self):
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "set_feature_gate",
+                "payload": {
+                    "feature_id": "project_capture_facade",
+                    "enabled": False,
+                    "scope": "project",
+                    "reason": "quarantine misroute during mailbox migration",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["feature_id"] == "project_capture_facade"
+        assert data["receipt"]["scope"] == "project"
+        assert data["receipt"]["scope_id"] == "alpha"
+        assert data["receipt"]["enabled"] is False
+
+    async def test_mailbox_submit_record_progress_without_task_records_memory(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "memory-1", **payload}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "implementation",
+                "form_id": "record_progress",
+                "payload": {
+                    "project": "alpha",
+                    "summary": "Implemented direct mailbox progress route.",
+                    "stage": "in_progress",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert posted[0][0] == "/memories"
+        assert posted[0][1]["category"] == "mnemoforge:progress"
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["id"] == "memory-1"
+        assert data["receipt"]["stage"] == "in_progress"
+
+    async def test_mailbox_submit_record_progress_with_task_requires_owned_claim(self):
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "implementation",
+                "form_id": "record_progress",
+                "payload": {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "summary": "Task progress needs lease proof.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "conflict"
+        assert "active owned claim" in data["receipt"]["message"]
+
+    async def test_mailbox_get_returns_public_state_packet_by_ref(self):
+        result = await mcp_sse._execute_tool(
+            "mailbox_get",
+            {
+                "ref": "mailbox_state:alpha:verification",
+                "runtime_profile_id": "weak_mcp_operator",
+                "diagnostic": True,
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["state"] == "verification"
+        assert data["project"] == "alpha"
+        assert "_internal" not in data
+        assert any(form["form_id"] == "run_verification" for form in data["forms"])
 
     async def test_operational_tray_inspect_posts_context_request(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
@@ -3710,9 +3943,9 @@ class TestMcpToolExecution:
         assert response["result"]["isError"] is True
         text = response["result"]["content"][0]["text"]
         assert "Unknown tool: banana_wrench." in text
-        assert "start with ask_project for human project questions" in text
-        assert "use project_work for open work, next priority, or task list questions" in text
-        assert "use tool_recommend when the intended MCP family is unclear" in text
+        assert "start with mailbox_state for the current public workflow packet" in text
+        assert "use mailbox_submit or mailbox_get for the public mailroom protocol" in text
+        assert "use ask_project/project_work only when the mailbox packet directs a facade fallback" in text
 
     async def test_list_artifacts_tool_url_encodes_datetime_filters(self, monkeypatch):
         seen: dict[str, str] = {}
@@ -5512,8 +5745,8 @@ class TestMcpToolExecution:
         assert info["tool_catalog"]["preferred_mode"] == "compact"
         assert info["tool_catalog"]["compact_request"] == {"method": "tools/list", "params": {"mode": "compact"}}
         assert info["tool_catalog"]["full_request"] == {"method": "tools/list", "params": {"mode": "full"}}
-        assert info["tool_catalog"]["recommended_first_tool"] == "ask_project"
-        assert "compact expert-helper surface" in info["tool_catalog"]["reason"]
+        assert info["tool_catalog"]["recommended_first_tool"] == "mailbox_state"
+        assert "Mailbox/MCP FSM surface" in info["tool_catalog"]["reason"]
         assert any("/api/v1/coordination/" in line for line in info["semantic_defaults"])
         assert any("project-specific hints" in line for line in info["semantic_defaults"])
         assert "get_task_execution_context" in info["tip"]
@@ -5582,7 +5815,7 @@ class TestMcpToolExecution:
         assert "pickup_coordination_messages" in result
         assert "INTEGRITY WARNING:" in result
         assert "EXPERT HELPER GUIDANCE:" in result
-        assert "Start with ask_project" in result
+        assert "Start project work with mailbox_state" in result
         assert "get_task_execution_context" in result
         assert "project-specific hints" in result
         assert "pull_task_context first" in result

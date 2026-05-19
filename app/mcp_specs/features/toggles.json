@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "purpose": "Agent-controlled runtime feature gates for quarantining broken MCP functionality without deleting code or adding ad hoc router branches.",
+  "toggles": [
+    {
+      "id": "project_capture_facade",
+      "default_enabled": true,
+      "scopes": ["session", "runtime_profile", "agent", "project"],
+      "target_tools": ["project_capture"],
+      "target_transitions": [],
+      "disable_reason": "project_capture can misroute explicit create-task or improvement capture into clerk_draft_report.",
+      "replacement_tools": ["project_work", "record_work_result", "memory_store"],
+      "operator_note": "When disabled, state packets should omit project_capture from recommended tools and explain the safer replacement path."
+    },
+    {
+      "id": "clerk_checkpoint_draft",
+      "default_enabled": true,
+      "scopes": ["session", "runtime_profile", "agent", "project"],
+      "target_tools": ["clerk_draft_report", "draft_checkpoint_from_spans"],
+      "target_transitions": ["draft_requires_review"],
+      "disable_reason": "Clerk draft behavior can collapse unrelated captures into task checkpoint drafts until anchored quote capture is restored.",
+      "replacement_tools": ["record_task_checkpoint", "memory_store"],
+      "operator_note": "Disabling Clerk should not disable governed direct checkpointing; it only quarantines the draft helper path."
+    },
+    {
+      "id": "llm_route_fallback",
+      "default_enabled": true,
+      "scopes": ["session", "runtime_profile", "agent"],
+      "target_tools": [],
+      "target_transitions": [],
+      "disable_reason": "LLM fallback can misroute high-risk lifecycle commands; agents may force deterministic lexical routing for a session.",
+      "replacement_tools": ["normalize_mcp_intent", "tool_recommend"],
+      "operator_note": "When disabled, route classifiers should use deterministic routes or ask for clarification instead of consulting an LLM."
+    }
+  ]
+}

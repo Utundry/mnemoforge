@@ -1,0 +1,50 @@
+{
+  "id": "implementation",
+  "version": 1,
+  "purpose": "Make the scoped code or spec change while preserving project rules and user-owned work.",
+  "required_evidence": ["task_framing"],
+  "allowed_tools": [
+    {
+      "name": "operational_tray",
+      "reason": "Keep state readiness and risk controls visible while implementation proceeds."
+    },
+    {
+      "name": "record_task_checkpoint",
+      "reason": "Record lightweight stage evidence after a meaningful implementation slice."
+    },
+    {
+      "name": "tool_recommend",
+      "reason": "Load only the specialized MCP tool family needed by the current slice."
+    }
+  ],
+  "forbidden_patterns": [
+    {
+      "id": "unscoped_monolith_rewrite",
+      "match": ["rewrite mcp_sse.py", "large unrelated refactor"],
+      "message": "Do not rewrite the mcp_sse monolith without a framed architecture slice and review boundary."
+    }
+  ],
+  "packet": {
+    "template": "packets/operation_tray.compact.md",
+    "compact": true,
+    "max_required_rules": 3,
+    "max_recommended_rules": 3,
+    "include_debug": false
+  },
+  "transitions": [
+    {
+      "to": "verification",
+      "when": "implementation_slice_complete",
+      "requires": ["changed_files"]
+    },
+    {
+      "to": "checkpointing",
+      "when": "work_should_be_saved_before_verification",
+      "requires": ["summary"]
+    },
+    {
+      "to": "handoff",
+      "when": "work_must_pause_or_scope_expands"
+    }
+  ]
+}

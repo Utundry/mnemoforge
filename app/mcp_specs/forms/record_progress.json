@@ -1,0 +1,42 @@
+{
+  "id": "record_progress",
+  "title": "Record progress",
+  "purpose": "Record resumable task progress or implementation framing evidence.",
+  "states": ["implementation", "checkpointing", "handoff"],
+  "mode": "write",
+  "required_fields": ["project", "summary"],
+  "optional_fields": ["task_id", "changed_files", "verification", "next_step", "stage"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "task_id": {"type": "string"},
+      "summary": {"type": "string"},
+      "changed_files": {"type": "array", "items": {"type": "string"}},
+      "verification": {"type": "array", "items": {"type": "string"}},
+      "next_step": {"type": "string"},
+      "stage": {
+        "type": "string",
+        "enum": ["planning", "in_progress", "blocked", "interrupted", "handoff", "completed"],
+        "default": "in_progress"
+      }
+    },
+    "required": ["project", "summary"]
+  },
+  "assistance": {
+    "clerk_available": true,
+    "can_use_stenography": true,
+    "default_mode": "validate"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": [],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "progress_recorded",
+      "mutation": true
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "stage"]
+  },
+  "public_hint": "Use this after a meaningful implementation slice or before handoff."
+}
