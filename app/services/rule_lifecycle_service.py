@@ -29,7 +29,14 @@ from app.models.rule_lifecycle import (
 )
 from app.models.stenographer import StenographerSpanRecord
 from app.models.law import ProjectLawConfirmRequest, ProjectLawCreate, ProjectLawUpdate
-from app.services.law_service import confirm_project_law, create_project_law, get_project_law, list_project_laws, update_project_law
+from app.services.law_service import (
+    confirm_project_law,
+    create_project_law,
+    get_project_law,
+    list_project_laws,
+    update_project_law,
+    update_project_law_status,
+)
 from app.services.stenographer_service import get_stenographer_store
 
 
@@ -879,17 +886,58 @@ def _title_from_statement(statement: str) -> str:
     return title[:256] or "Promoted Rule Candidate"
 
 
+def _rule_semantic_key(*values: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9а-яё]+", " ".join(values).casefold()))
+
+
 async def promote_rule_candidate(qdrant, ollama, candidate_id: str, body: RuleCandidatePromoteRequest) -> RuleCandidatePromoteResponse:
     store = get_rule_lifecycle_store()
     candidate = store.get_candidate(candidate_id)
     target_scope = body.target_scope or ("principle" if candidate.scope == "canonical_candidate" else "project")
     confirmed_by = (body.confirmed_by or "").strip() or ((body.acted_by or "").strip() if body.status in {"user_confirmed", "active"} else None)
     law = None
+    promoted_law = None
     if candidate.promoted_law_id:
         try:
-            law = await get_project_law(qdrant, candidate.promoted_law_id)
+            promoted_law = await get_project_law(qdrant, candidate.promoted_law_id)
         except Exception:
-            law = None
+            promoted_law = None
+    candidate_key = _rule_semantic_key(candidate.statement)
+    existing_laws = await list_project_laws(
+        qdrant,
+        project=candidate.project,
+        status="all",
+        include_promoted=True,
+        limit=500,
+    )
+    semantic_matches = [
+        item
+        for item in existing_laws
+        if _rule_semantic_key(item.statement) == candidate_key
+        and item.id != (promoted_law.id if promoted_law is not None else "")
+    ]
+    semantic_matches.sort(
+        key=lambda item: (
+            0 if item.status == "active" else 1 if item.status == "user_confirmed" else 2 if item.status == "proposed" else 3,
+            item.updated_at,
+        )
+    )
+    preferred_existing = semantic_matches[0] if semantic_matches else None
+    if promoted_law is not None and preferred_existing is not None and preferred_existing.status in {"active", "user_confirmed"}:
+        if promoted_law.status not in {"superseded", "archived"}:
+            await update_project_law_status(
+                qdrant,
+                promoted_law.id,
+                status="superseded",
+                reason=body.reason or f"Superseded by matching law {preferred_existing.id} during repeated candidate promotion.",
+                acted_by=body.acted_by,
+                action_source=body.source or "rule_candidate_promotion",
+            )
+        law = preferred_existing
+    elif promoted_law is not None:
+        law = promoted_law
+    elif preferred_existing is not None and preferred_existing.status in {"active", "user_confirmed", "proposed"}:
+        law = preferred_existing
     if law is None:
         law = await create_project_law(
             qdrant,

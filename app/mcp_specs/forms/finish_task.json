@@ -2,7 +2,7 @@
   "id": "finish_task",
   "title": "Finish task session",
   "purpose": "Finish a claimed task session by recording closeout evidence, ending the work session, and releasing the task claim.",
-  "states": ["checkpointing", "handoff", "operator_review"],
+  "states": ["planning", "checkpointing", "handoff", "operator_review"],
   "mode": "transition",
   "required_fields": ["project", "task_id", "summary"],
   "optional_fields": ["work_id", "owner_agent", "session_id", "work_token", "status", "result", "changed_files", "verification", "next_step", "next_step_scope", "release_reason"],

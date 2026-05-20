@@ -3276,7 +3276,23 @@ def _compact_simple_put_packet(data: dict[str, Any], args: dict[str, Any], form_
     compact = dict(data)
     receipt = data.get("receipt") if isinstance(data.get("receipt"), dict) else {}
     if receipt:
-        receipt_keys = ("status", "form_id", "mode", "message", "id", "stage", "submitted_fields", "next_safe_action")
+        receipt_keys = (
+            "status",
+            "form_id",
+            "mode",
+            "message",
+            "id",
+            "artifact_key",
+            "stage",
+            "work_token",
+            "lease",
+            "work_session",
+            "release",
+            "next_state",
+            "next_forms",
+            "submitted_fields",
+            "next_safe_action",
+        )
         compact["receipt"] = {key: receipt.get(key) for key in receipt_keys if receipt.get(key) not in (None, "", [])}
     if "result" in compact:
         compact["result"] = _compact_put_result(compact.get("result"), receipt=receipt)

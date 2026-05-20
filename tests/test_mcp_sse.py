@@ -482,6 +482,9 @@ class TestMcpToolExecution:
             assert start_data["receipt"]["status"] == "started"
             assert start_data["receipt"]["lease"]["status"] == "active"
             assert "work_token_hash" not in start_data["receipt"]["lease"]
+            assert start_data["receipt"]["work_token"]
+            assert start_data["receipt"]["next_state"] == "implementation"
+            assert "finish_task" in start_data["receipt"]["next_forms"]
             assert start_data["receipt"]["work_session"]["status"] == "active"
 
             finished = await mcp_sse._execute_tool(
@@ -1347,6 +1350,49 @@ class TestMcpToolExecution:
         data = json.loads(result)
         assert data["receipt"]["status"] == "conflict"
         assert "active owned claim" in data["receipt"]["message"]
+
+    async def test_simple_submit_start_task_compact_keeps_work_token_and_next_forms(self, monkeypatch):
+        from app.services import stenographer_service as stenographer_mod
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            return {"id": "checkpoint-start", **payload}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            result = await mcp_sse._execute_tool(
+                "submit",
+                {
+                    "form_id": "start_task",
+                    "state": "planning",
+                    "project": "alpha",
+                    "runtime_profile_id": "strong_mcp_operator",
+                    "payload": {
+                        "project": "alpha",
+                        "task_id": "task-simple-start",
+                        "owner_agent": "codex",
+                        "session_id": "sess-simple-start",
+                        "agent_fingerprint": "agentfp:simple-start",
+                        "auto_heartbeat": False,
+                    },
+                },
+                "http://test",
+            )
+
+            data = json.loads(result)
+            assert data["receipt"]["status"] == "started"
+            assert data["receipt"]["work_token"]
+            assert data["receipt"]["next_state"] == "implementation"
+            assert {"record_progress", "finish_task"} <= set(data["receipt"]["next_forms"])
+        finally:
+            lease_store.close()
+            stenographer_store.close()
 
     async def test_mailbox_get_returns_public_state_packet_by_ref(self):
         result = await mcp_sse._execute_tool(

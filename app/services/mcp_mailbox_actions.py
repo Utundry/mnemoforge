@@ -398,6 +398,8 @@ async def mailbox_start_task(
         "work_token": result.get("work_token"),
         "work_session": result.get("work_session"),
         "auto_heartbeat": result.get("auto_heartbeat"),
+        "next_state": "implementation",
+        "next_forms": ["record_progress", "finish_task", "release_task_claim"],
         "next_safe_action": "Continue implementation, then submit record_progress or finish_task through mailbox.",
     }
     packet: dict[str, Any] = {"state": state, "project": project, "receipt": _compact(receipt), "next_safe_action": receipt["next_safe_action"]}

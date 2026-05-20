@@ -5,6 +5,8 @@
     "planning": [
       "get_task_context",
       "start_task",
+      "record_progress",
+      "finish_task",
       "create_improvement",
       "store_memory",
       "create_law",

@@ -422,6 +422,85 @@ async def test_promote_rule_candidate_endpoint_is_idempotent_for_same_candidate(
 
 
 @pytest.mark.asyncio
+async def test_promote_rule_candidate_supersedes_prior_promoted_copy_when_active_duplicate_exists(client):
+    from app.services.rule_lifecycle_service import get_rule_lifecycle_store
+
+    statement = "Agents should keep the simplified mailbox surface small."
+    store = get_rule_lifecycle_store()
+    candidate = store.create_candidate(
+        {
+            "project": "alpha",
+            "scope": "project",
+            "topic_path": "agent/mailbox",
+            "marker_kind": "rule_project_candidate",
+            "statement": statement,
+            "rationale": "Small public surfaces are easier for weak models.",
+            "evidence_refs": ["test:evidence"],
+            "source_task_id": "task-1",
+            "source_session_id": "sess-1",
+            "source_span_id": "span-promote-supersede-duplicate",
+            "source_work_id": "work-1",
+            "confidence": 0.9,
+            "promotion_hint": "",
+            "related_rule_hint": None,
+            "status": "candidate",
+        }
+    )
+
+    first = await client.post(
+        f"{PREFIX}/laws/candidates/{candidate.candidate_id}/promote",
+        json={
+            "title": "Keep Mailbox Surface Small",
+            "target_scope": "project",
+            "status": "proposed",
+            "reason": "Initial promotion created a proposed law.",
+            "acted_by": "codex",
+            "source": "test",
+        },
+    )
+    assert first.status_code == 200, first.text
+    proposed_law_id = first.json()["law"]["id"]
+
+    active = await client.post(
+        f"{PREFIX}/laws",
+        json={
+            "project": "alpha",
+            "title": "Keep Mailbox Surface Small",
+            "statement": statement,
+            "rationale": "Operator confirmed the same law directly.",
+            "agent_id": "codex",
+            "status": "active",
+            "confirmed_by": "user",
+            "confirmation_source": "test",
+        },
+    )
+    assert active.status_code == 201, active.text
+    active_law_id = active.json()["id"]
+    assert active_law_id != proposed_law_id
+
+    second = await client.post(
+        f"{PREFIX}/laws/candidates/{candidate.candidate_id}/promote",
+        json={
+            "title": "Keep Mailbox Surface Small",
+            "target_scope": "project",
+            "status": "active",
+            "reason": "Repeated promotion should reuse confirmed duplicate.",
+            "acted_by": "codex",
+            "source": "test",
+            "confirmed_by": "user",
+        },
+    )
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert body["law"]["id"] == active_law_id
+    assert body["candidate"]["promoted_law_id"] == active_law_id
+
+    proposed = await client.get(f"{PREFIX}/laws/{proposed_law_id}")
+    assert proposed.status_code == 200
+    assert proposed.json()["status"] == "superseded"
+
+
+@pytest.mark.asyncio
 async def test_revise_law_from_rule_candidate_endpoint_creates_pending_revision(client):
     from app.services.rule_lifecycle_service import get_rule_lifecycle_store
 

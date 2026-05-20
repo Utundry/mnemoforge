@@ -247,7 +247,9 @@ def test_mailbox_state_packet_orders_forms_by_workflow_not_filename() -> None:
     )
 
     form_ids = [form["form_id"] for form in packet["forms"]]
-    assert form_ids[:3] == ["get_task_context", "start_task", "create_improvement"]
+    assert form_ids[:2] == ["get_task_context", "start_task"]
+    assert "record_progress" in form_ids
+    assert "finish_task" in form_ids
     assert "store_memory" in form_ids
     assert "create_law" in form_ids
     assert "confirm_law" in form_ids

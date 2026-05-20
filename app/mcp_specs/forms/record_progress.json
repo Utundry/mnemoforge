@@ -2,7 +2,7 @@
   "id": "record_progress",
   "title": "Record progress",
   "purpose": "Record resumable task progress or implementation framing evidence.",
-  "states": ["implementation", "checkpointing", "handoff"],
+  "states": ["planning", "implementation", "checkpointing", "handoff"],
   "mode": "write",
   "required_fields": ["project", "summary"],
   "optional_fields": ["task_id", "work_token", "owner_agent", "session_id", "agent_fingerprint", "runtime_profile_id", "changed_files", "verification", "next_step", "stage", "danger_mode", "danger_confirmation"],
