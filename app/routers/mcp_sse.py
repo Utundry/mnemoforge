@@ -3283,6 +3283,8 @@ def _compact_simple_put_packet(data: dict[str, Any], args: dict[str, Any], form_
             "message",
             "id",
             "artifact_key",
+            "task_id",
+            "linked_artifact_key",
             "stage",
             "work_token",
             "lease",
@@ -3290,6 +3292,9 @@ def _compact_simple_put_packet(data: dict[str, Any], args: dict[str, Any], form_
             "release",
             "next_state",
             "next_forms",
+            "close_status",
+            "task_status",
+            "superseded_by",
             "submitted_fields",
             "next_safe_action",
         )
@@ -3297,6 +3302,75 @@ def _compact_simple_put_packet(data: dict[str, Any], args: dict[str, Any], form_
     if "result" in compact:
         compact["result"] = _compact_put_result(compact.get("result"), receipt=receipt)
     compact["details_available"] = True
+    return compact
+
+
+def _simple_get_query_uses_project_expert(query: str) -> bool:
+    text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
+    task_id_like = _extract_task_id_like_from_text(query)
+    if task_id_like:
+        return True
+    project_terms = (
+        "task",
+        "tasks",
+        "active work",
+        "open work",
+        "priority",
+        "continue",
+        "readiness",
+        "ready",
+        "usable",
+        "verify",
+        "verification",
+        "restart",
+        "health",
+        "rule",
+        "rules",
+        "law",
+        "laws",
+        "constraint",
+        "constraints",
+        "checkpoint",
+        "claim",
+        "lease",
+        "work_token",
+        "finish_task",
+        "project_context",
+        "задач",
+        "задачи",
+        "активные",
+        "приоритет",
+        "продолж",
+        "готов",
+        "провер",
+        "вериф",
+        "перезапуск",
+        "здоров",
+        "правил",
+        "закон",
+        "огранич",
+    )
+    return any(term in text for term in project_terms)
+
+
+def _compact_memory_search_results(results: Any) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    if not isinstance(results, list):
+        return compact
+    for item in results[:10]:
+        if not isinstance(item, dict):
+            continue
+        memory = item.get("memory") if isinstance(item.get("memory"), dict) else {}
+        compact.append(
+            {
+                "id": memory.get("id"),
+                "content": memory.get("content"),
+                "memory_type": memory.get("memory_type"),
+                "category": memory.get("category"),
+                "project": memory.get("project"),
+                "score": item.get("score"),
+            }
+        )
     return compact
 
 
@@ -3340,11 +3414,36 @@ async def _build_simple_get_payload(api_base: str, args: dict[str, Any], *, sess
 
     query = str(args.get("query") or args.get("question") or args.get("intent") or "").strip()
     if query:
+        project = str(args.get("project") or "mnemoforge")
+        limit = int(args.get("limit") or 10)
+        if not _simple_get_query_uses_project_expert(query):
+            memory_args = {
+                "query": query,
+                "project": project,
+                "context_project": project,
+                "limit": limit,
+            }
+            results = await _post(api_base, "/memories/search", memory_args)
+            return {
+                "state": str(args.get("state") or "planning"),
+                "project": project,
+                "receipt": {
+                    "status": "accepted",
+                    "message": "Natural read query resolved through memory search.",
+                    "resource_kind": "memory_search",
+                    "count": len(results) if isinstance(results, list) else 0,
+                    "next_safe_action": "Use get with a returned memory ref for exact details, or refine the query.",
+                },
+                "result": _compact_memory_search_results(results),
+                "simple_interface": {"tool": "get", "mode": "query", "route": "memory_search"},
+                "next_safe_action": "Use get with a returned memory ref for exact details, or refine the query.",
+                "details_available": True,
+            }
         ask_args = {
-            "project": str(args.get("project") or "mnemoforge"),
+            "project": project,
             "question": query,
             "detail": str(args.get("detail") or "compact"),
-            "limit": int(args.get("limit") or 20),
+            "limit": limit,
             "client_profile": str(args.get("client_profile") or "agent"),
             "response_format": _simple_get_response_format(args),
         }
@@ -8746,6 +8845,7 @@ async def _build_mailbox_submit_packet(
         api_base=api_base,
         session_id=session_id,
         dependencies=MailboxActionDependencies(
+            get=_get,
             post=_post,
             execute_tool=_execute_tool,
             get_session_identity_defaults=_get_session_identity_defaults,

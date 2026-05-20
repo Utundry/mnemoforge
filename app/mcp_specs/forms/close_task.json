@@ -1,0 +1,46 @@
+{
+  "id": "close_task",
+  "title": "Close task",
+  "purpose": "Close an unresolved task that should no longer be worked because it is obsolete, duplicate, superseded, cancelled, or not planned.",
+  "states": ["planning", "implementation", "checkpointing", "handoff", "operator_review"],
+  "mode": "transition",
+  "required_fields": ["project", "task_id", "reason"],
+  "optional_fields": ["close_status", "superseded_by", "owner_agent", "session_id", "release_claim", "tags", "agent_id"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "task_id": {"type": "string"},
+      "reason": {"type": "string"},
+      "close_status": {
+        "type": "string",
+        "enum": ["obsolete", "duplicate", "superseded", "cancelled", "not_planned"],
+        "default": "obsolete"
+      },
+      "superseded_by": {"type": "string"},
+      "owner_agent": {"type": "string", "default": "codex"},
+      "session_id": {"type": "string"},
+      "release_claim": {"type": "boolean", "default": true},
+      "tags": {"type": "array", "items": {"type": "string"}},
+      "agent_id": {"type": "string", "default": "codex"}
+    },
+    "required": ["project", "task_id", "reason"]
+  },
+  "assistance": {
+    "clerk_available": true,
+    "can_use_stenography": true,
+    "default_mode": "validate"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["record_progress", "release_task_claim"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "task_closed",
+      "artifact_type": "task",
+      "mutation": true
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "artifact_key", "close_status"]
+  },
+  "public_hint": "Use this when the correct outcome is not completed work. It archives the task with a reason instead of marking it done."
+}

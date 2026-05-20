@@ -38,7 +38,7 @@
       "artifact_type": ["task_checkpoint"],
       "internal_tool": ["clerk_draft_report"]
     },
-    "required_receipt_fields": ["status", "artifact_key", "id"]
+    "required_receipt_fields": ["status", "artifact_key", "id", "task_id", "linked_artifact_key"]
   },
   "public_hint": "Use this for new backlog work; Clerk may help fill fields, but final write requires reviewed form data."
 }

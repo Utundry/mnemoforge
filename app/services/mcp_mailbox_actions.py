@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
@@ -17,6 +18,7 @@ from app.services.mcp_tool_contracts import build_report_task_checkpoint_payload
 
 
 PostCallback = Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
+GetCallback = Callable[[str, str], Awaitable[dict[str, Any]]]
 ExecuteToolCallback = Callable[[str, dict[str, Any], str, str | None], Awaitable[str]]
 SessionIdentityCallback = Callable[[str | None], Awaitable[dict[str, str]]]
 TaskMutationGuardCallback = Callable[..., dict[str, Any] | None]
@@ -28,6 +30,7 @@ class MailboxActionDependencies:
     execute_tool: ExecuteToolCallback
     get_session_identity_defaults: SessionIdentityCallback
     task_mutation_guard: TaskMutationGuardCallback
+    get: GetCallback | None = None
 
 
 async def build_mailbox_submit_packet(
@@ -94,7 +97,11 @@ async def build_mailbox_submit_packet(
             session_id=session_id,
         )
     if form_id == "create_improvement":
-        return await mailbox_create_improvement(**common)
+        return await mailbox_create_improvement(
+            **common,
+            api_base=api_base,
+            dependencies=dependencies,
+        )
     if form_id == "store_memory":
         return await mailbox_store_memory(
             **common,
@@ -133,6 +140,13 @@ async def build_mailbox_submit_packet(
         return await mailbox_release_task_claim(**common, session_id=session_id)
     if form_id == "finish_task":
         return await mailbox_finish_task(
+            **common,
+            api_base=api_base,
+            dependencies=dependencies,
+            session_id=session_id,
+        )
+    if form_id == "close_task":
+        return await mailbox_close_task(
             **common,
             api_base=api_base,
             dependencies=dependencies,
@@ -353,7 +367,7 @@ async def mailbox_start_task(
         "project": project,
         "task_id": str(payload["task_id"]),
         "owner_agent": str(payload.get("owner_agent") or payload.get("agent_id") or "codex"),
-        "session_id": str(payload.get("session_id") or session_id or ""),
+        "session_id": str(payload.get("session_id") or session_id or _generated_mailbox_session_id(payload)),
         "agent_fingerprint": str(payload.get("agent_fingerprint") or identity_defaults.get("agent_fingerprint") or ""),
         "runtime_profile_id": str(payload.get("runtime_profile_id") or identity_defaults.get("runtime_profile_id") or runtime_profile_id or "unknown_cli"),
         "reason": str(payload.get("reason") or "mailbox_submit.start_task"),
@@ -553,6 +567,128 @@ async def mailbox_finish_task(
     return packet
 
 
+async def mailbox_close_task(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+    api_base: str,
+    dependencies: MailboxActionDependencies,
+    session_id: str | None,
+) -> dict[str, Any]:
+    if dependencies.get is None:
+        return _needs_input(
+            state,
+            project,
+            form.id,
+            "close_task requires server read access to load the existing task before archiving it.",
+            ["server_get_dependency"],
+            "Use release_task_claim for lease-only cleanup, or retry through the MCP server.",
+        )
+    task_id = str(payload["task_id"]).strip()
+    close_status = str(payload.get("close_status") or "obsolete").strip().lower() or "obsolete"
+    allowed_close_statuses = {"obsolete", "duplicate", "superseded", "cancelled", "not_planned"}
+    if close_status not in allowed_close_statuses:
+        close_status = "obsolete"
+    reason = str(payload["reason"]).strip()
+    task = await dependencies.get(api_base, f"/project/tasks/{quote(task_id, safe='')}?project={quote(project, safe='')}")
+    existing_tags = _string_list_arg(task.get("tags"))
+    extra_tags = _string_list_arg(payload.get("tags"))
+    superseded_by = str(payload.get("superseded_by") or "").strip()
+    close_tags = [
+        "mailbox",
+        "task_closed",
+        f"close_status:{close_status}",
+        *extra_tags,
+    ]
+    if superseded_by:
+        close_tags.append(f"superseded_by:{superseded_by}")
+    update_payload = {
+        "project": project,
+        "task_id": task_id,
+        "title": str(task.get("title") or task_id),
+        "description": str(task.get("description") or ""),
+        "agent_id": mailbox_actor(payload),
+        "status": "archived",
+        "source": str(task.get("source") or "mailbox_submit.close_task"),
+        "tags": _unique_strings([*existing_tags, *close_tags]),
+        "topic_path": task.get("topic_path"),
+        "linked_improvement_id": task.get("linked_improvement_id"),
+    }
+    update_payload = {key: value for key, value in update_payload.items() if value not in (None, "", [])}
+    result = await dependencies.post(api_base, "/project/tasks", update_payload)
+    change_content = f"Closed task as {close_status}: {reason}"
+    if superseded_by:
+        change_content += f"\nSuperseded by: {superseded_by}"
+    await dependencies.post(
+        api_base,
+        f"/project/tasks/{quote(task_id, safe='')}/changes",
+        {
+            "project": project,
+            "change_type": "status_change",
+            "content": change_content,
+            "why": "Task was closed without marking work as completed.",
+            "agent_id": mailbox_actor(payload),
+            "source": "mailbox_submit.close_task",
+            "tags": close_tags,
+        },
+    )
+    release_receipt: dict[str, Any] | None = None
+    if bool(payload.get("release_claim", True)):
+        release_form = mailbox_form_by_id("release_task_claim") or form
+        candidate_release_receipt = (
+            await mailbox_release_task_claim(
+                form=release_form,
+                payload={
+                    "project": project,
+                    "task_id": task_id,
+                    "owner_agent": payload.get("owner_agent") or payload.get("agent_id") or "codex",
+                    "session_id": payload.get("session_id") or session_id or "",
+                    "reason": f"close_task:{close_status}",
+                    "status": "released",
+                },
+                state=state,
+                project=project,
+                runtime_profile_id=runtime_profile_id,
+                diagnostic=False,
+                session_id=session_id,
+            )
+        ).get("receipt")
+        if candidate_release_receipt and candidate_release_receipt.get("status") != "not_found":
+            release_receipt = candidate_release_receipt
+    result["artifact_key"] = f"task:{project}:{task_id}"
+    result["close_status"] = close_status
+    actual_metadata = {
+        "result_kind": "task_closed",
+        "mutation": True,
+        "artifact_type": "task",
+        "internal_tool": "project_task_archive",
+        "route_id": "mailbox.close_task.v1",
+    }
+    packet = build_mailbox_mutation_packet(
+        form=form,
+        payload=payload,
+        state=state,
+        project=project,
+        actual_metadata=actual_metadata,
+        result=result,
+        runtime_profile_id=runtime_profile_id,
+        diagnostic=diagnostic,
+    )
+    packet["receipt"]["close_status"] = close_status
+    packet["receipt"]["task_status"] = result.get("status") or "archived"
+    if superseded_by:
+        packet["receipt"]["superseded_by"] = superseded_by
+    if release_receipt:
+        packet["receipt"]["release"] = release_receipt
+    packet["next_safe_action"] = "Request state planning or list open tasks before selecting new work."
+    packet["receipt"]["next_safe_action"] = packet["next_safe_action"]
+    return packet
+
+
 async def mailbox_create_improvement(
     *,
     form,
@@ -561,6 +697,8 @@ async def mailbox_create_improvement(
     project: str,
     runtime_profile_id: str,
     diagnostic: bool,
+    api_base: str,
+    dependencies: MailboxActionDependencies,
 ) -> dict[str, Any]:
     from app.services.improvements_store import get_improvements_store
 
@@ -583,16 +721,51 @@ async def mailbox_create_improvement(
         tags=["mailbox", "mcp-fsm", "mcp-improvement"],
     )
     row = await get_improvements_store().get(uid)
-    result = {"id": str(uid), "artifact_key": f"improvement:{project}:{uid}", "created": bool(created), "title": row.get("title") if row else title}
+    description = str(row.get("description") if row else "\n".join(description_parts))
+    task_id = str(uid)
+    task_payload = {
+        "project": project,
+        "task_id": task_id,
+        "title": str(row.get("title") if row else title),
+        "description": description,
+        "agent_id": mailbox_actor(payload),
+        "status": "planning",
+        "source": "improvement",
+        "tags": ["mailbox", "mcp-fsm", "mcp-improvement", "entity:task", f"task_id:{task_id}", "task_status:planning"],
+        "linked_improvement_id": task_id,
+    }
+    task_result = await dependencies.post(api_base, "/project/tasks", task_payload)
+    await dependencies.post(
+        api_base,
+        f"/project/tasks/{quote(task_id, safe='')}/changes",
+        {
+            "project": project,
+            "change_type": "task_created",
+            "content": f"Task bootstrapped from mailbox improvement '{task_payload['title']}'.",
+            "why": "Public create_improvement must return a directly usable task_id for weak-model workflows.",
+            "agent_id": mailbox_actor(payload),
+            "source": "mailbox_submit.create_improvement",
+            "tags": ["mailbox", "mcp-fsm", "mcp-improvement"],
+        },
+    )
+    result = {
+        "id": str(uid),
+        "artifact_key": f"improvement:{project}:{uid}",
+        "created": bool(created),
+        "title": task_payload["title"],
+        "task_id": task_id,
+        "linked_artifact_key": f"task:{project}:{task_id}",
+        "task_status": task_result.get("status") or "planning",
+    }
     actual_metadata = {
         "result_kind": "artifact_created",
         "artifact_type": "improvement",
         "mutation": True,
         "review_mode": False,
-        "internal_tool": "improvements_store.upsert_by_title",
+        "internal_tool": "improvements_store.upsert_by_title+project_task_bootstrap",
         "route_id": "mailbox.create_improvement.v1",
     }
-    return build_mailbox_mutation_packet(
+    packet = build_mailbox_mutation_packet(
         form=form,
         payload=payload,
         state=state,
@@ -602,6 +775,12 @@ async def mailbox_create_improvement(
         runtime_profile_id=runtime_profile_id,
         diagnostic=diagnostic,
     )
+    packet["receipt"]["task_id"] = task_id
+    packet["receipt"]["linked_artifact_key"] = result["linked_artifact_key"]
+    packet["receipt"]["task_status"] = result["task_status"]
+    packet["receipt"]["next_safe_action"] = "Use task_id for start_task, record_progress, finish_task, or close_task."
+    packet["next_safe_action"] = packet["receipt"]["next_safe_action"]
+    return packet
 
 
 async def mailbox_store_memory(
@@ -851,6 +1030,13 @@ async def mailbox_record_progress(
         if result.get("id"):
             result["artifact_key"] = f"task:{project}:{task_id}"
             result["stage"] = stage
+        _record_closeout_spans_from_progress(
+            payload=payload,
+            project=project,
+            task_id=task_id,
+            owner_agent=mailbox_actor(payload),
+            owner_session_id=str(payload.get("session_id") or session_id or ""),
+        )
         actual_metadata = {
             "result_kind": "progress_recorded",
             "mutation": True,
@@ -904,6 +1090,60 @@ def mailbox_actor(payload: dict[str, Any]) -> str:
     return str(payload.get("updated_by") or payload.get("agent_id") or payload.get("owner_agent") or "codex").strip() or "codex"
 
 
+def _generated_mailbox_session_id(payload: dict[str, Any]) -> str:
+    owner = mailbox_actor(payload)
+    fingerprint = str(payload.get("agent_fingerprint") or "").strip()
+    if fingerprint:
+        return f"mailbox-auto-{owner}-{fingerprint}"[:120]
+    return f"mailbox-auto-{uuid.uuid4().hex[:12]}"
+
+
+def _record_closeout_spans_from_progress(
+    *,
+    payload: dict[str, Any],
+    project: str,
+    task_id: str,
+    owner_agent: str,
+    owner_session_id: str,
+) -> None:
+    from app.services.stenographer_service import get_stenographer_store
+
+    store = get_stenographer_store()
+    active_work = None
+    if owner_session_id:
+        active_work = store.get_active_work_by_task(
+            project=project,
+            task_id=task_id,
+            agent_id=owner_agent,
+            session_id=owner_session_id,
+        )
+    if active_work is None and str(payload.get("work_token") or "").strip():
+        active_work = store.get_active_work_by_task_any_session(
+            project=project,
+            task_id=task_id,
+            agent_id=owner_agent,
+        )
+    if active_work is None:
+        return
+    span_session_id = active_work.session_id or owner_session_id
+    for kind, values in (
+        ("verification", _string_list_arg(payload.get("verification"))),
+        ("changed_files", _string_list_arg(payload.get("changed_files"))),
+        ("next_step", _string_list_arg(payload.get("next_step"))),
+    ):
+        for value in values:
+            store.record_span(
+                project=project,
+                task_id=task_id,
+                work_id=active_work.work_id,
+                agent_id=owner_agent,
+                session_id=span_session_id,
+                kind=kind,
+                source="mailbox_submit.record_progress",
+                content=value,
+            )
+
+
 def _string_list_arg(value: Any) -> list[str]:
     if value is None:
         return []
@@ -911,6 +1151,18 @@ def _string_list_arg(value: Any) -> list[str]:
         return [str(item).strip() for item in value if str(item).strip()]
     text = str(value).strip()
     return [text] if text else []
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _compact(receipt: dict[str, Any]) -> dict[str, Any]:

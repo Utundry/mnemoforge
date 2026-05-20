@@ -50,6 +50,7 @@ def test_default_workflow_specs_validate() -> None:
     assert "minimal" in summary["mailbox_form_visibility_profiles"]
     assert {
         "claim_task",
+        "close_task",
         "confirm_law",
         "create_law",
         "create_improvement",
@@ -250,6 +251,7 @@ def test_mailbox_state_packet_orders_forms_by_workflow_not_filename() -> None:
     assert form_ids[:2] == ["get_task_context", "start_task"]
     assert "record_progress" in form_ids
     assert "finish_task" in form_ids
+    assert "close_task" in form_ids
     assert "store_memory" in form_ids
     assert "create_law" in form_ids
     assert "confirm_law" in form_ids

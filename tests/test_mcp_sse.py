@@ -517,6 +517,92 @@ class TestMcpToolExecution:
             lease_store.close()
             stenographer_store.close()
 
+    async def test_mailbox_record_progress_evidence_allows_finish_without_repeating_evidence(self, monkeypatch):
+        from app.services import stenographer_service as stenographer_mod
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            if path.startswith("/project/tasks/") and path.endswith("/changes"):
+                return {"id": f"checkpoint-{payload.get('stage')}", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            started = json.loads(
+                await mcp_sse._execute_tool(
+                    "submit",
+                    {
+                        "form_id": "start_task",
+                        "state": "planning",
+                        "project": "alpha",
+                        "payload": {
+                            "project": "alpha",
+                            "task_id": "task-mailbox-progress-finish",
+                            "owner_agent": "codex",
+                            "agent_fingerprint": "agentfp:progress-finish",
+                            "auto_heartbeat": False,
+                        },
+                    },
+                    "http://test",
+                )
+            )
+            assert started["receipt"]["status"] == "started"
+            token = started["receipt"]["work_token"]
+
+            progress = json.loads(
+                await mcp_sse._execute_tool(
+                    "submit",
+                    {
+                        "form_id": "record_progress",
+                        "state": "implementation",
+                        "project": "alpha",
+                        "payload": {
+                            "project": "alpha",
+                            "task_id": "task-mailbox-progress-finish",
+                            "owner_agent": "codex",
+                            "work_token": token,
+                            "summary": "Recorded closeout evidence once.",
+                            "changed_files": ["app/services/mcp_mailbox_actions.py"],
+                            "verification": ["Docker contour passed."],
+                            "next_step": "No follow-up.",
+                            "stage": "handoff",
+                        },
+                    },
+                    "http://test",
+                )
+            )
+            assert progress["receipt"]["status"] == "accepted"
+
+            finished = json.loads(
+                await mcp_sse._execute_tool(
+                    "submit",
+                    {
+                        "form_id": "finish_task",
+                        "state": "handoff",
+                        "project": "alpha",
+                        "payload": {
+                            "project": "alpha",
+                            "task_id": "task-mailbox-progress-finish",
+                            "owner_agent": "codex",
+                            "work_token": token,
+                            "summary": "Finished without repeating evidence.",
+                        },
+                    },
+                    "http://test",
+                )
+            )
+            assert finished["receipt"]["status"] == "finished"
+            assert finished["receipt"]["release"]["status"] == "released"
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
     async def test_mailbox_start_task_converts_internal_error_to_public_receipt(self, monkeypatch):
         async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
             raise RuntimeError('HTTP 404: {"detail":"Task not found"}')
@@ -1120,7 +1206,14 @@ class TestMcpToolExecution:
         assert data["receipt"]["approved_command"].startswith("./scripts/run_pytest_docker.ps1 -NoBuild")
         assert "pytest" in data["receipt"]["forbidden_patterns"]
 
-    async def test_mailbox_submit_create_improvement_executes_governed_write(self):
+    async def test_mailbox_submit_create_improvement_executes_governed_write(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "task-memory-id", **payload}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
         result = await mcp_sse._execute_tool(
             "mailbox_submit",
             {
@@ -1142,9 +1235,17 @@ class TestMcpToolExecution:
         assert data["receipt"]["mode"] == "write"
         assert data["receipt"]["artifact_key"].startswith("improvement:alpha:")
         assert data["receipt"]["id"]
+        assert data["receipt"]["task_id"] == data["receipt"]["id"]
+        assert data["receipt"]["linked_artifact_key"].startswith("task:alpha:")
         assert "_internal" not in data
+        assert posted[0][0] == "/project/tasks"
+        assert posted[1][0].startswith("/project/tasks/")
 
-    async def test_mailbox_submit_create_improvement_diagnostic_includes_health_metadata(self):
+    async def test_mailbox_submit_create_improvement_diagnostic_includes_health_metadata(self, monkeypatch):
+        async def fake_post(api_base: str, path: str, payload: dict):
+            return {"id": "task-memory-id", **payload}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
         result = await mcp_sse._execute_tool(
             "mailbox_submit",
             {
@@ -1276,6 +1377,124 @@ class TestMcpToolExecution:
         data = json.loads(result)
         assert data["receipt"]["status"] == "needs_input"
         assert data["receipt"]["missing_fields"] == ["confirmed_by"]
+
+    async def test_mailbox_submit_close_task_archives_without_completion(self, monkeypatch):
+        calls: list[tuple[str, str, dict | None]] = []
+
+        async def fake_get(api_base: str, path: str):
+            calls.append(("GET", path, None))
+            return {
+                "id": "memory-task-1",
+                "task_id": "task-obsolete",
+                "project": "alpha",
+                "title": "Old task",
+                "description": "No longer needed.",
+                "agent_id": "codex",
+                "status": "planning",
+                "source": "test",
+                "tags": ["existing"],
+            }
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            calls.append(("POST", path, payload))
+            if path == "/project/tasks":
+                return {"id": "memory-task-1", **payload}
+            if path == "/project/tasks/task-obsolete/changes":
+                return {"id": "change-1", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "close_task",
+                "payload": {
+                    "project": "alpha",
+                    "task_id": "task-obsolete",
+                    "reason": "Superseded by the new mailbox workflow.",
+                    "close_status": "superseded",
+                    "superseded_by": "task:alpha:new-task",
+                    "release_claim": False,
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["artifact_key"] == "task:alpha:task-obsolete"
+        assert data["receipt"]["close_status"] == "superseded"
+        assert data["receipt"]["task_status"] == "archived"
+        assert data["receipt"]["superseded_by"] == "task:alpha:new-task"
+        assert calls[0] == ("GET", "/project/tasks/task-obsolete?project=alpha", None)
+        assert calls[1][0:2] == ("POST", "/project/tasks")
+        assert calls[1][2]["status"] == "archived"
+        assert "close_status:superseded" in calls[1][2]["tags"]
+        assert calls[2][0:2] == ("POST", "/project/tasks/task-obsolete/changes")
+        assert calls[2][2]["change_type"] == "status_change"
+
+    async def test_mailbox_submit_create_improvement_bootstraps_task_id(self, monkeypatch):
+        from uuid import UUID
+
+        from app.services import improvements_store as improvements_store_mod
+
+        improvement_id = UUID("aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa")
+        calls: list[tuple[str, dict]] = []
+
+        class FakeImprovementStore:
+            async def upsert_by_title(self, **kwargs):
+                return improvement_id, True
+
+            async def get(self, uid):
+                assert uid == improvement_id
+                return {
+                    "id": str(improvement_id),
+                    "project": "alpha",
+                    "title": "Mailbox-created improvement",
+                    "description": "Create a linked task immediately.",
+                    "status": "open",
+                }
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            calls.append((path, payload))
+            if path == "/project/tasks":
+                return {"id": "task-memory-id", **payload}
+            if path == f"/project/tasks/{improvement_id}/changes":
+                return {"id": "change-1", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(improvements_store_mod, "get_improvements_store", lambda: FakeImprovementStore())
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "create_improvement",
+                "payload": {
+                    "project": "alpha",
+                    "title": "Mailbox-created improvement",
+                    "summary": "Create a linked task immediately.",
+                    "next_step": "Use the returned task_id for follow-up forms.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["artifact_key"] == f"improvement:alpha:{improvement_id}"
+        assert data["receipt"]["task_id"] == str(improvement_id)
+        assert data["receipt"]["linked_artifact_key"] == f"task:alpha:{improvement_id}"
+        assert data["receipt"]["task_status"] == "planning"
+        assert calls[0][0] == "/project/tasks"
+        assert calls[0][1]["task_id"] == str(improvement_id)
+        assert calls[0][1]["linked_improvement_id"] == str(improvement_id)
+        assert calls[1][0] == f"/project/tasks/{improvement_id}/changes"
 
     async def test_mailbox_submit_set_feature_gate_updates_runtime_gate(self):
         result = await mcp_sse._execute_tool(
@@ -1695,6 +1914,74 @@ class TestMcpToolExecution:
         assert result["receipt"]["status"] == "accepted"
         assert result["result"]["task_id"] == "task-123"
         assert result["result"]["title"] == "Auto format task."
+
+    async def test_simple_get_query_uses_memory_search_for_generic_semantic_reads(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            assert path == "/memories/search"
+            return [
+                {
+                    "score": 0.91,
+                    "memory": {
+                        "id": "mem-1",
+                        "content": "Stored fact about mailbox usability.",
+                        "memory_type": "context",
+                        "category": "mnemoforge:fact",
+                        "project": "alpha",
+                    },
+                }
+            ]
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("generic get(query) should not route through ask_project disambiguation")
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "mailbox usability stored fact", "limit": 5},
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "accepted"
+        assert result["receipt"]["resource_kind"] == "memory_search"
+        assert result["simple_interface"]["route"] == "memory_search"
+        assert result["result"][0]["id"] == "mem-1"
+        assert posted[0][1]["project"] == "alpha"
+        assert posted[0][1]["context_project"] == "alpha"
+
+    async def test_simple_get_query_keeps_project_questions_on_project_expert(self, monkeypatch):
+        async def fake_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            return {
+                "facade": "ask_project",
+                "question": args["question"],
+                "selected_expert_route": {"facade": "project_work"},
+                "result_text": "Mnemoforge answer\nAnswer: project_work executed route list_open_tasks.",
+            }
+
+        async def forbidden_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("project task query should not route to memory_search")
+
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", fake_ask_project)
+        monkeypatch.setattr(mcp_sse, "_post", forbidden_post)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "list active tasks", "limit": 5},
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "accepted"
+        assert result["receipt"]["resource_kind"] == "query"
+        assert result["simple_interface"]["mode"] == "query"
+        assert result["result"]["selected_facade"] == "project_work"
 
     async def test_simple_state_compacts_forms_by_default_and_full_keeps_schemas(self):
         compact = json.loads(

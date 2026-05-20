@@ -7,6 +7,7 @@
       "start_task",
       "record_progress",
       "finish_task",
+      "close_task",
       "create_improvement",
       "store_memory",
       "create_law",
@@ -21,6 +22,7 @@
       "get_task_context",
       "start_task",
       "release_task_claim",
+      "close_task",
       "claim_task"
     ],
     "verification": [
@@ -34,6 +36,7 @@
     "checkpointing": [
       "finish_task",
       "record_progress",
+      "close_task",
       "store_memory",
       "get_task_context",
       "release_task_claim",
@@ -45,6 +48,7 @@
       "record_progress",
       "store_memory",
       "finish_task",
+      "close_task",
       "get_task_context",
       "release_task_claim",
       "claim_task"
@@ -54,6 +58,7 @@
       "create_law",
       "confirm_law",
       "finish_task",
+      "close_task",
       "release_task_claim",
       "set_feature_gate"
     ]
