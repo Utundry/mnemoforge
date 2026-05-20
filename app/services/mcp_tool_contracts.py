@@ -7,6 +7,150 @@ from urllib.parse import quote
 
 
 _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "get": {
+        "name": "get",
+        "description": (
+            "Simple read entrypoint for weak/local models. Use ref for public addresses such as "
+            "task:mnemoforge:<id>, mailbox_get:memory:<project>:<id>, or mailbox_state:<project>:planning; "
+            "use query for natural read-only questions. The server chooses the safe read route."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ref": {"type": "string", "description": "Public data reference/address to read."},
+                "query": {"type": "string", "description": "Natural read-only question when no ref is known."},
+                "question": {"type": "string", "description": "Alias for query."},
+                "project": {"type": "string", "default": "mnemoforge"},
+                "state": {
+                    "type": "string",
+                    "default": "planning",
+                    "enum": [
+                        "planning",
+                        "implementation",
+                        "verification",
+                        "live_validation",
+                        "checkpointing",
+                        "handoff",
+                        "operator_review",
+                    ],
+                },
+                "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20},
+                "response_format": {"type": "string", "enum": ["auto", "json", "answer", "diagnostic"], "default": "auto"},
+                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
+                "diagnostic": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    "put": {
+        "name": "put",
+        "description": (
+            "Compatibility alias for submit. Submit a public mailbox form by setting "
+            "form_id (or action) and payload; the server validates state, guardrails, and ownership before any mutation."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "form_id": {"type": "string", "description": "Public form id from help/get mailbox state."},
+                "action": {"type": "string", "description": "Alias for form_id."},
+                "payload": {"type": "object", "additionalProperties": True, "default": {}},
+                "project": {"type": "string", "default": "mnemoforge"},
+                "state": {
+                    "type": "string",
+                    "default": "planning",
+                    "enum": [
+                        "planning",
+                        "implementation",
+                        "verification",
+                        "live_validation",
+                        "checkpointing",
+                        "handoff",
+                        "operator_review",
+                    ],
+                },
+                "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
+                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
+                "diagnostic": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    "submit": {
+        "name": "submit",
+        "description": (
+            "Simple form-submission entrypoint for weak/local models. Submit a public mailbox form by setting "
+            "form_id (or action) and payload; the server validates state, guardrails, and ownership before any mutation."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "form_id": {"type": "string", "description": "Public form id from state."},
+                "action": {"type": "string", "description": "Alias for form_id."},
+                "payload": {"type": "object", "additionalProperties": True, "default": {}},
+                "project": {"type": "string", "default": "mnemoforge"},
+                "state": {
+                    "type": "string",
+                    "default": "planning",
+                    "enum": [
+                        "planning",
+                        "implementation",
+                        "verification",
+                        "live_validation",
+                        "checkpointing",
+                        "handoff",
+                        "operator_review",
+                    ],
+                },
+                "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
+                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
+                "diagnostic": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    "state": {
+        "name": "state",
+        "description": (
+            "Return the current public workflow/FSM state packet: allowed forms/actions, next safe action, "
+            "runtime-profile limits, and optional diagnostics when permitted."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "state": {
+                    "type": "string",
+                    "default": "planning",
+                    "enum": [
+                        "planning",
+                        "implementation",
+                        "verification",
+                        "live_validation",
+                        "checkpointing",
+                        "handoff",
+                        "operator_review",
+                    ],
+                },
+                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
+                "diagnostic": {"type": "boolean", "default": False},
+            },
+        },
+    },
+    "help": {
+        "name": "help",
+        "description": (
+            "Simple static guidance entrypoint for weak/local models. Explains the four-tool protocol "
+            "without returning the full dynamic workflow packet. Use state for current forms/actions."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "default": "mnemoforge"},
+                "topic": {"type": "string", "description": "Optional user topic; currently returned as guidance context."},
+                "detail": {"type": "string", "enum": ["brief", "full"], "default": "brief"},
+                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
+                "diagnostic": {"type": "boolean", "default": False},
+            },
+        },
+    },
     "load_instruction_layer": {
         "name": "load_instruction_layer",
         "description": (
@@ -1808,6 +1952,9 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "agent_id": {"type": "string", "default": "codex"},
                 "owner_agent": {"type": "string", "description": "Compatibility alias for agent_id"},
                 "session_id": {"type": "string", "description": "Required unless danger_mode is set with danger_confirmation"},
+                "agent_fingerprint": {"type": "string", "description": "Stable CLI/model/workspace fingerprint for reclaim decisions."},
+                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
+                "work_token": {"type": "string", "description": "Optional ownership proof for same-fingerprint session-loss reclaim."},
                 "danger_mode": {"type": "boolean", "default": False, "description": "Allow bypassing session_id requirement with explicit confirmation"},
                 "danger_confirmation": {"type": "string", "description": "Must be 'authorize_session_bypass' when danger_mode=true to auto-generate session_id"},
                 "lease_ttl_seconds": {"type": "integer", "minimum": 5, "maximum": 86400, "default": 900},
@@ -1867,6 +2014,9 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "owner_agent": {"type": "string", "default": "codex"},
                 "agent_id": {"type": "string", "description": "Compatibility alias for owner_agent"},
                 "session_id": {"type": "string"},
+                "agent_fingerprint": {"type": "string", "description": "Stable CLI/model/workspace fingerprint for reclaim decisions."},
+                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
+                "work_token": {"type": "string", "description": "Optional ownership proof for same-fingerprint session-loss reclaim."},
                 "lease_ttl_seconds": {"type": "integer", "minimum": 5, "maximum": 86400, "default": 900},
             },
         },
@@ -1925,6 +2075,8 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string"},
                 "owner_agent": {"type": "string"},
+                "agent_fingerprint": {"type": "string"},
+                "runtime_profile_id": {"type": "string"},
                 "status": {"type": "string", "enum": ["active", "released", "expired", "transferred", "all"], "default": "active"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50},
             },
@@ -3172,20 +3324,18 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
     return {
         "agent_id": agent_id,
         "tip": (
-            "Call get_onboarding at the start of a session or when you are lost. "
-            "If you collaborate on a project, call pickup_coordination_messages for your agent_id and project. "
-            "The default tools/list response is compact; start with mailbox_state for the current public workflow packet, then use mailbox_submit/mailbox_get or expert helpers such as project_work/get_task_execution_context as directed. "
-            "Only request mode=full for deep/debug access. "
-            "Prefer expert helpers over operating low-level tools directly; helpers should read project-specific runtime hints instead of assuming one universal test or deployment contour. "
-            "If you still need to choose a MCP path manually, call normalize_mcp_intent before you guess at tools. "
-            "If you need to continue a task, call pull_task_context first for read-only checkpoint replay; use reopen_task only when a closed/inactive task must be made active again. "
-            "If you are working on a task, record a checkpoint at planning and after every meaningful stage transition with report_task_checkpoint. "
-            "If storage health may affect retrieval, call get_storage_trust_status."
+            "Use the public MCP surface first: help, state, get, submit. "
+            "Do not start by reading client config files, mcp_settings.json, alwaysAllow lists, or cached tool allowlists; they are transport/client metadata, not workflow guidance. "
+            "Call help when unsure, state for the current workflow packet, get for reads by ref/query, and submit for governed form submissions. "
+            "The default tools/list response is compact; only request mode=full for deep/debug access. "
+            "Legacy and specialized tools are compatibility/debug surfaces behind the public protocol; use them only when state/get/help explicitly direct a fallback. "
+            "If storage health may affect retrieval, ask through get/state guidance before trusting affected paths."
         ),
         "semantic_defaults": [
             "Prefer project-scoped operations and keep project_id consistent.",
-            "Start with mailbox_state to get the current public workflow packet; use mailbox_submit/mailbox_get before falling back to specialized tools.",
-            "When a task is already underway, use get_task_execution_context before browsing the full catalog.",
+            "Start with state to get the current public workflow packet; use get for public refs or read-only questions; use submit for public forms.",
+            "Do not use mcp_settings.json, alwaysAllow, or client config files as the source of workflow truth.",
+            "When a task is already underway, use get with a task ref or submit the get_task_context form before browsing the full catalog.",
             "Treat runtime details such as Docker test contours as project-specific hints, not global rules for every project.",
             "Use coordination messages for requests, replies, and handoff status; they do not become project truth automatically.",
             "Prefer semantic routes such as /api/v1/coordination/... over internal module topology.",
@@ -3195,8 +3345,10 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
             "preferred_mode": "compact",
             "compact_request": {"method": "tools/list", "params": {"mode": "compact"}},
             "full_request": {"method": "tools/list", "params": {"mode": "full"}},
-            "recommended_first_tool": "mailbox_state",
-            "reason": "Default tools/list starts with the Mailbox/MCP FSM surface; request the full flat catalog only for deeper/debug access.",
+            "recommended_first_tool": "help",
+            "public_surface": ["help", "state", "get", "submit"],
+            "reason": "Default tools/list starts with the simple public MCP surface; request the full flat catalog only for deeper/debug access.",
+            "do_not_bootstrap_from": ["mcp_settings.json", "alwaysAllow", "client allowlists", "cached full tool lists"],
         },
         "l0_policy": build_l0_policy(),
         "instruction_layers": {
@@ -3212,14 +3364,13 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
 def build_mnemoforge_onboarding_basics() -> str:
     return (
         "MNEMOFORGE BASICS:\n"
-        "  - Call get_onboarding at session start or when you lose context.\n"
-        "  - If onboarding warns that storage trust is degraded, call get_storage_trust_status before trusting affected retrieval or learning paths.\n"
-        "  - If another agent may have contacted you, call pickup_coordination_messages with your agent_id and project.\n"
-        "  - Start project work with mailbox_state; use mailbox_submit/mailbox_get for the public workflow protocol.\n"
-        "  - If the right MCP path is unclear after mailbox_state, call normalize_mcp_intent.\n"
-        "  - If you need to continue a task, call pull_task_context first; use reopen_task only to reactivate a closed/inactive task.\n"
-        "  - If you are working on a task, call report_task_checkpoint at planning, blockers, interruptions, handoff, and completion.\n"
-        "  - Use send_coordination_message for requests, replies, and handoffs; coordination is operational, not project truth.\n"
+        "  - Public surface first: help, state, get, submit.\n"
+        "  - Do not bootstrap from mcp_settings.json, alwaysAllow, client allowlists, or cached full tool lists.\n"
+        "  - Call help when unsure; call state for the current workflow packet.\n"
+        "  - Use get for public refs or read-only natural questions.\n"
+        "  - Use submit for public forms returned by state; put is only a compatibility alias.\n"
+        "  - If onboarding warns that storage trust is degraded, follow public state/get guidance before trusting affected retrieval or learning paths.\n"
+        "  - Coordination and specialized tools are fallback/debug surfaces, not the default workflow.\n"
         "  - Keep project_id explicit and consistent across retrieval, bootstrap, and coordination."
     )
 

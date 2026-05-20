@@ -1,0 +1,39 @@
+{
+  "id": "claim_task",
+  "title": "Claim or reclaim task",
+  "purpose": "Claim a task lease or safely reclaim the same task after session loss using agent_fingerprint and work_token.",
+  "states": ["planning", "implementation", "handoff"],
+  "mode": "transition",
+  "required_fields": ["project", "task_id"],
+  "optional_fields": ["owner_agent", "session_id", "agent_fingerprint", "runtime_profile_id", "work_token", "lease_ttl_seconds"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "task_id": {"type": "string"},
+      "owner_agent": {"type": "string", "default": "codex"},
+      "session_id": {"type": "string"},
+      "agent_fingerprint": {"type": "string"},
+      "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
+      "work_token": {"type": "string"},
+      "lease_ttl_seconds": {"type": "integer", "minimum": 5, "maximum": 86400, "default": 900}
+    },
+    "required": ["project", "task_id"]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "none"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["get_task_context"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "task_claim",
+      "mutation": true
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "lease"]
+  },
+  "public_hint": "Use this before editing a task; keep the returned work_token for future checkpoint, finish, or same-fingerprint reclaim."
+}

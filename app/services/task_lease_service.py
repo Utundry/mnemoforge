@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS task_leases (
     task_id             TEXT NOT NULL,
     owner_agent         TEXT NOT NULL,
     session_id          TEXT NOT NULL DEFAULT '',
+    agent_fingerprint   TEXT NOT NULL DEFAULT '',
+    runtime_profile_id  TEXT NOT NULL DEFAULT '',
     status              TEXT NOT NULL,
     claimed_at          REAL NOT NULL,
     heartbeat_at        REAL NOT NULL,
@@ -39,6 +41,12 @@ CREATE INDEX IF NOT EXISTS idx_task_leases_project_task_status
 CREATE INDEX IF NOT EXISTS idx_task_leases_owner_session
     ON task_leases(owner_agent, session_id, status, heartbeat_at);
 """
+
+_MIGRATE_SQL = [
+    "ALTER TABLE task_leases ADD COLUMN agent_fingerprint TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE task_leases ADD COLUMN runtime_profile_id TEXT NOT NULL DEFAULT ''",
+    "CREATE INDEX IF NOT EXISTS idx_task_leases_fingerprint ON task_leases(agent_fingerprint, project, task_id, status, heartbeat_at)",
+]
 
 
 class TaskLeaseConflict(ValueError):
@@ -115,6 +123,15 @@ class TaskLeaseStore:
         with self._lock:
             self._conn.executescript(_CREATE_SQL)
             self._conn.commit()
+            self._migrate()
+
+    def _migrate(self) -> None:
+        for sql in _MIGRATE_SQL:
+            try:
+                self._conn.execute(sql)
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                pass
 
     def close(self) -> None:
         stop_task_lease_auto_heartbeats_for_store(self)
@@ -128,6 +145,8 @@ class TaskLeaseStore:
             task_id=str(row["task_id"]),
             owner_agent=str(row["owner_agent"]),
             session_id=str(row["session_id"] or ""),
+            agent_fingerprint=str(row["agent_fingerprint"] or ""),
+            runtime_profile_id=str(row["runtime_profile_id"] or ""),
             status=str(row["status"]),
             claimed_at=_dt(row["claimed_at"]) or _utcnow(),
             heartbeat_at=_dt(row["heartbeat_at"]) or _utcnow(),
@@ -136,6 +155,8 @@ class TaskLeaseStore:
             release_reason=str(row["release_reason"] or ""),
             lease_ttl_seconds=int(row["lease_ttl_seconds"] or DEFAULT_LEASE_TTL_SECONDS),
             previous_lease_id=str(row["previous_lease_id"] or ""),
+            work_token_hash=str(row["work_token_hash"] or ""),
+            work_token_preview=str(row["work_token_preview"] or ""),
         )
 
     def expire_stale(self, *, now: datetime | None = None) -> list[TaskLeaseRecord]:
@@ -197,6 +218,9 @@ class TaskLeaseStore:
         task_id: str,
         owner_agent: str,
         session_id: str = "",
+        agent_fingerprint: str = "",
+        runtime_profile_id: str = "",
+        work_token: str = "",
         lease_ttl_seconds: int = DEFAULT_LEASE_TTL_SECONDS,
         now: datetime | None = None,
         allow_reentrant: bool = True,
@@ -205,6 +229,9 @@ class TaskLeaseStore:
         task_id = _clean_text(task_id, 128)
         owner_agent = _clean_text(owner_agent, 128)
         session_id = _clean_text(session_id, 256)
+        agent_fingerprint = _clean_text(agent_fingerprint, 256)
+        runtime_profile_id = _clean_text(runtime_profile_id, 128)
+        work_token = str(work_token or "").strip()
         if not project or not task_id or not owner_agent:
             raise ValueError("project, task_id, and owner_agent are required")
         if not session_id:
@@ -214,8 +241,7 @@ class TaskLeaseStore:
         now_dt = now or _utcnow()
         now_ts = _ts(now_dt)
         expires_ts = _ts(now_dt + timedelta(seconds=ttl))
-        expired = self.expire_stale(now=now_dt)
-        previous = expired[-1] if expired else None
+        self.expire_stale(now=now_dt)
 
         with self._lock:
             active_row = self._conn.execute(
@@ -245,19 +271,82 @@ class TaskLeaseStore:
                         (active.lease_id,),
                     ).fetchone()
                     return TaskLeaseClaimResult(status="renewed", lease=self._row_to_lease(refreshed))
+                same_fingerprint = bool(
+                    agent_fingerprint
+                    and active.agent_fingerprint
+                    and active.agent_fingerprint == agent_fingerprint
+                )
+                token_valid = bool(
+                    work_token
+                    and active.work_token_hash
+                    and active.work_token_hash == _hash_work_token(work_token)
+                )
+                if same_fingerprint and work_token and not token_valid:
+                    raise WorkTokenMismatch(active.lease_id)
+                if same_fingerprint and token_valid:
+                    self._conn.execute(
+                        """
+                        UPDATE task_leases
+                           SET owner_agent = ?,
+                               session_id = ?,
+                               runtime_profile_id = ?,
+                               heartbeat_at = ?,
+                               expires_at = ?,
+                               lease_ttl_seconds = ?
+                         WHERE lease_id = ?
+                        """,
+                        (
+                            owner_agent,
+                            session_id,
+                            runtime_profile_id or active.runtime_profile_id,
+                            now_ts,
+                            expires_ts,
+                            ttl,
+                            active.lease_id,
+                        ),
+                    )
+                    self._conn.commit()
+                    refreshed = self._conn.execute(
+                        "SELECT * FROM task_leases WHERE lease_id = ?",
+                        (active.lease_id,),
+                    ).fetchone()
+                    return TaskLeaseClaimResult(
+                        status="reclaimed",
+                        lease=self._row_to_lease(refreshed),
+                        same_fingerprint_reclaim=True,
+                        previous_lease=active,
+                        work_token=work_token,
+                    )
                 raise TaskLeaseConflict(active)
 
+            previous_row = self._conn.execute(
+                """
+                SELECT * FROM task_leases
+                 WHERE project = ? AND task_id = ? AND status != 'active'
+                 ORDER BY heartbeat_at DESC
+                 LIMIT 1
+                """,
+                (project, task_id),
+            ).fetchone()
+            previous = self._row_to_lease(previous_row) if previous_row else None
+            same_fingerprint_reclaim = bool(
+                previous
+                and agent_fingerprint
+                and previous.agent_fingerprint
+                and previous.agent_fingerprint == agent_fingerprint
+            )
             lease_id = str(uuid4())
             work_token = _generate_work_token()
             work_token_hash = _hash_work_token(work_token)
             self._conn.execute(
                 """
                 INSERT INTO task_leases (
-                    lease_id, project, task_id, owner_agent, session_id, status,
+                    lease_id, project, task_id, owner_agent, session_id,
+                    agent_fingerprint, runtime_profile_id, status,
                     claimed_at, heartbeat_at, expires_at, released_at,
                     release_reason, lease_ttl_seconds, previous_lease_id,
                     work_token_hash, work_token_preview
-                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, '', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL, '', ?, ?, ?, ?)
                 """,
                 (
                     lease_id,
@@ -265,6 +354,8 @@ class TaskLeaseStore:
                     task_id,
                     owner_agent,
                     session_id,
+                    agent_fingerprint,
+                    runtime_profile_id,
                     now_ts,
                     now_ts,
                     expires_ts,
@@ -277,9 +368,10 @@ class TaskLeaseStore:
             self._conn.commit()
             row = self._conn.execute("SELECT * FROM task_leases WHERE lease_id = ?", (lease_id,)).fetchone()
         return TaskLeaseClaimResult(
-            status="claimed",
+            status="reclaimed" if same_fingerprint_reclaim else "claimed",
             lease=self._row_to_lease(row),
             previous_claim_expired=previous is not None,
+            same_fingerprint_reclaim=same_fingerprint_reclaim,
             previous_lease=previous,
             work_token=work_token,
         )
@@ -405,6 +497,8 @@ class TaskLeaseStore:
         project: str | None = None,
         task_id: str | None = None,
         owner_agent: str | None = None,
+        agent_fingerprint: str | None = None,
+        runtime_profile_id: str | None = None,
         status: str | None = None,
         include_expired_update: bool = True,
         now: datetime | None = None,
@@ -423,6 +517,12 @@ class TaskLeaseStore:
         if owner_agent:
             clauses.append("owner_agent = ?")
             params.append(_clean_text(owner_agent, 128))
+        if agent_fingerprint:
+            clauses.append("agent_fingerprint = ?")
+            params.append(_clean_text(agent_fingerprint, 256))
+        if runtime_profile_id:
+            clauses.append("runtime_profile_id = ?")
+            params.append(_clean_text(runtime_profile_id, 128))
         if status and status != "all":
             clauses.append("status = ?")
             params.append(_clean_text(status, 32))
@@ -552,6 +652,9 @@ def acquire_task_lease_with_heartbeat(
     session_id: str = "",
     lease_ttl_seconds: int = DEFAULT_LEASE_TTL_SECONDS,
     heartbeat_seconds: float | None = None,
+    agent_fingerprint: str = "",
+    runtime_profile_id: str = "",
+    work_token: str = "",
     now: datetime | None = None,
 ) -> tuple[TaskLeaseClaimResult, TaskLeaseHeartbeatHandle]:
     result = store.claim(
@@ -559,6 +662,9 @@ def acquire_task_lease_with_heartbeat(
         task_id=task_id,
         owner_agent=owner_agent,
         session_id=session_id,
+        agent_fingerprint=agent_fingerprint,
+        runtime_profile_id=runtime_profile_id,
+        work_token=work_token,
         lease_ttl_seconds=lease_ttl_seconds,
         now=now,
     )

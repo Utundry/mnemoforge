@@ -1,0 +1,38 @@
+{
+  "id": "release_task_claim",
+  "title": "Release task claim",
+  "purpose": "Release an active task lease when work is paused, cancelled, handed off, or a live smoke claim should be cleaned up.",
+  "states": ["planning", "implementation", "checkpointing", "handoff", "operator_review"],
+  "mode": "transition",
+  "required_fields": ["project"],
+  "optional_fields": ["task_id", "lease_id", "owner_agent", "session_id", "reason", "status"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "task_id": {"type": "string"},
+      "lease_id": {"type": "string"},
+      "owner_agent": {"type": "string", "default": "codex"},
+      "session_id": {"type": "string"},
+      "reason": {"type": "string", "default": "released_by_mailbox"},
+      "status": {"type": "string", "enum": ["released", "transferred", "expired"], "default": "released"}
+    },
+    "required": ["project"]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "none"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["get_task_context"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "task_claim_released",
+      "mutation": true
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "lease"]
+  },
+  "public_hint": "Use this to cleanly release a claim when stopping work without completing the task."
+}

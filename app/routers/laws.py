@@ -17,8 +17,10 @@ from app.models.law import (
     ProjectLawUpdate,
 )
 from app.models.rule_lifecycle import (
+    RuleCandidateCreateRequest,
     RuleCandidateListResponse,
     RuleCandidateProjectionReport,
+    RuleCandidateRecord,
     RuleCandidateProjectionRequest,
     RuleCandidateReviewActionRequest,
     RuleCandidateReviewActionResponse,
@@ -28,6 +30,8 @@ from app.models.rule_lifecycle import (
     RuleCandidatePromoteResponse,
     RuleCandidateReviseLawRequest,
     RuleCandidateReviseLawResponse,
+    RuleCandidateTrialExpireRequest,
+    RuleCandidateTrialExpireResponse,
 )
 from app.services.law_import_service import import_project_laws_from_markdown
 from app.services.law_service import (
@@ -39,6 +43,7 @@ from app.services.law_service import (
     update_project_law_status,
 )
 from app.services.rule_lifecycle_service import (
+    build_rule_candidate_from_direct_request,
     build_rule_candidate_review_packet,
     get_rule_lifecycle_store,
     promote_rule_candidate,
@@ -108,16 +113,56 @@ async def project_rule_candidates(body: RuleCandidateProjectionRequest):
         raise _law_http_error(exc) from exc
 
 
+@router.post("/candidates", status_code=status.HTTP_201_CREATED, response_model=RuleCandidateRecord)
+async def create_rule_candidate(body: RuleCandidateCreateRequest):
+    try:
+        store = get_rule_lifecycle_store()
+        payload = build_rule_candidate_from_direct_request(body)
+        return store.create_candidate(payload)
+    except Exception as exc:
+        raise _law_http_error(exc) from exc
+
+
 @router.get("/candidates", response_model=RuleCandidateListResponse)
 async def list_rule_candidates(
     project: Optional[str] = Query(None, max_length=128),
     status: Optional[str] = Query(None, pattern="^(candidate|needs_clarification|trial|revision_pending|rejected|suppressed)$"),
     source_task_id: Optional[str] = Query(None, max_length=256),
+    review_due: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
 ):
     store = get_rule_lifecycle_store()
-    items = store.list_candidates(project=project, status=status, source_task_id=source_task_id, limit=limit)
+    items = store.list_candidates(
+        project=project,
+        status=status,
+        source_task_id=source_task_id,
+        review_due=review_due,
+        limit=limit,
+    )
     return RuleCandidateListResponse(total=len(items), items=items)
+
+
+@router.post("/candidates/expire-trials", response_model=RuleCandidateTrialExpireResponse)
+async def expire_trial_rule_candidates(body: RuleCandidateTrialExpireRequest):
+    try:
+        store = get_rule_lifecycle_store()
+        return store.expire_trial_candidates(
+            project=body.project,
+            limit=body.limit,
+            reason=body.reason,
+            acted_by=body.acted_by,
+            source=body.source,
+        )
+    except Exception as exc:
+        raise _law_http_error(exc) from exc
+
+
+@router.get("/candidates/{candidate_id}", response_model=RuleCandidateRecord)
+async def get_rule_candidate(candidate_id: str):
+    try:
+        return get_rule_lifecycle_store().get_candidate(candidate_id)
+    except Exception as exc:
+        raise _law_http_error(exc) from exc
 
 
 @router.post("/candidates/review-packet", response_model=RuleCandidateReviewPacket)

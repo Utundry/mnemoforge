@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import httpx
@@ -7,6 +8,7 @@ import pytest
 from app import dependencies
 from app.main import _should_suppress_asyncio_transport_error
 from app.routers import mcp_sse
+from app.services.mcp_mailbox_actions import MailboxActionDependencies, mailbox_finish_task, mailbox_start_task
 from mcp import server as mcp_stdio
 
 
@@ -51,7 +53,7 @@ class TestMcpToolExecution:
 
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
-        assert names[:6] == ["mailbox_state", "mailbox_submit", "mailbox_get", "ask_project", "project_work", "project_rules"]
+        assert names[:6] == ["help", "state", "get", "submit", "mailbox_state", "mailbox_submit"]
         assert len(names) <= 12
         assert len(names) < len(mcp_sse.TOOLS)
         assert "report_issue" not in names
@@ -59,8 +61,8 @@ class TestMcpToolExecution:
         assert "get_task_execution_context" not in names
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["full_catalog_request"] == {"method": "tools/list", "params": {"mode": "full"}}
-        assert result["_mnemoforge"]["recommended_first_tool"] == "mailbox_state"
-        assert "Mailbox/MCP FSM" in result["_mnemoforge"]["reason"]
+        assert result["_mnemoforge"]["recommended_first_tool"] == "help"
+        assert "help/state/get/submit" in result["_mnemoforge"]["reason"]
 
     async def test_tools_list_full_mode_returns_full_catalog(self):
         response = await mcp_sse._handle(
@@ -72,7 +74,15 @@ class TestMcpToolExecution:
         names = [tool["name"] for tool in tools]
         assert len(tools) == len(mcp_sse.TOOLS)
         assert "report_issue" in names
-        assert "_mnemoforge" not in response["result"]
+        by_name = {tool["name"]: tool for tool in tools}
+        assert response["result"]["_mnemoforge"]["catalog_mode"] == "full"
+        assert response["result"]["_mnemoforge"]["recommended_public_surface"] == ["help", "state", "get", "submit"]
+        assert "Do not use it as the starting workflow" in response["result"]["_mnemoforge"]["warning"]
+        assert by_name["help"]["_mnemoforge"]["surface_role"] == "public_entrypoint"
+        assert by_name["help"]["annotations"]["mnemoforge_recommended_start"] is True
+        assert by_name["mailbox_state"]["_mnemoforge"]["surface_role"] == "compatibility_legacy"
+        assert by_name["memory_store"]["_mnemoforge"]["surface_role"] == "specialized_fallback"
+        assert by_name["memory_store"]["description"].startswith("[Specialized fallback]")
 
     async def test_memory_tools_expose_project_scope_fields(self):
         response = await mcp_sse._handle(
@@ -98,9 +108,9 @@ class TestMcpToolExecution:
         )
 
         assert len(response["result"]["tools"]) == len(mcp_sse.TOOLS)
-        assert "_mnemoforge" not in response["result"]
+        assert response["result"]["_mnemoforge"]["catalog_mode"] == "full"
 
-    async def test_tools_list_compact_catalog_surfaces_operational_tray_first(self):
+    async def test_tools_list_compact_catalog_surfaces_simple_mailbox_first(self):
         response = await mcp_sse._handle(
             {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"mode": "compact", "limit": 4}},
             "http://test",
@@ -108,12 +118,12 @@ class TestMcpToolExecution:
 
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
-        assert names[0] == "mailbox_state"
+        assert names == ["help", "state", "get", "submit"]
         assert len(names) == 4
         assert len(names) < len(mcp_sse.TOOLS)
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["schema_mode"] == "summary"
-        assert result["_mnemoforge"]["recommended_first_tool"] == "mailbox_state"
+        assert result["_mnemoforge"]["recommended_first_tool"] == "help"
         assert result["_mnemoforge"]["full_catalog_available"] is True
         assert "inputSummary" in result["tools"][0]
         assert result["tools"][0]["inputSchema"]["type"] == "object"
@@ -159,9 +169,10 @@ class TestMcpToolExecution:
         )
         result = response["result"]
         names = [tool["name"] for tool in result["tools"]]
-        assert names[0] == "mailbox_state"
+        assert names[0] == "help"
         assert result["_mnemoforge"]["catalog_mode"] == "compact"
         assert result["_mnemoforge"]["schema_mode"] == "summary"
+        assert result["_mnemoforge"]["recommended_first_tool"] == "help"
         assert "inputSummary" in result["tools"][0]
         assert result["tools"][0]["inputSchema"]["type"] == "object"
         assert len(names) < len(mcp_sse.TOOLS)
@@ -172,7 +183,7 @@ class TestMcpToolExecution:
             session_id=session_id,
         )
         assert len(full["result"]["tools"]) == len(mcp_sse.TOOLS)
-        assert "_mnemoforge" not in full["result"]
+        assert full["result"]["_mnemoforge"]["catalog_mode"] == "full"
 
     async def test_initialize_can_negotiate_compact_tools_list_via_capabilities(self):
         session_id = "sess-compact-tools-list-capabilities"
@@ -277,6 +288,327 @@ class TestMcpToolExecution:
         assert info["tool_catalog"]["negotiated_mode"] == "compact"
         assert info["context_hygiene"]["negotiated_mode"] == "small_context"
         assert info["context_hygiene"]["inference_reason"] == "small_model_profile"
+
+    async def test_initialize_persists_agent_identity_and_claim_uses_session_defaults(self, monkeypatch, tmp_path):
+        from app.services import task_lease_service as lease_mod
+
+        monkeypatch.setenv("MNEMOFORGE_AGENT_IDENTITY_PATH", str(tmp_path / ".mnemoforge" / "agent_identity.json"))
+        monkeypatch.setenv("MNEMOFORGE_WORKSPACE_ROOT", str(tmp_path))
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        session_id = "sess-agent-identity-defaults"
+        try:
+            initialized = await mcp_sse._handle(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "clientInfo": {"name": "Codex CLI"},
+                        "modelInfo": {"name": "gpt-5"},
+                        "_mnemoforge": {"runtime_profile_id": "strong_mcp_operator"},
+                    },
+                },
+                "http://test",
+                session_id=session_id,
+            )
+
+            identity = initialized["result"]["_mnemoforge"]["agent_identity"]
+            assert identity["agent_fingerprint"].startswith("agentfp:")
+            assert identity["runtime_profile_id"] == "strong_mcp_operator"
+
+            claimed = await mcp_sse._execute_tool(
+                "claim_task",
+                {
+                    "project": "alpha",
+                    "task_id": "task-identity-defaults",
+                    "owner_agent": "codex",
+                },
+                "http://test",
+                session_id=session_id,
+            )
+            claim = json.loads(claimed)
+            assert claim["lease"]["agent_fingerprint"] == identity["agent_fingerprint"]
+            assert claim["lease"]["runtime_profile_id"] == "strong_mcp_operator"
+        finally:
+            store.close()
+
+    async def test_claim_task_reclaims_active_session_with_same_fingerprint_and_work_token(self, monkeypatch):
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        try:
+            first = store.claim(
+                project="alpha",
+                task_id="task-session-loss",
+                owner_agent="codex",
+                session_id="sess-lost",
+                agent_fingerprint="agentfp:same",
+                runtime_profile_id="strong_mcp_operator",
+            )
+
+            reclaimed = await mcp_sse._execute_tool(
+                "claim_task",
+                {
+                    "project": "alpha",
+                    "task_id": "task-session-loss",
+                    "owner_agent": "codex",
+                    "session_id": "sess-recovered",
+                    "agent_fingerprint": "agentfp:same",
+                    "runtime_profile_id": "strong_mcp_operator",
+                    "work_token": first.work_token,
+                },
+                "http://test",
+            )
+
+            data = json.loads(reclaimed)
+            assert data["status"] == "reclaimed"
+            assert data["same_fingerprint_reclaim"] is True
+            assert data["lease"]["lease_id"] == first.lease.lease_id
+            assert data["lease"]["session_id"] == "sess-recovered"
+        finally:
+            store.close()
+
+    async def test_mailbox_submit_claim_task_returns_public_lease_receipt(self, monkeypatch):
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        try:
+            response = await mcp_sse._execute_tool(
+                "mailbox_submit",
+                {
+                    "form_id": "claim_task",
+                    "state": "planning",
+                    "project": "alpha",
+                    "runtime_profile_id": "strong_mcp_operator",
+                    "payload": {
+                        "project": "alpha",
+                        "task_id": "task-mailbox-claim",
+                        "owner_agent": "codex",
+                        "session_id": "sess-mailbox",
+                        "agent_fingerprint": "agentfp:mailbox",
+                    },
+                },
+                "http://test",
+            )
+
+            data = json.loads(response)
+            assert data["receipt"]["status"] == "claimed"
+            assert data["receipt"]["lease"]["task_id"] == "task-mailbox-claim"
+            assert data["receipt"]["lease"]["agent_fingerprint"] == "agentfp:mailbox"
+            assert "work_token_hash" not in data["receipt"]["lease"]
+            assert data["receipt"]["work_token"]
+            assert data["next_safe_action"].startswith("Proceed with implementation")
+        finally:
+            store.close()
+
+    async def test_mailbox_submit_release_task_claim_releases_by_task_id(self, monkeypatch):
+        from app.services import task_lease_service as lease_mod
+
+        store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", store)
+        claim = store.claim(
+            project="alpha",
+            task_id="task-mailbox-release",
+            owner_agent="codex",
+            session_id="sess-release",
+            agent_fingerprint="agentfp:release",
+        )
+        try:
+            response = await mcp_sse._execute_tool(
+                "mailbox_submit",
+                {
+                    "form_id": "release_task_claim",
+                    "state": "implementation",
+                    "project": "alpha",
+                    "payload": {
+                        "project": "alpha",
+                        "task_id": "task-mailbox-release",
+                        "owner_agent": "codex",
+                        "session_id": "sess-release",
+                        "reason": "test cleanup",
+                    },
+                },
+                "http://test",
+            )
+
+            data = json.loads(response)
+            assert data["receipt"]["status"] == "released"
+            assert data["receipt"]["lease"]["lease_id"] == claim.lease.lease_id
+            assert data["receipt"]["lease"]["release_reason"] == "test cleanup"
+            assert "work_token_hash" not in data["receipt"]["lease"]
+            assert store.get_active_claim(project="alpha", task_id="task-mailbox-release") is None
+        finally:
+            store.close()
+
+    async def test_mailbox_start_and_finish_task_complete_public_workflow(self, monkeypatch):
+        from app.services import stenographer_service as stenographer_mod
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            if path.startswith("/project/tasks/") and path.endswith("/changes"):
+                return {"id": f"checkpoint-{payload.get('stage')}", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            started = await mcp_sse._execute_tool(
+                "mailbox_submit",
+                {
+                    "form_id": "start_task",
+                    "state": "planning",
+                    "project": "alpha",
+                    "runtime_profile_id": "strong_mcp_operator",
+                    "payload": {
+                        "project": "alpha",
+                        "task_id": "task-mailbox-full-cycle",
+                        "owner_agent": "codex",
+                        "session_id": "sess-mailbox-cycle",
+                        "agent_fingerprint": "agentfp:mailbox-cycle",
+                        "auto_heartbeat": False,
+                    },
+                },
+                "http://test",
+            )
+            start_data = json.loads(started)
+            assert start_data["receipt"]["status"] == "started"
+            assert start_data["receipt"]["lease"]["status"] == "active"
+            assert "work_token_hash" not in start_data["receipt"]["lease"]
+            assert start_data["receipt"]["work_session"]["status"] == "active"
+
+            finished = await mcp_sse._execute_tool(
+                "mailbox_submit",
+                {
+                    "form_id": "finish_task",
+                    "state": "checkpointing",
+                    "project": "alpha",
+                    "runtime_profile_id": "strong_mcp_operator",
+                    "payload": {
+                        "project": "alpha",
+                        "task_id": "task-mailbox-full-cycle",
+                        "owner_agent": "codex",
+                        "session_id": "sess-mailbox-cycle",
+                        "work_token": start_data["receipt"]["work_token"],
+                        "summary": "Finished through mailbox.",
+                        "changed_files": ["app/routers/mcp_sse.py"],
+                        "verification": ["Docker target contour passed."],
+                        "next_step": "No follow-up.",
+                    },
+                },
+                "http://test",
+            )
+            finish_data = json.loads(finished)
+            assert finish_data["receipt"]["status"] == "finished"
+            assert finish_data["receipt"]["release"]["status"] == "released"
+            assert "work_token_hash" not in finish_data["receipt"]["release"]["lease"]
+            assert lease_store.get_active_claim(project="alpha", task_id="task-mailbox-full-cycle") is None
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
+    async def test_mailbox_start_task_converts_internal_error_to_public_receipt(self, monkeypatch):
+        async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
+            raise RuntimeError('HTTP 404: {"detail":"Task not found"}')
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("start_task should not call post directly")
+
+        async def fake_identity_defaults(session_id: str | None):
+            return {}
+
+        form = mcp_sse.mailbox_form_by_id("start_task")
+        assert form is not None
+
+        packet = await mailbox_start_task(
+            form=form,
+            payload={"project": "alpha", "task_id": "missing-task"},
+            state="planning",
+            project="alpha",
+            runtime_profile_id="strong_mcp_operator",
+            diagnostic=False,
+            api_base="http://test",
+            session_id="sess-start",
+            dependencies=MailboxActionDependencies(
+                post=fake_post,
+                execute_tool=fake_execute_tool,
+                get_session_identity_defaults=fake_identity_defaults,
+                task_mutation_guard=lambda **kwargs: None,
+            ),
+        )
+
+        assert packet["receipt"]["status"] == "conflict"
+        assert packet["receipt"]["form_id"] == "start_task"
+        assert packet["receipt"]["message"] == "Requested task or route was not found."
+        assert "http" not in packet["receipt"]["message"].casefold()
+        assert "get_task_context" in packet["receipt"]["next_safe_action"]
+
+    async def test_mailbox_finish_task_wraps_finish_session_with_public_receipt(self, monkeypatch):
+        form = mcp_sse.mailbox_form_by_id("finish_task")
+        assert form is not None
+
+        async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
+            assert name == "finish_task_session"
+            assert args["source"] == "mailbox_submit.finish_task"
+            return json.dumps(
+                {
+                    "status": "finished",
+                    "task_id": args["task_id"],
+                    "release": {
+                        "status": "released",
+                        "lease": {
+                            "lease_id": "lease-1",
+                            "task_id": args["task_id"],
+                            "status": "released",
+                            "work_token_hash": "secret",
+                        },
+                    },
+                    "work_session": {"work_id": "work-1"},
+                    "checkpoint": {"id": "checkpoint-1"},
+                }
+            )
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("finish_task should not call post directly")
+
+        async def fake_identity_defaults(session_id: str | None):
+            return {}
+
+        packet = await mailbox_finish_task(
+            form=form,
+            payload={
+                "project": "alpha",
+                "task_id": "task-mailbox-finish",
+                "summary": "Finished via mailbox.",
+                "changed_files": ["app/example.py"],
+                "verification": ["Docker contour passed."],
+                "next_step": "No follow-up.",
+            },
+            state="checkpointing",
+            project="alpha",
+            runtime_profile_id="strong_mcp_operator",
+            diagnostic=False,
+            api_base="http://test",
+            session_id="sess-finish",
+            dependencies=MailboxActionDependencies(
+                post=fake_post,
+                execute_tool=fake_execute_tool,
+                get_session_identity_defaults=fake_identity_defaults,
+                task_mutation_guard=lambda **kwargs: None,
+            ),
+        )
+
+        assert packet["receipt"]["status"] == "finished"
+        assert packet["receipt"]["release"]["status"] == "released"
+        assert "work_token_hash" not in packet["receipt"]["release"]["lease"]
+        assert "_internal" not in packet
 
     async def test_initialize_explicit_full_overrides_small_window_inference(self):
         initialized = await mcp_sse._handle(
@@ -410,10 +742,20 @@ class TestMcpToolExecution:
         assert "project" in claim_tool["inputSchema"]["required"]
         assert "task_id" in claim_tool["inputSchema"]["required"]
         assert claim_props["lease_ttl_seconds"]["default"] == 900
+        assert "agent_fingerprint" in claim_props
+        assert claim_props["runtime_profile_id"]["default"] == "unknown_cli"
+        assert "work_token" in claim_props
         start_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "start_task_session")
         start_props = start_tool["inputSchema"]["properties"]
         assert start_props["auto_heartbeat"]["default"] is True
         assert start_props["heartbeat_seconds"]["minimum"] == 1
+        assert "agent_fingerprint" in start_props
+        assert start_props["runtime_profile_id"]["default"] == "unknown_cli"
+        assert "work_token" in start_props
+        list_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "list_task_claims")
+        list_props = list_tool["inputSchema"]["properties"]
+        assert "agent_fingerprint" in list_props
+        assert "runtime_profile_id" in list_props
 
     def test_reconcile_completed_checkpoints_tool_is_exposed_report_only_by_default(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "reconcile_completed_checkpoints")
@@ -496,8 +838,55 @@ class TestMcpToolExecution:
         assert props["response_format"]["enum"] == ["json", "diagnostic", "answer"]
         assert props["diagnostic"]["default"] is False
         assert props["answer"]["default"] is False
-        assert props["target_status"]["enum"] == ["proposed", "user_confirmed", "active"]
+        assert props["target_status"]["enum"] == ["trial", "candidate", "proposed", "user_confirmed", "active"]
         assert "rule-governance facade" in tool["description"]
+
+    async def test_project_rules_list_laws_defaults_to_all_statuses(self, monkeypatch):
+        captured: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            captured["path"] = path
+            return {
+                "items": [
+                    {
+                        "id": "law-1",
+                        "title": "Proposed law",
+                        "status": "proposed",
+                        "scope": "project",
+                        "project": "alpha",
+                        "is_project_local": True,
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        result = await mcp_sse._execute_tool(
+            "project_rules",
+            {
+                "project": "alpha",
+                "intent": "list project laws",
+                "response_format": "json",
+                "scorer_backend": "lexical",
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert "status=all" in captured["path"]
+        assert data["selected_route"]["tool"] == "list_project_laws"
+
+    async def test_ask_project_read_lookup_with_mutation_tool_names_stays_read_only(self, monkeypatch):
+        route = await mcp_sse._ask_project_select_route(
+            {
+                "project": "alpha",
+                "question": "find improvement about promote_rule_candidate and list_project_laws",
+                "response_format": "json",
+                "scorer_backend": "lexical",
+            }
+        )
+
+        assert route["guardrail"] == ""
+        assert route["facade"] in {"project_context", "project_work"}
 
     def test_project_context_tool_is_thematic_context_facade(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "project_context")
@@ -776,6 +1165,115 @@ class TestMcpToolExecution:
         assert data["_internal"]["postcondition_health"]["ok"] is True
         assert data["_internal"]["actual_metadata"]["artifact_type"] == "improvement"
 
+    async def test_mailbox_submit_store_memory_executes_public_memory_write(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "memory-public-1", **payload}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "store_memory",
+                "payload": {
+                    "project": "alpha",
+                    "content": "Weak models should prefer the public mailbox interface.",
+                    "tags": ["usability"],
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert posted[0][0] == "/memories"
+        assert posted[0][1]["project"] == "alpha"
+        assert posted[0][1]["category"] == "mnemoforge:fact"
+        assert "stored_fact" in posted[0][1]["tags"]
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["artifact_key"] == "memory:alpha:memory-public-1"
+
+    async def test_mailbox_submit_create_and_confirm_law_use_public_forms(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            if path == "/laws":
+                return {"id": "law-public-1", "status": payload["status"], **payload}
+            if path == "/laws/law-public-1/confirm":
+                return {
+                    "id": "law-public-1",
+                    "project": "alpha",
+                    "status": "active" if payload["activate"] else "user_confirmed",
+                    "confirmed_by": payload["confirmed_by"],
+                }
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        created = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "create_law",
+                "payload": {
+                    "project": "alpha",
+                    "title": "Use mailbox forms",
+                    "statement": "Agents should prefer public mailbox forms for simple workflows.",
+                },
+            },
+            "http://test",
+        )
+        create_data = json.loads(created)
+        assert posted[0][0] == "/laws"
+        assert posted[0][1]["status"] == "proposed"
+        assert create_data["receipt"]["artifact_key"] == "law:alpha:law-public-1"
+
+        confirmed = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "operator_review",
+                "form_id": "confirm_law",
+                "payload": {
+                    "project": "alpha",
+                    "law_id": "law-public-1",
+                    "confirmed_by": "user",
+                    "reason": "Approved during mailbox usability review.",
+                },
+            },
+            "http://test",
+        )
+        confirm_data = json.loads(confirmed)
+        assert posted[1][0] == "/laws/law-public-1/confirm"
+        assert posted[1][1]["confirmed_by"] == "user"
+        assert confirm_data["receipt"]["status"] == "accepted"
+        assert confirm_data["receipt"]["artifact_key"] == "law:alpha:law-public-1"
+
+    async def test_mailbox_submit_create_law_requires_confirmation_for_active_status(self):
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "create_law",
+                "payload": {
+                    "project": "alpha",
+                    "title": "Unsafe activation",
+                    "statement": "This law should not become active silently.",
+                    "status": "active",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "needs_input"
+        assert data["receipt"]["missing_fields"] == ["confirmed_by"]
+
     async def test_mailbox_submit_set_feature_gate_updates_runtime_gate(self):
         result = await mcp_sse._execute_tool(
             "mailbox_submit",
@@ -866,6 +1364,350 @@ class TestMcpToolExecution:
         assert data["project"] == "alpha"
         assert "_internal" not in data
         assert any(form["form_id"] == "run_verification" for form in data["forms"])
+
+    async def test_mailbox_submit_get_task_context_executes_public_read_form(self, monkeypatch):
+        async def fake_pull_context(api_base: str, args: dict):
+            assert args["project"] == "alpha"
+            assert args["task_id"] == "task-123"
+            assert args["detail"] == "compact"
+            return {
+                "status": "ready",
+                "task_id": "task-123",
+                "title": "Make weak-model workflow safe.",
+                "next_safe_action": "Review context before claiming.",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_pull_task_context_payload", fake_pull_context)
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "form_id": "get_task_context",
+                "state": "planning",
+                "project": "alpha",
+                "payload": {"project": "alpha", "task_id": "task-123", "detail": "compact"},
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["data_ref"] == "task:alpha:task-123"
+        assert data["result"]["title"] == "Make weak-model workflow safe."
+        assert data["next_safe_action"] == "Review context before claiming."
+
+    async def test_mailbox_get_task_reference_recovers_weak_model_ref(self, monkeypatch):
+        async def fake_pull_context(api_base: str, args: dict):
+            assert args["project"] == "alpha"
+            assert args["task_id"] == "task-123"
+            return {
+                "status": "ready",
+                "task_id": "task-123",
+                "title": "Make weak-model workflow safe.",
+                "next_safe_action": "Review context before claiming.",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_pull_task_context_payload", fake_pull_context)
+        result = await mcp_sse._execute_tool(
+            "mailbox_get",
+            {"ref": "mailbox_get:task:alpha:task-123", "state": "planning"},
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["data_ref"] == "task:alpha:task-123"
+        assert data["receipt"]["requested_ref"] == "mailbox_get:task:alpha:task-123"
+        assert data["result"]["title"] == "Make weak-model workflow safe."
+
+    async def test_mailbox_get_resolves_generic_public_artifact_ref(self, monkeypatch):
+        requested: list[str] = []
+
+        async def fake_get(api_base: str, path: str):
+            requested.append(path)
+            return {
+                "artifact_key": "improvement:alpha:imp-123",
+                "type": "improvement",
+                "project": "alpha",
+                "title": "Improve mailbox ref resolution.",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        result = await mcp_sse._execute_tool(
+            "mailbox_get",
+            {"ref": "mailbox_get:improvement:alpha:imp-123", "state": "planning"},
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert requested == ["/artifacts/improvement%3Aalpha%3Aimp-123"]
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["resource_kind"] == "improvement"
+        assert data["receipt"]["data_ref"] == "improvement:alpha:imp-123"
+        assert data["result"]["title"] == "Improve mailbox ref resolution."
+
+    async def test_mailbox_get_unsupported_public_ref_kind_stays_in_workflow(self):
+        result = await mcp_sse._execute_tool(
+            "mailbox_get",
+            {"ref": "mailbox_get:skill:alpha:skill-123", "state": "planning"},
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "unsupported_ref_kind"
+        assert data["receipt"]["data_ref"] == "skill:alpha:skill-123"
+        assert "mailbox_state" in data["receipt"]["next_safe_action"]
+
+    async def test_mailbox_get_resolves_governance_and_memory_refs(self, monkeypatch):
+        requested: list[str] = []
+
+        async def fake_get(api_base: str, path: str):
+            requested.append(path)
+            if path == "/laws/law-123":
+                return {"id": "law-123", "title": "Use mailbox refs.", "status": "active"}
+            if path == "/laws/candidates/candidate-123":
+                return {"candidate_id": "candidate-123", "statement": "Route through mailbox.", "status": "trial"}
+            if path == "/memories/mem-123":
+                return {"id": "mem-123", "content": "Weak models need safe data reads."}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+
+        law = json.loads(
+            await mcp_sse._execute_tool(
+                "mailbox_get",
+                {"ref": "mailbox_get:law:alpha:law-123", "state": "planning"},
+                "http://test",
+            )
+        )
+        candidate = json.loads(
+            await mcp_sse._execute_tool(
+                "mailbox_get",
+                {"ref": "mailbox_get:rule_candidate:alpha:candidate-123", "state": "planning"},
+                "http://test",
+            )
+        )
+        memory = json.loads(
+            await mcp_sse._execute_tool(
+                "mailbox_get",
+                {"ref": "mailbox_get:memory:alpha:mem-123", "state": "planning"},
+                "http://test",
+            )
+        )
+
+        assert requested == ["/laws/law-123", "/laws/candidates/candidate-123", "/memories/mem-123"]
+        assert law["receipt"]["resource_kind"] == "law"
+        assert candidate["receipt"]["resource_kind"] == "rule_candidate"
+        assert memory["receipt"]["resource_kind"] == "memory"
+        assert law["result"]["title"] == "Use mailbox refs."
+        assert candidate["result"]["statement"] == "Route through mailbox."
+        assert memory["result"]["content"] == "Weak models need safe data reads."
+
+    async def test_simple_help_state_get_submit_aliases_wrap_mailbox_surface(self, monkeypatch):
+        async def fake_pull_context(api_base: str, args: dict):
+            assert args["project"] == "alpha"
+            assert args["task_id"] == "task-123"
+            return {
+                "status": "ready",
+                "task_id": "task-123",
+                "title": "Use simple mailbox aliases.",
+                "next_safe_action": "Review context before claiming.",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_pull_task_context_payload", fake_pull_context)
+
+        help_result = json.loads(
+            await mcp_sse._execute_tool(
+                "help",
+                {"project": "alpha", "topic": "task context", "runtime_profile_id": "weak_mcp_operator"},
+                "http://test",
+            )
+        )
+        state_result = json.loads(
+            await mcp_sse._execute_tool(
+                "state",
+                {"project": "alpha", "state": "planning", "runtime_profile_id": "weak_mcp_operator"},
+                "http://test",
+            )
+        )
+        get_result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"ref": "task:alpha:task-123", "state": "planning"},
+                "http://test",
+            )
+        )
+        submit_result = json.loads(
+            await mcp_sse._execute_tool(
+                "submit",
+                {
+                    "project": "alpha",
+                    "state": "planning",
+                    "action": "get_task_context",
+                    "payload": {"project": "alpha", "task_id": "task-123"},
+                },
+                "http://test",
+            )
+        )
+        put_result = json.loads(
+            await mcp_sse._execute_tool(
+                "put",
+                {
+                    "project": "alpha",
+                    "state": "planning",
+                    "action": "get_task_context",
+                    "payload": {"project": "alpha", "task_id": "task-123"},
+                },
+                "http://test",
+            )
+        )
+
+        assert help_result["simple_interface"]["tools"] == ["help", "state", "get", "submit"]
+        assert "forms" not in help_result
+        assert help_result["tools"]["state"].startswith("Current workflow")
+        assert state_result["simple_interface"]["tools"] == ["help", "state", "get", "submit"]
+        assert any(form["form_id"] == "get_task_context" for form in state_result["forms"])
+        assert get_result["receipt"]["data_ref"] == "task:alpha:task-123"
+        assert get_result["result"]["title"] == "Use simple mailbox aliases."
+        assert submit_result["simple_interface"]["tool"] == "submit"
+        assert submit_result["simple_interface"]["form_id"] == "get_task_context"
+        assert submit_result["result"]["title"] == "Use simple mailbox aliases."
+        assert put_result["simple_interface"]["tool"] == "put"
+        assert put_result["simple_interface"]["form_id"] == "get_task_context"
+        assert put_result["result"]["title"] == "Use simple mailbox aliases."
+
+    async def test_simple_get_compacts_task_payload_by_default_and_full_keeps_details(self, monkeypatch):
+        async def fake_pull_context(api_base: str, args: dict):
+            return {
+                "project": args["project"],
+                "task_id": args["task_id"],
+                "status": "ready",
+                "task": {"title": "Compact task details.", "status": "planning"},
+                "latest_checkpoint": {
+                    "id": "checkpoint-1",
+                    "stage": "implementation",
+                    "status": "active",
+                    "summary": "Implemented compact envelope.",
+                    "changed_files": ["app/routers/mcp_sse.py"],
+                    "verification": ["Docker passed."],
+                },
+                "available_layers": {"task_history": {"available": True}},
+                "token_budget": {"estimated_tokens": 9000},
+                "token_overhead": {"estimated_tokens": 9000},
+                "recommended_first_tool": "record_task_checkpoint",
+                "next_safe_action": "Use detail=full for full replay.",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_pull_task_context_payload", fake_pull_context)
+        compact = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"ref": "task:alpha:task-123", "state": "planning"},
+                "http://test",
+            )
+        )
+        full = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"ref": "task:alpha:task-123", "state": "planning", "detail": "full"},
+                "http://test",
+            )
+        )
+
+        assert compact["details_available"] is True
+        assert compact["result"]["task_id"] == "task-123"
+        assert compact["result"]["title"] == "Compact task details."
+        assert compact["result"]["latest_checkpoint"]["summary"] == "Implemented compact envelope."
+        assert compact["result"]["recommended_first_tool"] == "submit"
+        assert compact["result"]["recommended_next_call"]["form_id"] == "record_progress"
+        assert compact["result"]["recommended_next_call"]["internal_tool"] == "record_task_checkpoint"
+        assert "available_layers" not in compact["result"]
+        assert "token_budget" not in compact["result"]
+        assert full["result"]["available_layers"]["task_history"]["available"] is True
+        assert full["result"]["token_budget"]["estimated_tokens"] == 9000
+
+    async def test_simple_get_accepts_auto_response_format_for_weak_clients(self, monkeypatch):
+        async def fake_pull_context(api_base: str, args: dict):
+            return {
+                "project": args["project"],
+                "task_id": args["task_id"],
+                "status": "ready",
+                "task": {"title": "Auto format task.", "status": "planning"},
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_pull_task_context_payload", fake_pull_context)
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "get")
+        assert "auto" in tool["inputSchema"]["properties"]["response_format"]["enum"]
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"ref": "task:alpha:task-123", "state": "planning", "response_format": "auto"},
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "accepted"
+        assert result["result"]["task_id"] == "task-123"
+        assert result["result"]["title"] == "Auto format task."
+
+    async def test_simple_state_compacts_forms_by_default_and_full_keeps_schemas(self):
+        compact = json.loads(
+            await mcp_sse._execute_tool(
+                "state",
+                {"project": "alpha", "state": "planning"},
+                "http://test",
+            )
+        )
+        full = json.loads(
+            await mcp_sse._execute_tool(
+                "state",
+                {"project": "alpha", "state": "planning", "detail": "full"},
+                "http://test",
+            )
+        )
+
+        assert compact["details_available"] is True
+        assert "input_schema" not in compact["forms"][0]
+        assert {"form_id", "title", "mode", "required_fields"} <= set(compact["forms"][0])
+        assert "input_schema" in full["forms"][0]
+
+    async def test_simple_submit_compacts_task_shaped_result_by_default_and_full_keeps_details(self, monkeypatch):
+        seen_details: list[str] = []
+
+        async def fake_pull_context(api_base: str, args: dict):
+            seen_details.append(str(args.get("detail") or ""))
+            return {
+                "project": args["project"],
+                "task_id": args["task_id"],
+                "status": "ready",
+                "task": {"title": "Compact put task.", "status": "planning"},
+                "latest_checkpoint": {"id": "checkpoint-1", "summary": "Latest compact checkpoint."},
+                "available_layers": {"task_history": {"available": True}},
+                "token_budget": {"estimated_tokens": 9000},
+                "next_safe_action": "Use compact receipt first.",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_pull_task_context_payload", fake_pull_context)
+        args = {
+            "project": "alpha",
+            "state": "planning",
+            "form_id": "get_task_context",
+            "payload": {"project": "alpha", "task_id": "task-123"},
+        }
+        compact = json.loads(await mcp_sse._execute_tool("submit", args, "http://test"))
+        full = json.loads(await mcp_sse._execute_tool("submit", {**args, "detail": "full"}, "http://test"))
+
+        assert compact["details_available"] is True
+        assert compact["receipt"]["status"] == "accepted"
+        assert compact["simple_interface"]["tool"] == "submit"
+        assert compact["simple_interface"]["form_id"] == "get_task_context"
+        assert compact["result"]["task_id"] == "task-123"
+        assert compact["result"]["title"] == "Compact put task."
+        assert "available_layers" not in compact["result"]
+        assert "token_budget" not in compact["result"]
+        assert full["result"]["available_layers"]["task_history"]["available"] is True
+        assert full["result"]["token_budget"]["estimated_tokens"] == 9000
+        assert seen_details == ["compact", "full"]
 
     async def test_operational_tray_inspect_posts_context_request(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
@@ -2215,6 +3057,127 @@ class TestMcpToolExecution:
             "review_rule_candidate",
         ]
 
+    async def test_project_rules_plans_new_law_proposal_without_memory_store(self, monkeypatch):
+        async def forbidden_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            raise AssertionError("mutating route should not execute without allow_mutation")
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", forbidden_execute)
+        result = await mcp_sse._build_project_rules_payload(
+            "http://test",
+            {
+                "project": "ui_avt",
+                "intent": "propose new law",
+                "target_scope": "project",
+                "title": "Architecture Separation: Frontend/Backend via MessageBus",
+                "statement": "Frontend code MUST NOT import backend service modules directly.",
+                "rationale": "Keep frontend and backend independently testable.",
+            },
+        )
+
+        assert result["status"] == "planned"
+        assert result["action_status"] == "needs_confirmation"
+        assert result["selected_route"]["tool"] == "create_rule_candidate"
+        assert result["submit_payload"]["project"] == "ui_avt"
+        assert result["submit_payload"]["target_status"] == "trial"
+        assert result["agent_action"]["recommended_next_call"]["tool"] == "project_rules"
+        assert result["agent_action"]["recommended_next_call"]["arguments"]["allow_mutation"] is True
+        assert "memory_store" in result["agent_action"]["do_not_call"]
+        assert "memory_store" in result["next_safe_action"]
+
+    async def test_project_rules_structural_law_proposal_beats_stale_learned_route(self, monkeypatch):
+        disabled: list[tuple[str, str]] = []
+
+        class StaleRoutePatternStore:
+            def match(self, **kwargs):
+                return {
+                    "intent_type": "list_candidates",
+                    "tool": "list_rule_candidates",
+                    "confidence": 0.99,
+                    "pattern_id": "stale-rule-route",
+                    "score": 0.99,
+                    "matched_by": "semantic",
+                }
+
+            def disable_pattern(self, pattern_id: str, *, reason: str, metadata: dict | None = None):
+                disabled.append((pattern_id, reason))
+                return True
+
+        async def forbidden_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            raise AssertionError("structural mutating route should not execute without allow_mutation")
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: StaleRoutePatternStore())
+        monkeypatch.setattr(mcp_sse, "_execute_tool", forbidden_execute)
+        result = await mcp_sse._build_project_rules_payload(
+            "http://test",
+            {
+                "project": "ui_avt",
+                "intent": "propose new law",
+                "title": "Architecture Separation: Frontend/Backend via MessageBus",
+                "statement": "Frontend code MUST NOT import backend service modules directly.",
+            },
+        )
+
+        assert result["status"] == "planned"
+        assert result["selected_route"]["tool"] == "create_rule_candidate"
+        assert result["selected_route"]["intent_type"] == "propose_law"
+        assert result["selected_route"]["scorer"]["backend_used"] == "lexical"
+        assert result["route_telemetry"]["matched_pattern_id"] == ""
+        assert disabled == [("stale-rule-route", "conflicts_with_structural_route")]
+        assert result["selected_route"]["scorer"]["invalidated_learned_pattern_id"] == "stale-rule-route"
+
+    async def test_project_rules_executes_new_law_proposal_when_confirmed(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "candidate_id": "candidate-1",
+                "project": payload["project"],
+                "scope": payload["scope"],
+                "status": payload["status"],
+                "statement": payload["statement"],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "project_rules",
+            {
+                "project": "ui_avt",
+                "intent": "propose new law",
+                "target_scope": "project",
+                "title": "Architecture Separation: Frontend/Backend via MessageBus",
+                "statement": "Frontend code MUST NOT import backend service modules directly.",
+                "rationale": "Keep frontend and backend independently testable.",
+                "allow_mutation": True,
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["status"] == "executed"
+        assert data["selected_route"]["tool"] == "create_rule_candidate"
+        assert posted == [
+            (
+                "/laws/candidates",
+                {
+                    "project": "ui_avt",
+                    "title": "Architecture Separation: Frontend/Backend via MessageBus",
+                    "statement": "Frontend code MUST NOT import backend service modules directly.",
+                    "rationale": "Keep frontend and backend independently testable.",
+                    "evidence_refs": [],
+                    "scope": "project",
+                    "status": "trial",
+                    "confidence": 0.75,
+                    "promotion_hint": "Review this trial rule after practical use.",
+                    "review_after_days": 7,
+                    "trial_days": 30,
+                    "acted_by": "codex",
+                    "source": "mcp_project_rules",
+                },
+            )
+        ]
+        assert data["result"]["candidate_id"] == "candidate-1"
+
     async def test_project_rules_executes_review_packet_for_forgetfulness_intent(self, monkeypatch):
         async def fake_post(api_base: str, path: str, payload: dict):
             assert path == "/laws/candidates/review-packet"
@@ -2232,6 +3195,36 @@ class TestMcpToolExecution:
         assert data["selected_route"]["tool"] == "get_rule_candidate_review_packet"
         assert data["selected_route"]["intent_type"] == "review_candidates"
         assert data["result"]["project"] == "alpha"
+
+    async def test_project_rules_infers_due_trial_review_from_intent(self, monkeypatch):
+        posted: list[dict] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            assert path == "/laws/candidates/review-packet"
+            posted.append(payload)
+            return {"project": payload["project"], "groups": [], "status": payload["status"]}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "project_rules",
+            {"project": "alpha", "intent": "show due trial rules", "limit": 5},
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["status"] == "executed"
+        assert data["selected_route"]["tool"] == "get_rule_candidate_review_packet"
+        assert data["submit_payload"]["status"] == "trial"
+        assert data["submit_payload"]["review_due"] is True
+        assert posted == [
+            {
+                "project": "alpha",
+                "status": "trial",
+                "limit": 5,
+                "max_matches": 5,
+                "review_due": True,
+            }
+        ]
 
     async def test_project_context_routes_constraints_to_project_rules(self, monkeypatch):
         called: list[tuple[str, dict]] = []
@@ -2456,6 +3449,52 @@ class TestMcpToolExecution:
         assert calls[0][1]["response_format"] == "answer"
         assert calls[0][1]["intent"] == "what is task 382e7306?"
         assert "allow_mutation" not in calls[0][1]
+
+    async def test_ask_project_task_id_structural_route_beats_stale_learned_pattern(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+        disabled: list[tuple[str, str]] = []
+        calls: list[tuple[str, dict]] = []
+
+        class StaleAskProjectPatternStore:
+            def match(self, **kwargs):
+                return {
+                    "pattern_id": "stale-ask-project-task-route",
+                    "intent_type": "project_work",
+                    "tool": "project_work",
+                    "confidence": 0.91,
+                    "reason": "Matched stale next-task route.",
+                    "backend_used": "learned_semantic",
+                    "score": 0.88,
+                    "matched_by": "semantic",
+                }
+
+            def disable_pattern(self, pattern_id: str, *, reason: str, metadata: dict | None = None):
+                disabled.append((pattern_id, reason))
+                return True
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            calls.append((tool_name, args))
+            return (
+                "Mnemoforge answer\n"
+                "Answer: Found task f6c44417-48b0-40fb-944c-3194fc20fad6.\n"
+                "task_id=f6c44417-48b0-40fb-944c-3194fc20fad6"
+            )
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: StaleAskProjectPatternStore())
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {
+                "project": "mnemoforge",
+                "question": "Детали задачи с ID: f6c44417-48b0-40fb-944c-3194fc20fad6",
+            },
+            "http://test",
+        )
+
+        assert "task_id=f6c44417-48b0-40fb-944c-3194fc20fad6" in text
+        assert calls[0][0] == "project_context"
+        assert calls[0][1]["intent"] == "Детали задачи с ID: f6c44417-48b0-40fb-944c-3194fc20fad6"
+        assert disabled == [("stale-ask-project-task-route", "conflicts_with_structural_route")]
 
     async def test_ask_project_routes_readiness_question_to_project_context(self, monkeypatch):
         original_execute = mcp_sse._execute_tool
@@ -5736,21 +6775,22 @@ class TestMcpToolExecution:
 
         info = response["result"]["_mnemoforge"]
         assert info["agent_id"] == "codex-cli"
-        assert "get_onboarding" in info["tip"]
-        assert "expert helpers" in info["tip"]
-        assert "project_work" in info["tip"]
-        assert "pickup_coordination_messages" in info["tip"]
-        assert "pull_task_context first" in info["tip"]
-        assert "use reopen_task only" in info["tip"]
+        assert "help, state, get, submit" in info["tip"]
+        assert "Do not start by reading client config files" in info["tip"]
+        assert "mcp_settings.json" in info["tip"]
+        assert "alwaysAllow" in info["tip"]
+        assert "Legacy and specialized tools are compatibility/debug surfaces" in info["tip"]
         assert info["tool_catalog"]["preferred_mode"] == "compact"
         assert info["tool_catalog"]["compact_request"] == {"method": "tools/list", "params": {"mode": "compact"}}
         assert info["tool_catalog"]["full_request"] == {"method": "tools/list", "params": {"mode": "full"}}
-        assert info["tool_catalog"]["recommended_first_tool"] == "mailbox_state"
-        assert "Mailbox/MCP FSM surface" in info["tool_catalog"]["reason"]
+        assert info["tool_catalog"]["recommended_first_tool"] == "help"
+        assert info["tool_catalog"]["public_surface"] == ["help", "state", "get", "submit"]
+        assert "mcp_settings.json" in info["tool_catalog"]["do_not_bootstrap_from"]
+        assert "simple public MCP surface" in info["tool_catalog"]["reason"]
         assert any("/api/v1/coordination/" in line for line in info["semantic_defaults"])
         assert any("project-specific hints" in line for line in info["semantic_defaults"])
-        assert "get_task_execution_context" in info["tip"]
-        assert "get_task_execution_context" in info["semantic_defaults"][2]
+        assert any("alwaysAllow" in line for line in info["semantic_defaults"])
+        assert "get with a task ref" in info["semantic_defaults"][3]
 
     async def test_get_onboarding_includes_mnemoforge_basics(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
@@ -5812,13 +6852,14 @@ class TestMcpToolExecution:
         assert "trust_first" in result
         assert "get_storage_trust_status" in result
         assert "STORAGE TRUST WARNING:" in result
-        assert "pickup_coordination_messages" in result
         assert "INTEGRITY WARNING:" in result
         assert "EXPERT HELPER GUIDANCE:" in result
-        assert "Start project work with mailbox_state" in result
-        assert "get_task_execution_context" in result
+        assert "Public surface first: help, state, get, submit" in result
+        assert "Do not bootstrap from mcp_settings.json" in result
+        assert "alwaysAllow" in result
+        assert "Start project work with state" in result
         assert "project-specific hints" in result
-        assert "pull_task_context first" in result
+        assert "get with task:<project>:<task_id>" in result
         assert "use reopen_task only" in result
 
     async def test_get_onboarding_degrades_gracefully_when_skill_pack_http500(self, monkeypatch):

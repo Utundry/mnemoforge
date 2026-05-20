@@ -7,10 +7,16 @@ from app.services.mcp_mailbox import (
     evaluate_mailbox_postconditions,
     mailbox_form_by_id,
 )
+from app.services.mcp_mailbox_read import (
+    MailboxReadDependencies,
+    build_mailbox_get_response,
+    build_mailbox_state_response,
+)
 from app.services.mcp_workflow_specs import (
     list_mailbox_forms_for_state,
     load_clerk_capture_registry,
     load_feature_toggle_registry,
+    load_mailbox_form_policy_spec,
     load_packet_template,
     load_response_envelope_spec,
     load_runtime_profile_spec,
@@ -40,7 +46,22 @@ def test_default_workflow_specs_validate() -> None:
     assert "forms" in summary["response_public_fields"]
     assert "route_id" in summary["response_internal_fields"]
     assert {"mailbox_state", "mailbox_submit", "mailbox_get"} <= set(summary["mailbox_actions"])
-    assert {"create_improvement", "record_progress", "run_verification", "get_task_context", "set_feature_gate"} <= set(summary["mailbox_forms"])
+    assert "planning" in summary["mailbox_form_policy_states"]
+    assert "minimal" in summary["mailbox_form_visibility_profiles"]
+    assert {
+        "claim_task",
+        "confirm_law",
+        "create_law",
+        "create_improvement",
+        "finish_task",
+        "record_progress",
+        "release_task_claim",
+        "run_verification",
+        "start_task",
+        "store_memory",
+        "get_task_context",
+        "set_feature_gate",
+    } <= set(summary["mailbox_forms"])
 
 
 def test_verification_state_blocks_host_pytest() -> None:
@@ -157,6 +178,16 @@ def test_mailbox_forms_include_postconditions_for_health_detection() -> None:
     assert "pytest" in run_verification.postconditions.forbidden_metadata["command"]
 
 
+def test_mailbox_form_policy_is_declarative_priority_and_visibility_source() -> None:
+    policy = load_mailbox_form_policy_spec()
+    minimal_rule = next(rule for rule in policy.visibility_rules if rule.packet_profile == "minimal")
+
+    assert policy.state_priorities["planning"][:2] == ["get_task_context", "start_task"]
+    assert policy.state_priorities["planning"].index("claim_task") > policy.state_priorities["planning"].index("start_task")
+    assert minimal_rule.hidden_form_ids == ["claim_task"]
+    assert minimal_rule.hide_only_when_form_ids_available == ["start_task"]
+
+
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:
     packet = build_mailbox_state_packet(
         state="planning",
@@ -168,8 +199,72 @@ def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:
     assert packet["state"] == "planning"
     assert "_internal" not in packet
     assert any(form["form_id"] == "create_improvement" for form in packet["forms"])
+    assert any(form["form_id"] == "start_task" for form in packet["forms"])
+    assert not any(form["form_id"] == "claim_task" for form in packet["forms"])
+    assert "claim_task" in packet["hidden_forms"]
+    assert [form["form_id"] for form in packet["forms"][:2]] == ["get_task_context", "start_task"]
+    assert "get_task_context" in packet["next_safe_action"]
     assert "Internal diagnostics are not available" in packet["warnings"][-1]
+
+
+async def test_mailbox_state_response_uses_session_runtime_profile_defaults() -> None:
+    async def fake_identity_defaults(session_id: str | None) -> dict[str, str]:
+        assert session_id == "sess-read"
+        return {"runtime_profile_id": "weak_mcp_operator"}
+
+    packet = await build_mailbox_state_response(
+        args={"project": "mnemoforge", "state": "planning", "diagnostic": True},
+        session_id="sess-read",
+        dependencies=MailboxReadDependencies(get_session_identity_defaults=fake_identity_defaults),
+    )
+
+    assert packet["state"] == "planning"
+    assert "_internal" not in packet
+    assert "claim_task" in packet["hidden_forms"]
+
+
+async def test_mailbox_get_response_uses_session_runtime_profile_defaults() -> None:
+    async def fake_identity_defaults(session_id: str | None) -> dict[str, str]:
+        assert session_id == "sess-get"
+        return {"runtime_profile_id": "diagnostic_operator"}
+
+    packet = await build_mailbox_get_response(
+        args={"ref": "mailbox_state:mnemoforge:verification", "diagnostic": True},
+        session_id="sess-get",
+        dependencies=MailboxReadDependencies(get_session_identity_defaults=fake_identity_defaults),
+    )
+
+    assert packet["state"] == "verification"
+    assert packet["_internal"]["visibility"] == "internal"
     assert all("postconditions" not in form for form in packet["forms"])
+
+
+def test_mailbox_state_packet_orders_forms_by_workflow_not_filename() -> None:
+    packet = build_mailbox_state_packet(
+        state="planning",
+        project="mnemoforge",
+        runtime_profile_id="strong_mcp_operator",
+    )
+
+    form_ids = [form["form_id"] for form in packet["forms"]]
+    assert form_ids[:3] == ["get_task_context", "start_task", "create_improvement"]
+    assert "store_memory" in form_ids
+    assert "create_law" in form_ids
+    assert "confirm_law" in form_ids
+    assert form_ids.index("claim_task") > form_ids.index("start_task")
+    assert packet["hidden_forms"] == []
+
+
+def test_checkpointing_state_prefers_finish_task_or_progress_forms() -> None:
+    packet = build_mailbox_state_packet(
+        state="checkpointing",
+        project="mnemoforge",
+        runtime_profile_id="strong_mcp_operator",
+    )
+
+    form_ids = {form["form_id"] for form in packet["forms"]}
+    assert {"finish_task", "record_progress", "release_task_claim"} <= form_ids
+    assert "finish_task" in packet["next_safe_action"]
 
 
 def test_mailbox_state_packet_can_return_internal_metadata_for_diagnostic_profile() -> None:

@@ -288,6 +288,40 @@ async def test_review_rule_candidate_endpoint_updates_status(client):
 
 
 @pytest.mark.asyncio
+async def test_create_rule_candidate_endpoint_supports_trial_status(client):
+    response = await client.post(
+        f"{PREFIX}/laws/candidates",
+        json={
+            "project": "alpha",
+            "title": "Frontend Backend Separation",
+            "statement": "Frontend code must communicate with backend services through IPC.",
+            "rationale": "Keeps clients independent from service internals.",
+            "evidence_refs": ["test:evidence"],
+            "status": "trial",
+            "review_after_days": 0,
+            "trial_days": 14,
+            "acted_by": "codex",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    data = response.json()
+    assert data["project"] == "alpha"
+    assert data["status"] == "trial"
+    assert data["statement"] == "Frontend code must communicate with backend services through IPC."
+    assert data["marker_kind"] == "rule_project_candidate"
+    assert data["source_span_id"].startswith("direct-rule:")
+    assert data["trial_started_at"] is not None
+    assert data["trial_review_after"] is not None
+    assert data["trial_expires_at"] is not None
+
+    due = await client.get(f"{PREFIX}/laws/candidates?project=alpha&status=trial&review_due=true")
+    assert due.status_code == 200, due.text
+    due_items = due.json()["items"]
+    assert any(item["candidate_id"] == data["candidate_id"] for item in due_items)
+
+
+@pytest.mark.asyncio
 async def test_promote_rule_candidate_endpoint_creates_law_and_records_trace(client):
     from app.services.rule_lifecycle_service import get_rule_lifecycle_store
 
@@ -333,6 +367,58 @@ async def test_promote_rule_candidate_endpoint_creates_law_and_records_trace(cli
     assert data["candidate"]["promoted_law_id"] == data["law"]["id"]
     assert data["candidate"]["last_review_action"] == "promote"
     assert data["candidate"]["promoted_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_promote_rule_candidate_endpoint_is_idempotent_for_same_candidate(client):
+    from app.services.rule_lifecycle_service import get_rule_lifecycle_store
+
+    store = get_rule_lifecycle_store()
+    candidate = store.create_candidate(
+        {
+            "project": "alpha",
+            "scope": "project",
+            "topic_path": "agent/mailbox",
+            "marker_kind": "rule_project_candidate",
+            "statement": "Agents should use public mailbox forms for simple workflows.",
+            "rationale": "This keeps weak-model routing stable.",
+            "evidence_refs": ["test:evidence"],
+            "source_task_id": "task-1",
+            "source_session_id": "sess-1",
+            "source_span_id": "span-promote-idempotent",
+            "source_work_id": "work-1",
+            "confidence": 0.9,
+            "promotion_hint": "",
+            "related_rule_hint": None,
+            "status": "candidate",
+        }
+    )
+
+    payload = {
+        "title": "Use Public Mailbox Forms",
+        "target_scope": "project",
+        "status": "proposed",
+        "reason": "Promote after review.",
+        "acted_by": "codex",
+        "source": "test",
+    }
+    first = await client.post(f"{PREFIX}/laws/candidates/{candidate.candidate_id}/promote", json=payload)
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+
+    second = await client.post(f"{PREFIX}/laws/candidates/{candidate.candidate_id}/promote", json=payload)
+    assert second.status_code == 200, second.text
+    second_body = second.json()
+
+    assert second_body["law"]["id"] == first_body["law"]["id"]
+    listed = await client.get(f"{PREFIX}/laws?project=alpha&status=all")
+    assert listed.status_code == 200
+    matching = [
+        item
+        for item in listed.json()["items"]
+        if f"rule_candidate:{candidate.candidate_id}" in item["tags"]
+    ]
+    assert len(matching) == 1
 
 
 @pytest.mark.asyncio

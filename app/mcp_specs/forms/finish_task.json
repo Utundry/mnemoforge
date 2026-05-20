@@ -1,0 +1,45 @@
+{
+  "id": "finish_task",
+  "title": "Finish task session",
+  "purpose": "Finish a claimed task session by recording closeout evidence, ending the work session, and releasing the task claim.",
+  "states": ["checkpointing", "handoff", "operator_review"],
+  "mode": "transition",
+  "required_fields": ["project", "task_id", "summary"],
+  "optional_fields": ["work_id", "owner_agent", "session_id", "work_token", "status", "result", "changed_files", "verification", "next_step", "next_step_scope", "release_reason"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "task_id": {"type": "string"},
+      "work_id": {"type": "string"},
+      "owner_agent": {"type": "string", "default": "codex"},
+      "session_id": {"type": "string"},
+      "work_token": {"type": "string"},
+      "status": {"type": "string", "enum": ["completed", "blocked", "failed", "interrupted", "cancelled"], "default": "completed"},
+      "summary": {"type": "string"},
+      "result": {"type": "string"},
+      "changed_files": {"type": "array", "items": {"type": "string"}},
+      "verification": {"type": "array", "items": {"type": "string"}},
+      "next_step": {"type": "string"},
+      "next_step_scope": {"type": "string", "default": "none"},
+      "release_reason": {"type": "string", "default": "finished_by_mailbox"}
+    },
+    "required": ["project", "task_id", "summary"]
+  },
+  "assistance": {
+    "clerk_available": true,
+    "can_use_stenography": true,
+    "default_mode": "validate"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["record_progress", "release_task_claim"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "task_finished",
+      "mutation": true
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "release"]
+  },
+  "public_hint": "Use this only after closeout evidence is ready; completed work needs changed_files, verification, and next_step where applicable."
+}

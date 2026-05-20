@@ -1,0 +1,38 @@
+{
+  "id": "confirm_law",
+  "title": "Confirm law",
+  "purpose": "Confirm or activate an existing project law after explicit operator approval.",
+  "states": ["planning", "checkpointing", "operator_review"],
+  "mode": "transition",
+  "required_fields": ["project", "law_id", "confirmed_by"],
+  "optional_fields": ["confirmation_source", "reason", "activate"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "law_id": {"type": "string"},
+      "confirmed_by": {"type": "string"},
+      "confirmation_source": {"type": "string", "default": "mailbox_submit.confirm_law"},
+      "reason": {"type": "string"},
+      "activate": {"type": "boolean", "default": true}
+    },
+    "required": ["project", "law_id", "confirmed_by"]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "none"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["create_law"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "law_confirmed",
+      "artifact_type": "project_law",
+      "mutation": true
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "artifact_key"]
+  },
+  "public_hint": "Use this after reviewing a proposed law. activate=true makes the law active; activate=false marks it user_confirmed."
+}

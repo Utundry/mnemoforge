@@ -67,3 +67,32 @@ def test_route_pattern_store_masks_uuid_values_for_reuse(tmp_path):
     assert match is not None
     assert match["backend_used"] == "learned_exact"
     assert match["intent_type"] == "task_details"
+
+
+def test_route_pattern_store_disable_pattern_removes_it_from_matching(tmp_path):
+    store = RoutePatternStore(tmp_path / "route_patterns.db")
+    pattern_id = store.record(
+        facade="project_rules",
+        pattern="propose new law",
+        intent_type="list_candidates",
+        tool="list_rule_candidates",
+        confidence=0.99,
+    )
+
+    assert store.match(
+        facade="project_rules",
+        pattern="propose new law",
+        allowed_intent_types={"list_candidates", "propose_law"},
+    )
+
+    assert store.disable_pattern(
+        pattern_id,
+        reason="conflicts_with_structural_route",
+        metadata={"expected_tool": "create_project_law", "learned_tool": "list_rule_candidates"},
+    )
+
+    assert store.match(
+        facade="project_rules",
+        pattern="propose new law",
+        allowed_intent_types={"list_candidates", "propose_law"},
+    ) is None

@@ -8,6 +8,7 @@ from app.services.mcp_workflow_specs import (
     DEFAULT_SPEC_ROOT,
     list_mailbox_forms_for_state,
     load_feature_toggle_registry,
+    load_mailbox_form_policy_spec,
     load_mailbox_protocol_spec,
     load_response_envelope_spec,
     load_runtime_profile_spec,
@@ -74,7 +75,13 @@ def build_mailbox_state_packet(
 ) -> dict[str, Any]:
     state_spec = load_state_spec(state, spec_root=spec_root)
     runtime_profile = _runtime_profile(runtime_profile_id, spec_root=spec_root)
-    forms = list_mailbox_forms_for_state(state_spec.id, spec_root=spec_root)
+    all_forms = list_mailbox_forms_for_state(state_spec.id, spec_root=spec_root)
+    forms, hidden_form_ids = _public_forms_for_runtime(
+        state=state_spec.id,
+        forms=all_forms,
+        runtime_profile=runtime_profile,
+        spec_root=spec_root,
+    )
     feature_registry = load_feature_toggle_registry(spec_root=spec_root)
     envelope = load_response_envelope_spec(spec_root=spec_root)
     protocol = load_mailbox_protocol_spec(spec_root=spec_root)
@@ -103,6 +110,7 @@ def build_mailbox_state_packet(
         "project": project,
         "instruction": state_spec.purpose,
         "forms": [_public_form_payload(form) for form in forms],
+        "hidden_forms": hidden_form_ids,
         "warnings": warnings,
         "next_safe_action": _next_safe_action(state_spec.id, forms),
         "receipt": None,
@@ -124,9 +132,45 @@ def build_mailbox_state_packet(
             ],
             "affected_forms": affected_forms,
             "forms": [_internal_form_payload(form) for form in forms],
+            "hidden_forms": [
+                _internal_form_payload(form)
+                for form in all_forms
+                if form.id in hidden_form_ids
+            ],
         }
 
     return public_packet
+
+
+def _public_forms_for_runtime(
+    *,
+    state: str,
+    forms: list[MailboxFormSpec],
+    runtime_profile: RuntimeProfilePreset,
+    spec_root: Path,
+) -> tuple[list[MailboxFormSpec], list[str]]:
+    form_policy = load_mailbox_form_policy_spec(spec_root=spec_root)
+    priority = form_policy.state_priorities.get(state, [])
+    rank = {form_id: index for index, form_id in enumerate(priority)}
+    sorted_forms = sorted(forms, key=lambda form: (rank.get(form.id, len(rank)), form.id))
+    hidden: list[str] = []
+    visible_ids = {form.id for form in sorted_forms}
+    hidden_ids: set[str] = set()
+    for rule in form_policy.visibility_rules:
+        if rule.packet_profile != runtime_profile.packet_profile:
+            continue
+        if rule.hide_only_when_form_ids_available and not set(rule.hide_only_when_form_ids_available) <= visible_ids:
+            continue
+        hidden_ids.update(rule.hidden_form_ids)
+    if hidden_ids:
+        visible = []
+        for form in sorted_forms:
+            if form.id in hidden_ids:
+                hidden.append(form.id)
+                continue
+            visible.append(form)
+        sorted_forms = visible
+    return sorted_forms, hidden
 
 
 def build_mailbox_submit_receipt(
@@ -459,6 +503,14 @@ def _disabled_feature_ids(
 def _next_safe_action(state: str, forms: list[MailboxFormSpec]) -> str:
     if state == "verification":
         return "Submit run_verification to get the project-approved verification contour."
+    if state == "checkpointing" and any(form.id == "finish_task" for form in forms):
+        return "Submit finish_task when closeout evidence is ready, or record_progress if work should continue."
+    if state == "planning" and any(form.id == "get_task_context" for form in forms):
+        return "Submit get_task_context first, then start_task when task identity and scope are clear."
+    if any(form.id == "start_task" for form in forms):
+        return "Submit start_task before editing when you are beginning real implementation work."
+    if any(form.id == "claim_task" for form in forms):
+        return "Submit claim_task before editing when you are taking ownership of a task."
     if any(form.id == "get_task_context" for form in forms):
         return "Submit get_task_context before choosing the next action if context is incomplete."
     if forms:

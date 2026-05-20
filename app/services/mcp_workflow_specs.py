@@ -7,6 +7,7 @@ from typing import Any
 
 from app.models.mcp_workflow import (
     ClerkCaptureRegistry,
+    MailboxFormPolicySpec,
     MailboxFormSpec,
     MailboxProtocolSpec,
     RuntimeProfileSpec,
@@ -101,6 +102,11 @@ def load_mailbox_protocol_spec(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> Mailbo
     return MailboxProtocolSpec.model_validate(_load_json(path))
 
 
+def load_mailbox_form_policy_spec(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> MailboxFormPolicySpec:
+    path = spec_root / "mailbox" / "form_policy.json"
+    return MailboxFormPolicySpec.model_validate(_load_json(path))
+
+
 def list_mailbox_form_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> list[MailboxFormSpec]:
     forms_dir = spec_root / "forms"
     if not forms_dir.exists():
@@ -140,7 +146,9 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
     task_lease = load_task_lease_spec(spec_root=spec_root)
     response_envelope = load_response_envelope_spec(spec_root=spec_root)
     mailbox_protocol = load_mailbox_protocol_spec(spec_root=spec_root)
+    mailbox_form_policy = load_mailbox_form_policy_spec(spec_root=spec_root)
     mailbox_forms = list_mailbox_form_specs(spec_root=spec_root)
+    known_state_ids = {spec.id for spec in state_specs}
     known_toggle_ids = {toggle.id for toggle in feature_registry.toggles}
     known_form_ids = {form.id for form in mailbox_forms}
     unknown_toggle_refs = [
@@ -161,6 +169,21 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         for replacement_id in form.replacement_form_ids
         if replacement_id not in known_form_ids
     ]
+    unknown_policy_states = [
+        state_id for state_id in mailbox_form_policy.state_priorities.keys() if state_id not in known_state_ids
+    ]
+    unknown_policy_forms = [
+        f"{state_id}:{form_id}"
+        for state_id, form_ids in mailbox_form_policy.state_priorities.items()
+        for form_id in form_ids
+        if form_id not in known_form_ids
+    ]
+    unknown_visibility_forms = [
+        f"{rule.packet_profile}:{form_id}"
+        for rule in mailbox_form_policy.visibility_rules
+        for form_id in [*rule.hidden_form_ids, *rule.hide_only_when_form_ids_available]
+        if form_id not in known_form_ids
+    ]
     if missing_templates:
         raise WorkflowSpecError("; ".join(missing_templates))
     if unknown_toggle_refs:
@@ -169,6 +192,12 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         raise WorkflowSpecError(f"Unknown form feature toggle refs: {', '.join(sorted(unknown_form_toggle_refs))}")
     if unknown_replacement_forms:
         raise WorkflowSpecError(f"Unknown replacement form refs: {', '.join(sorted(unknown_replacement_forms))}")
+    if unknown_policy_states:
+        raise WorkflowSpecError(f"Unknown mailbox form policy states: {', '.join(sorted(unknown_policy_states))}")
+    if unknown_policy_forms:
+        raise WorkflowSpecError(f"Unknown mailbox form policy form refs: {', '.join(sorted(unknown_policy_forms))}")
+    if unknown_visibility_forms:
+        raise WorkflowSpecError(f"Unknown mailbox form visibility refs: {', '.join(sorted(unknown_visibility_forms))}")
     return {
         "state_count": len(state_specs),
         "states": [spec.id for spec in state_specs],
@@ -184,6 +213,8 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         "response_internal_fields": [item.name for item in response_envelope.internal_fields],
         "mailbox_actions": [item.id for item in mailbox_protocol.external_actions],
         "mailbox_forms": [item.id for item in mailbox_forms],
+        "mailbox_form_policy_states": list(mailbox_form_policy.state_priorities.keys()),
+        "mailbox_form_visibility_profiles": [rule.packet_profile for rule in mailbox_form_policy.visibility_rules],
     }
 
 

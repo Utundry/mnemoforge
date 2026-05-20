@@ -176,6 +176,49 @@ def test_rule_candidate_review_actions_update_status_and_audit_fields():
         lifecycle.close()
 
 
+def test_expire_trial_candidates_suppresses_expired_trials():
+    lifecycle = RuleLifecycleStore(Path(":memory:"))
+    try:
+        candidate = lifecycle.create_candidate(
+            {
+                "project": "mnemoforge",
+                "scope": "project",
+                "topic_path": "rules/trial",
+                "marker_kind": "rule_project_candidate",
+                "statement": "Trial rules should expire when they never gain evidence.",
+                "rationale": "This keeps temporary rule proposals from becoming permanent noise.",
+                "evidence_refs": ["test"],
+                "source_task_id": "",
+                "source_session_id": "",
+                "source_span_id": "span-expired-trial",
+                "source_work_id": "",
+                "confidence": 0.7,
+                "promotion_hint": "",
+                "related_rule_hint": None,
+                "status": "trial",
+                "trial_started_at": 1.0,
+                "trial_review_after": 1.0,
+                "trial_expires_at": 1.0,
+            }
+        )
+
+        result = lifecycle.expire_trial_candidates(
+            project="mnemoforge",
+            reason="Expired test trial.",
+            acted_by="codex",
+            source="test",
+        )
+
+        assert result.expired_count == 1
+        assert result.candidates[0].candidate_id == candidate.candidate_id
+        assert result.candidates[0].status == "suppressed"
+        assert result.candidates[0].last_review_action == "expire_trial"
+        assert result.candidates[0].last_review_reason == "Expired test trial."
+        assert lifecycle.list_candidates(project="mnemoforge", status="trial") == []
+    finally:
+        lifecycle.close()
+
+
 @pytest.mark.asyncio
 async def test_rule_candidate_review_packet_flags_existing_law_overlap(client):
     created = await client.post("/api/v1/laws", json={

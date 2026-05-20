@@ -5,16 +5,23 @@
   "states": ["implementation", "checkpointing", "handoff"],
   "mode": "write",
   "required_fields": ["project", "summary"],
-  "optional_fields": ["task_id", "changed_files", "verification", "next_step", "stage"],
+  "optional_fields": ["task_id", "work_token", "owner_agent", "session_id", "agent_fingerprint", "runtime_profile_id", "changed_files", "verification", "next_step", "stage", "danger_mode", "danger_confirmation"],
   "input_schema": {
     "type": "object",
     "properties": {
       "project": {"type": "string", "default": "mnemoforge"},
       "task_id": {"type": "string"},
+      "work_token": {"type": "string"},
+      "owner_agent": {"type": "string", "default": "codex"},
+      "session_id": {"type": "string"},
+      "agent_fingerprint": {"type": "string"},
+      "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
       "summary": {"type": "string"},
       "changed_files": {"type": "array", "items": {"type": "string"}},
       "verification": {"type": "array", "items": {"type": "string"}},
       "next_step": {"type": "string"},
+      "danger_mode": {"type": "boolean", "default": false},
+      "danger_confirmation": {"type": "string"},
       "stage": {
         "type": "string",
         "enum": ["planning", "in_progress", "blocked", "interrupted", "handoff", "completed"],
@@ -38,5 +45,5 @@
     "forbidden_metadata": {},
     "required_receipt_fields": ["status", "stage"]
   },
-  "public_hint": "Use this after a meaningful implementation slice or before handoff."
+  "public_hint": "Use this after a meaningful implementation slice or before handoff. If task_id is provided, reuse the work_token returned by start_task."
 }

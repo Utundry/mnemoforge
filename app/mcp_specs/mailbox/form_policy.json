@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "purpose": "Declarative ordering and runtime-profile visibility policy for public mailbox forms. This keeps the external MCP surface stateful and LLM-friendly without hardcoding form logistics in Python.",
+  "state_priorities": {
+    "planning": [
+      "get_task_context",
+      "start_task",
+      "create_improvement",
+      "store_memory",
+      "create_law",
+      "confirm_law",
+      "release_task_claim",
+      "claim_task",
+      "set_feature_gate"
+    ],
+    "implementation": [
+      "record_progress",
+      "store_memory",
+      "get_task_context",
+      "start_task",
+      "release_task_claim",
+      "claim_task"
+    ],
+    "verification": [
+      "run_verification",
+      "get_task_context"
+    ],
+    "live_validation": [
+      "run_verification",
+      "get_task_context"
+    ],
+    "checkpointing": [
+      "finish_task",
+      "record_progress",
+      "store_memory",
+      "get_task_context",
+      "release_task_claim",
+      "create_improvement",
+      "confirm_law",
+      "set_feature_gate"
+    ],
+    "handoff": [
+      "record_progress",
+      "store_memory",
+      "finish_task",
+      "get_task_context",
+      "release_task_claim",
+      "claim_task"
+    ],
+    "operator_review": [
+      "get_task_context",
+      "create_law",
+      "confirm_law",
+      "finish_task",
+      "release_task_claim",
+      "set_feature_gate"
+    ]
+  },
+  "visibility_rules": [
+    {
+      "packet_profile": "minimal",
+      "hidden_form_ids": ["claim_task"],
+      "hide_only_when_form_ids_available": ["start_task"],
+      "reason": "Weak/minimal agents should prefer start_task, which wraps claim + work-session setup; claim_task remains available as an advanced recovery form but is not shown in the main packet."
+    }
+  ]
+}

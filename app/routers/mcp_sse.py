@@ -28,22 +28,12 @@ from app.services.operational_instincts_service import build_operational_instinc
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from app.services.mcp_tool_contracts import (
-    build_approve_learning_candidate_payload,
-    build_coordination_status_payload,
-    build_defer_learning_candidate_payload,
     build_enrich_task_payload,
     build_operational_tray_context_payload,
     build_upsert_knowledge_tree_node_payload,
     build_task_execution_context_payload,
-    build_list_artifacts_query,
-    build_list_learning_candidates_query,
     build_list_open_tasks_query,
-    build_list_coordination_query,
-    build_reconcile_completed_checkpoints_payload,
-    build_review_completed_checkpoint_scope_payload,
-    build_review_completed_checkpoint_scopes_payload,
     build_normalize_mcp_intent_payload,
-    build_pickup_coordination_payload,
     build_project_workflow_payload,
     build_project_workflow_submit_payload,
     build_project_workflow_submit_plan,
@@ -51,24 +41,11 @@ from app.services.mcp_tool_contracts import (
     build_project_reconstruction_payload,
     build_project_readiness_payload,
     build_remote_snapshot_payload,
-    build_merge_canonicals_payload,
-    build_reject_learning_candidate_payload,
     build_reopen_task_payload,
-    build_send_coordination_message_payload,
     build_mnemoforge_initialize_hint,
     build_mnemoforge_onboarding_basics,
     build_report_task_checkpoint_payload,
-    format_coordination_list,
-    format_coordination_message,
-    build_set_canonical_status_payload,
-    format_learning_candidate_transition,
-    format_list_learning_candidates_response,
     format_list_open_tasks_response,
-    format_list_tool_families_response,
-    format_tool_family_tools_response,
-    format_tool_explain_response,
-    format_tool_recommend_response,
-    format_tool_feedback_response,
     format_task_checkpoint_response,
     format_pull_task_context_response,
     format_enrich_task_response,
@@ -80,11 +57,6 @@ from app.services.mcp_tool_contracts import (
     format_remote_snapshot_sync_response,
     format_project_readiness_response,
     format_storage_trust_response,
-    format_set_canonical_status_response,
-    build_load_instruction_layer_payload,
-    build_list_instruction_layers_payload,
-    format_load_instruction_layer_response,
-    format_list_instruction_layers_response,
     sync_tool_definitions,
     tool_definition,
 )
@@ -95,15 +67,78 @@ from app.services.operational_instincts_service import (
 from app.services.mcp_tool_registry import get_tool_stage, observe_tool_use, record_tool_feedback, tool_feedback_expected
 from app.services.replay_completeness_service import build_replay_drill_decision, build_token_budget, evaluate_execution_readiness, evaluate_replay_completeness
 from app.services.route_pattern_store import get_route_pattern_store
-from app.services.mcp_mailbox import (
-    build_mailbox_get_packet,
-    build_mailbox_mutation_packet,
-    build_mailbox_state_packet,
-    build_mailbox_submit_receipt,
-    evaluate_mailbox_postconditions,
-    mailbox_form_by_id,
-    mailbox_form_disabled_features,
-    mailbox_form_state_names,
+from app.services.mcp_mailbox import mailbox_form_by_id
+from app.services.mcp_mailbox_actions import (
+    MailboxActionDependencies,
+    build_mailbox_submit_packet as build_mailbox_action_submit_packet,
+    public_mailbox_error_message,
+)
+from app.services.mcp_mailbox_read import (
+    MailboxReadDependencies,
+    build_mailbox_get_response,
+    build_mailbox_state_response,
+)
+from app.services.mcp_task_lease_actions import (
+    TaskLeaseActionDependencies,
+    execute_task_lease_action,
+    task_mutation_requires_owned_claim,
+)
+from app.services.mcp_task_session_actions import (
+    TaskSessionActionDependencies,
+    finish_task_session_action,
+    start_task_session_action,
+)
+from app.services.mcp_work_session_actions import (
+    WorkSessionActionDependencies,
+    execute_work_session_action,
+)
+from app.services.mcp_checkpoint_draft_actions import (
+    CheckpointDraftActionDependencies,
+    checkpoint_draft_recommended_next_tool,
+    execute_checkpoint_draft_action,
+)
+from app.services.mcp_task_checkpoint_actions import (
+    TaskCheckpointActionDependencies,
+    checkpoint_handoff_payload,
+    checkpoint_scope_guard,
+    checkpoint_scope_guard_decision,
+    execute_task_checkpoint_action,
+)
+from app.services.mcp_tool_discovery_actions import (
+    ToolDiscoveryActionDependencies,
+    build_tool_feedback_envelope,
+    execute_tool_discovery_action,
+)
+from app.services.mcp_artifact_lifecycle_actions import (
+    ArtifactLifecycleActionDependencies,
+    execute_artifact_lifecycle_action,
+)
+from app.services.mcp_project_governance_actions import (
+    ProjectGovernanceActionDependencies,
+    execute_project_governance_action,
+)
+from app.services.mcp_runtime_utility_actions import (
+    RuntimeUtilityActionDependencies,
+    execute_runtime_utility_action,
+)
+from app.services.mcp_memory_actions import (
+    MemoryActionDependencies,
+    execute_memory_action,
+)
+from app.services.mcp_handoff_actions import (
+    HANDOFF_ACTIONS,
+    HandoffActionDependencies,
+    execute_handoff_action,
+)
+from app.services.mcp_skill_routing_actions import (
+    SKILL_ROUTING_ACTIONS,
+    SkillRoutingActionDependencies,
+    execute_skill_routing_action,
+)
+from app.services.mcp_coordination_actions import (
+    COORDINATION_ACTIONS,
+    CoordinationActionDependencies,
+    execute_coordination_action,
 )
 
 router = APIRouter(prefix="/mcp")
@@ -698,7 +733,69 @@ def _tool_catalog() -> list[dict[str, Any]]:
     return [tool for tool in TOOLS if isinstance(tool, dict) and tool.get("name")]
 
 
+_PUBLIC_SURFACE_TOOLS = ("help", "state", "get", "submit")
+_COMPATIBILITY_SURFACE_TOOLS = {"put", "mailbox_state", "mailbox_submit", "mailbox_get"}
+
+
+def _tool_surface_role(tool_name: str) -> str:
+    name = str(tool_name or "").strip()
+    if name in _PUBLIC_SURFACE_TOOLS:
+        return "public_entrypoint"
+    if name in _COMPATIBILITY_SURFACE_TOOLS:
+        return "compatibility_legacy"
+    return "specialized_fallback"
+
+
+def _tool_surface_guidance(role: str) -> str:
+    if role == "public_entrypoint":
+        return "Recommended public MCP surface. Start here before legacy, specialized, or debug tools."
+    if role == "compatibility_legacy":
+        return "Compatibility/legacy surface. Prefer help/state/get/submit unless this is explicitly required."
+    return "Specialized fallback/debug surface. Use only when help/state/get/submit or workflow state explicitly directs it."
+
+
+def _annotate_tool_surface(tool: dict[str, Any]) -> dict[str, Any]:
+    enriched = deepcopy(tool)
+    name = str(enriched.get("name") or "").strip()
+    role = _tool_surface_role(name)
+    guidance = _tool_surface_guidance(role)
+    description = str(enriched.get("description") or "").strip()
+    prefix = {
+        "public_entrypoint": "[Recommended public entrypoint]",
+        "compatibility_legacy": "[Compatibility/legacy]",
+        "specialized_fallback": "[Specialized fallback]",
+    }[role]
+    if description and not description.startswith(prefix):
+        enriched["description"] = f"{prefix} {description}"
+    elif not description:
+        enriched["description"] = f"{prefix} {guidance}"
+    annotations = deepcopy(enriched.get("annotations") or {}) if isinstance(enriched.get("annotations"), dict) else {}
+    annotations.update(
+        {
+            "mnemoforge_surface_role": role,
+            "mnemoforge_recommended_start": role == "public_entrypoint",
+            "mnemoforge_guidance": guidance,
+        }
+    )
+    enriched["annotations"] = annotations
+    enriched["_mnemoforge"] = {
+        "surface_role": role,
+        "recommended_start": role == "public_entrypoint",
+        "public_surface": list(_PUBLIC_SURFACE_TOOLS),
+        "guidance": guidance,
+    }
+    return enriched
+
+
+def _annotated_tool_catalog() -> list[dict[str, Any]]:
+    return [_annotate_tool_surface(tool) for tool in _tool_catalog()]
+
+
 _COMPACT_TOOL_NAMES = (
+    "help",
+    "state",
+    "get",
+    "submit",
     "mailbox_state",
     "mailbox_submit",
     "mailbox_get",
@@ -745,7 +842,7 @@ def _summarize_input_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def _compact_tool_catalog(*, limit: int = 12, schema_mode: str = "summary") -> list[dict[str, Any]]:
-    by_name = {str(tool.get("name")): tool for tool in _tool_catalog()}
+    by_name = {str(tool.get("name")): tool for tool in _annotated_tool_catalog()}
     names: list[str] = []
     for name in _COMPACT_TOOL_NAMES:
         if name in by_name and name not in names:
@@ -784,8 +881,8 @@ def _tools_list_payload(params: dict[str, Any] | None = None) -> dict[str, Any]:
             "full_catalog_available": True,
             "full_catalog_request": {"method": "tools/list", "params": {"mode": "full"}},
             "full_schema_request": {"method": "tools/list", "params": {"mode": "compact", "schema_mode": "full"}},
-            "recommended_first_tool": "mailbox_state",
-            "reason": "Compact mode starts with the Mailbox/MCP FSM protocol; use mailbox_state to get the current public form packet, then mailbox_submit or mailbox_get before falling back to expert facades.",
+            "recommended_first_tool": "help",
+            "reason": "Compact mode starts with the simple help/state/get/submit surface; use help for protocol guidance, state for available public forms, get for reads, and submit for governed form submissions.",
             "total_tools_available": len(_tool_catalog()),
             "returned_tools": len(tools),
         }
@@ -794,7 +891,23 @@ def _tools_list_payload(params: dict[str, Any] | None = None) -> dict[str, Any]:
             "_mnemoforge": catalog_meta,
             "_supermemory": catalog_meta,
         }
-    return {"tools": TOOLS}
+    return {
+        "tools": _annotated_tool_catalog(),
+        "_mnemoforge": {
+            "catalog_mode": "full",
+            "recommended_public_surface": list(_PUBLIC_SURFACE_TOOLS),
+            "recommended_first_tool": "help",
+            "warning": "Full catalog includes legacy, specialized, and debug/fallback tools. Do not use it as the starting workflow; start with help/state/get/submit.",
+            "compact_request": {"method": "tools/list", "params": {"mode": "compact"}},
+        },
+        "_supermemory": {
+            "catalog_mode": "full",
+            "recommended_public_surface": list(_PUBLIC_SURFACE_TOOLS),
+            "recommended_first_tool": "help",
+            "warning": "Full catalog includes legacy, specialized, and debug/fallback tools. Do not use it as the starting workflow; start with help/state/get/submit.",
+            "compact_request": {"method": "tools/list", "params": {"mode": "compact"}},
+        },
+    }
 
 
 def _normalize_tool_catalog_mode(value: Any) -> str:
@@ -985,6 +1098,78 @@ def _infer_small_context_modes(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _extract_runtime_profile_id(params: dict[str, Any], inferred_modes: dict[str, Any] | None = None) -> str:
+    mnemoforge = _mnemoforge_params(params)
+    context = mnemoforge.get("context") if isinstance(mnemoforge.get("context"), dict) else {}
+    capabilities = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
+    experimental = capabilities.get("experimental") if isinstance(capabilities.get("experimental"), dict) else {}
+    capability_mnemoforge = (
+        capabilities.get("mnemoforge")
+        if isinstance(capabilities.get("mnemoforge"), dict)
+        else capabilities.get("supermemory")
+        if isinstance(capabilities.get("supermemory"), dict)
+        else {}
+    )
+    experimental_mnemoforge = (
+        experimental.get("mnemoforge")
+        if isinstance(experimental.get("mnemoforge"), dict)
+        else experimental.get("supermemory")
+        if isinstance(experimental.get("supermemory"), dict)
+        else {}
+    )
+    candidates = [
+        mnemoforge.get("runtime_profile_id"),
+        mnemoforge.get("runtime_profile"),
+        context.get("runtime_profile_id"),
+        params.get("runtime_profile_id"),
+        params.get("agent_profile"),
+        capability_mnemoforge.get("runtime_profile_id"),
+        experimental_mnemoforge.get("runtime_profile_id"),
+    ]
+    allowed = {"strong_mcp_operator", "weak_mcp_operator", "unknown_cli", "diagnostic_operator"}
+    for candidate in candidates:
+        profile = str(candidate or "").strip()
+        if profile in allowed:
+            return profile
+    if inferred_modes and inferred_modes.get("reason"):
+        return "weak_mcp_operator"
+    return "unknown_cli"
+
+
+def _extract_model_name(params: dict[str, Any]) -> str:
+    mnemoforge = _mnemoforge_params(params)
+    model = params.get("model") if isinstance(params.get("model"), dict) else {}
+    model_info = params.get("modelInfo") if isinstance(params.get("modelInfo"), dict) else {}
+    candidates = [
+        params.get("model_name"),
+        model.get("name"),
+        model_info.get("name"),
+        mnemoforge.get("model_name"),
+    ]
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        if value:
+            return value
+    return "unknown-model"
+
+
+async def _get_session_identity_defaults(session_id: str | None) -> dict[str, str]:
+    if not session_id:
+        return {}
+    try:
+        from app.services.mcp_session_store import get_session_store
+
+        ctx = await get_session_store().get_context(session_id)
+    except Exception:
+        return {}
+    if not isinstance(ctx, dict):
+        return {}
+    return {
+        "agent_fingerprint": str(ctx.get("agent_fingerprint") or "").strip(),
+        "runtime_profile_id": str(ctx.get("runtime_profile_id") or "").strip(),
+    }
+
+
 def _family_tools(family: str) -> list[dict[str, Any]]:
     return [tool for tool in _tool_catalog() if _infer_tool_family(str(tool.get("name"))) == family]
 
@@ -1050,16 +1235,7 @@ def _annotate_structured_tool_payload(tool_name: str, data: dict[str, Any]) -> d
 
 
 def _checkpoint_draft_recommended_next_tool(data: dict[str, Any]) -> str:
-    status = str(data.get("status") or "").strip()
-    if status == "approved":
-        return "get_task_execution_context"
-    if status in {"rejected", "expired"}:
-        return "draft_checkpoint_from_spans"
-    return (
-        "approve_checkpoint_draft"
-        if data.get("validation_report", {}).get("can_approve")
-        else "revise_checkpoint_draft"
-    )
+    return checkpoint_draft_recommended_next_tool(data)
 
 
 _SMALL_CONTEXT_SERVICE_KEYS = {
@@ -1274,75 +1450,28 @@ def _build_tool_feedback_envelope(
     should_promote: bool | None = None,
     confidence: float | None = None,
 ) -> dict[str, Any]:
-    normalized_stage = str(tool_stage or "testing").strip().lower() or "testing"
-    normalized_valence = str(valence or "mixed").strip().lower() or "mixed"
-    normalized_friction = str(friction or "").strip()
-    normalized_suggestion = str(suggestion or "").strip()
-    normalized_task_context = str(task_context or "").strip()
-    normalized_scope = str(scope or "").strip()
-    normalized_what_was_tested = str(what_was_tested or "").strip()
-    normalized_expected_behavior = str(expected_behavior or "").strip()
-    normalized_observed_behavior = str(observed_behavior or "").strip()
-    normalized_next_action = str(next_action or "").strip()
-    normalized_missing_fields = [str(item).strip() for item in missing_fields if str(item).strip()]
-
-    if should_promote is None:
-        should_promote = worked and not normalized_friction and not normalized_missing_fields and normalized_stage == "testing"
-    if assessment:
-        normalized_assessment = assessment
-    elif normalized_stage != "testing":
-        normalized_assessment = "informational"
-    elif not worked:
-        normalized_assessment = "needs_redesign" if (normalized_friction or normalized_missing_fields) else "keep_testing"
-    elif normalized_friction or normalized_missing_fields:
-        normalized_assessment = "keep_testing"
-    elif should_promote:
-        normalized_assessment = "promote_candidate"
-    else:
-        normalized_assessment = "keep_testing"
-
-    if not normalized_scope:
-        normalized_scope = f"testing {tool_name}"
-    if not normalized_what_was_tested:
-        normalized_what_was_tested = normalized_task_context or f"Use of {tool_name}"
-    if not normalized_expected_behavior:
-        normalized_expected_behavior = "Tool should complete the requested path and expose the needed affordances clearly."
-    if not normalized_observed_behavior:
-        normalized_observed_behavior = "Tool completed the path." if worked else "Tool did not complete the requested path."
-    if not normalized_next_action:
-        normalized_next_action = {
-            "promote_candidate": "Broaden usage, keep monitoring, and consider promotion if signal stays clean.",
-            "keep_testing": "Tighten affordances or wording, then retest the same path.",
-            "needs_redesign": "Redesign the interface or missing fields before retesting.",
-            "deprecate": "Deprecate after confirming there is no better canonical path.",
-            "informational": "Use this as an observational note; no promotion decision implied.",
-        }.get(normalized_assessment, "Retest with clearer expectations.")
-    if confidence is None:
-        confidence = 0.9 if normalized_assessment == "promote_candidate" else 0.75 if normalized_assessment == "keep_testing" else 0.45
-
-    return {
-        "summary": f"Recorded tool feedback for {tool_name}",
-        "feedback_id": feedback_id,
-        "tool_name": tool_name,
-        "tool_stage": normalized_stage,
-        "valence": normalized_valence,
-        "worked": worked,
-        "assessment": normalized_assessment,
-        "should_promote": bool(should_promote),
-        "confidence": round(float(confidence), 2),
-        "scope": normalized_scope,
-        "what_was_tested": normalized_what_was_tested,
-        "expected_behavior": normalized_expected_behavior,
-        "observed_behavior": normalized_observed_behavior,
-        "friction": normalized_friction,
-        "suggestion": normalized_suggestion,
-        "next_action": normalized_next_action,
-        "missing_fields": normalized_missing_fields,
-        "task_context": normalized_task_context,
-        "project_id": str(project_id or "").strip(),
-        "agent_id": str(agent_id or "").strip(),
-        "session_id": str(session_id or "").strip(),
-    }
+    return build_tool_feedback_envelope(
+        tool_name=tool_name,
+        tool_stage=tool_stage,
+        valence=valence,
+        worked=worked,
+        friction=friction,
+        suggestion=suggestion,
+        task_context=task_context,
+        project_id=project_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        missing_fields=missing_fields,
+        feedback_id=feedback_id,
+        assessment=assessment,
+        scope=scope,
+        what_was_tested=what_was_tested,
+        expected_behavior=expected_behavior,
+        observed_behavior=observed_behavior,
+        next_action=next_action,
+        should_promote=should_promote,
+        confidence=confidence,
+    )
 
 
 def _recommend_family_order(task: str) -> list[str]:
@@ -2746,6 +2875,16 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
                 "task_id": item.get("task_id"),
                 "linked_artifact_key": item.get("linked_artifact_key"),
             }
+            if compact_item.get("task_id"):
+                compact_item["next_detail_form"] = {
+                    "tool": "mailbox_submit",
+                    "form_id": "get_task_context",
+                    "payload": {
+                        "project": item.get("project") or result.get("project"),
+                        "task_id": compact_item["task_id"],
+                        "detail": "compact",
+                    },
+                }
             if isinstance(item.get("task_claim"), dict):
                 compact_item["claim_status"] = item.get("claim_status")
                 compact_item["claimed_by"] = (item.get("task_claim") or {}).get("owner_agent")
@@ -2795,9 +2934,487 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
     return result
 
 
+def _mailbox_public_ref_address(args: dict[str, Any]) -> dict[str, str] | None:
+    ref = str(args.get("ref") or "").strip()
+    if not ref:
+        return None
+    if ref.startswith("mailbox_state:"):
+        return None
+    parts = ref.split(":")
+    if parts and parts[0] == "mailbox_get":
+        parts = parts[1:]
+    if not parts:
+        return None
+
+    default_project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    kind = parts[0].strip()
+    if kind == "artifact" and len(parts) >= 4:
+        artifact_type = parts[1].strip()
+        project = parts[2].strip() or default_project
+        local_id = ":".join(parts[3:]).strip()
+        if artifact_type and local_id:
+            return {
+                "kind": "artifact",
+                "artifact_type": artifact_type,
+                "project": project,
+                "local_id": local_id,
+                "artifact_key": f"{artifact_type}:{project}:{local_id}",
+            }
+    if kind in {"task", "improvement"} and len(parts) >= 3:
+        project = parts[1].strip() or default_project
+        local_id = ":".join(parts[2:]).strip()
+        if local_id:
+            return {
+                "kind": kind,
+                "artifact_type": kind,
+                "project": project,
+                "local_id": local_id,
+                "artifact_key": f"{kind}:{project}:{local_id}",
+            }
+    if kind in {"law", "rule_candidate", "candidate", "memory"} and len(parts) >= 2:
+        project = parts[1].strip() if len(parts) >= 3 else default_project
+        local_id = ":".join(parts[2:] if len(parts) >= 3 else parts[1:]).strip()
+        if local_id:
+            normalized_kind = "rule_candidate" if kind == "candidate" else kind
+            return {"kind": normalized_kind, "project": project or default_project, "local_id": local_id}
+    if len(parts) >= 3:
+        project = parts[1].strip() or default_project
+        local_id = ":".join(parts[2:]).strip()
+        if local_id:
+            return {"kind": kind, "project": project, "local_id": local_id}
+    return None
+
+
+async def _resolve_mailbox_public_ref(api_base: str, args: dict[str, Any]) -> dict[str, Any] | None:
+    address = _mailbox_public_ref_address(args)
+    if not address:
+        return None
+
+    kind = address["kind"]
+    project = address.get("project") or str(args.get("project") or "mnemoforge")
+    local_id = address.get("local_id") or ""
+    requested_ref = str(args.get("ref") or "").strip()
+    normalized_ref = address.get("artifact_key") or f"{kind}:{project}:{local_id}"
+    try:
+        if kind == "task":
+            result = await _build_pull_task_context_payload(
+                api_base,
+                {
+                    "project": project,
+                    "task_id": local_id,
+                    "detail": str(args.get("detail") or "compact"),
+                    "include_handoffs": True,
+                    "limit": int(args.get("limit") or 10),
+                },
+            )
+            next_safe_action = result.get("next_safe_action") or "Review task context before claiming or editing."
+        elif kind in {"improvement", "artifact"}:
+            artifact_key = address.get("artifact_key") or f"{kind}:{project}:{local_id}"
+            result = await _get(api_base, f"/artifacts/{quote(artifact_key, safe='')}")
+            next_safe_action = "Review this read-only artifact before choosing any mutating mailbox form."
+        elif kind == "law":
+            result = await _get(api_base, f"/laws/{quote(local_id, safe='')}")
+            next_safe_action = "Review this read-only law before proposing revisions or candidates."
+        elif kind == "rule_candidate":
+            result = await _get(api_base, f"/laws/candidates/{quote(local_id, safe='')}")
+            next_safe_action = "Review this read-only rule candidate before any promotion, revision, or review action."
+        elif kind == "memory":
+            result = await _get(api_base, f"/memories/{quote(local_id, safe='')}")
+            next_safe_action = "Review this read-only memory before creating new facts or updates."
+        else:
+            return {
+                "state": str(args.get("state") or "planning"),
+                "project": project,
+                "receipt": {
+                    "status": "unsupported_ref_kind",
+                    "message": f"Mailbox public ref kind is not yet mapped to a read-only resolver: {kind}",
+                    "data_ref": normalized_ref,
+                    "requested_ref": requested_ref,
+                    "supported_ref_kinds": ["task", "improvement", "artifact", "law", "rule_candidate", "memory"],
+                    "next_safe_action": "Use mailbox_state for available forms, or ask_project/project_work for natural read-only lookup.",
+                },
+                "next_safe_action": "Use mailbox_state for available forms, or ask_project/project_work for natural read-only lookup.",
+            }
+    except Exception as exc:
+        return {
+            "state": str(args.get("state") or "planning"),
+            "project": project,
+            "receipt": {
+                "status": "not_found",
+                "message": public_mailbox_error_message(exc),
+                "data_ref": normalized_ref,
+                "requested_ref": requested_ref,
+                "next_safe_action": "Verify the public ref from the latest list/open/context result, then request mailbox_get again.",
+            },
+            "next_safe_action": "Verify the public ref from the latest list/open/context result, then request mailbox_get again.",
+        }
+
+    return {
+        "state": str(args.get("state") or "planning"),
+        "project": project,
+        "receipt": {
+            "status": "accepted",
+            "message": "Public mailbox reference resolved through a read-only handler.",
+            "resource_kind": kind,
+            "data_ref": normalized_ref,
+            "requested_ref": requested_ref,
+            "next_safe_action": next_safe_action,
+        },
+        "result": result,
+        "next_safe_action": next_safe_action,
+    }
+
+
+async def _build_simple_help_payload(args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
+    project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    topic = str(args.get("topic") or "").strip()
+    detail = str(args.get("detail") or "brief").strip().lower()
+    if detail not in {"brief", "full"}:
+        detail = "brief"
+    guide: dict[str, Any] = {
+        "status": "ok",
+        "project": project,
+        "purpose": "Use the four public tools as a stable mailbox protocol.",
+        "tools": {
+            "help": "Static protocol guide. Use this when you do not know what to call.",
+            "state": "Current workflow/FSM packet with allowed public forms and next safe action.",
+            "get": "Read data by public ref/address or ask a natural read-only question.",
+            "submit": "Submit a public form/action payload; server applies guardrails before mutation.",
+            "put": "Compatibility alias for submit.",
+        },
+        "examples": [
+            {"tool": "state", "arguments": {"project": project, "state": "planning"}},
+            {"tool": "get", "arguments": {"ref": f"task:{project}:<task_id>"}},
+            {"tool": "get", "arguments": {"query": "list active tasks", "project": project}},
+            {"tool": "submit", "arguments": {"action": "get_task_context", "payload": {"project": project, "task_id": "<task_id>"}}},
+        ],
+        "rules": [
+            "Use get/state before submit when context is incomplete.",
+            "Do not invent internal refs; use refs returned by get/state/results.",
+            "Diagnostics are optional parameters and may be ignored for weak runtime profiles.",
+        ],
+        "topic": topic,
+        "next_safe_action": "Call state for the current workflow packet, or get for a read-only request.",
+    }
+    if detail == "full":
+        guide["legacy_compatibility"] = {
+            "mailbox_state": "legacy alias for state",
+            "mailbox_get": "legacy read-by-ref surface behind get",
+            "mailbox_submit": "legacy form submit surface behind submit",
+        }
+    guide["simple_interface"] = {
+        "tools": ["help", "state", "get", "submit"],
+        "guide": "Call help for protocol guidance.",
+        "state": "Call state for current forms/actions.",
+        "read": "Call get with ref for a known public address, or query for a natural read-only question.",
+        "write": "Call submit with form_id/action and payload from the state packet. put remains a compatibility alias.",
+        "topic": topic,
+    }
+    return guide
+
+
+def _compact_public_form(form: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "form_id": form.get("form_id"),
+        "title": form.get("title"),
+        "mode": form.get("mode"),
+        "required_fields": form.get("required_fields") or [],
+        "optional_fields": form.get("optional_fields") or [],
+        "hint": form.get("hint"),
+    }
+
+
+def _public_recommendation_for_tool(tool_name: Any, result: dict[str, Any]) -> dict[str, Any]:
+    internal_tool = str(tool_name or "").strip()
+    project = str(result.get("project") or "mnemoforge").strip() or "mnemoforge"
+    task_id = str(result.get("task_id") or "").strip()
+    if internal_tool in {"record_task_checkpoint", "report_task_checkpoint"}:
+        payload: dict[str, Any] = {"project": project}
+        if task_id:
+            payload["task_id"] = task_id
+        return {
+            "tool": "submit",
+            "form_id": "record_progress",
+            "payload": payload,
+            "why": "Use the public form-submission surface instead of calling checkpoint tools directly.",
+            "internal_tool": internal_tool,
+        }
+    if internal_tool in {"pull_task_context", "get_task_execution_context"}:
+        payload = {"project": project}
+        if task_id:
+            payload["task_id"] = task_id
+        return {
+            "tool": "submit",
+            "form_id": "get_task_context",
+            "payload": payload,
+            "why": "Use the public form-submission surface for task context.",
+            "internal_tool": internal_tool,
+        }
+    if internal_tool:
+        return {
+            "tool": internal_tool if _tool_surface_role(internal_tool) == "public_entrypoint" else "state",
+            "why": "Request the current workflow state before using specialized fallback tools.",
+            "internal_tool": internal_tool if _tool_surface_role(internal_tool) != "public_entrypoint" else "",
+        }
+    return {"tool": "state", "why": "Request the current workflow state before choosing the next action."}
+
+
+def _compact_task_resource(result: dict[str, Any]) -> dict[str, Any]:
+    task = result.get("task") if isinstance(result.get("task"), dict) else {}
+    latest = result.get("latest_checkpoint") if isinstance(result.get("latest_checkpoint"), dict) else {}
+    readiness = result.get("execution_readiness") if isinstance(result.get("execution_readiness"), dict) else {}
+    public_recommendation = _public_recommendation_for_tool(result.get("recommended_first_tool"), result)
+    return {
+        "task_id": result.get("task_id") or task.get("task_id"),
+        "status": result.get("status"),
+        "title": task.get("title") or result.get("title"),
+        "task_status": task.get("status"),
+        "latest_checkpoint": {
+            "id": latest.get("id"),
+            "stage": latest.get("stage"),
+            "status": latest.get("status"),
+            "summary": latest.get("summary"),
+            "next_step": latest.get("next_step"),
+        } if latest else None,
+        "execution_readiness": {
+            "status": readiness.get("status"),
+            "missing_evidence": readiness.get("missing_evidence") or [],
+            "recommended_next_action": readiness.get("recommended_next_action"),
+        } if readiness else None,
+        "recommended_first_tool": public_recommendation.get("tool"),
+        "recommended_next_call": public_recommendation,
+        "next_safe_action": result.get("next_safe_action"),
+    }
+
+
+def _compact_resource_result(kind: str, result: Any) -> Any:
+    if not isinstance(result, dict):
+        return result
+    if kind == "task":
+        return {key: value for key, value in _compact_task_resource(result).items() if value not in (None, "", [])}
+    if kind in {"improvement", "artifact"}:
+        keys = ("artifact_key", "type", "id", "project", "title", "description", "status", "stage", "linked_artifact_key", "linked_status")
+        return {key: result.get(key) for key in keys if result.get(key) not in (None, "", [])}
+    if kind == "law":
+        keys = ("id", "project", "title", "status", "scope", "statement", "rationale", "version")
+        return {key: result.get(key) for key in keys if result.get(key) not in (None, "", [])}
+    if kind == "rule_candidate":
+        keys = ("candidate_id", "project", "status", "scope", "statement", "rationale", "trial_review_after", "trial_expires_at")
+        return {key: result.get(key) for key in keys if result.get(key) not in (None, "", [])}
+    if kind == "memory":
+        keys = ("id", "content", "memory_type", "category", "project", "created_at", "updated_at", "importance_score")
+        return {key: result.get(key) for key in keys if result.get(key) not in (None, "", [])}
+    return result
+
+
+def _compact_simple_get_packet(data: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    if str(args.get("detail") or "compact").strip().lower() == "full" or bool(args.get("diagnostic", False)):
+        return data
+    receipt = data.get("receipt") if isinstance(data.get("receipt"), dict) else {}
+    kind = str(receipt.get("resource_kind") or "").strip()
+    compact = dict(data)
+    compact["result"] = _compact_resource_result(kind, data.get("result"))
+    compact["details_available"] = True
+    return compact
+
+
+def _compact_ask_project_result(data: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    if str(args.get("detail") or "compact").strip().lower() == "full" or bool(args.get("diagnostic", False)):
+        return data
+    route = data.get("selected_expert_route") if isinstance(data.get("selected_expert_route"), dict) else {}
+    text = str(data.get("result_text") or "").strip()
+    return {
+        "status": data.get("status"),
+        "question": data.get("question"),
+        "selected_facade": route.get("facade"),
+        "answer": text[:1200],
+    }
+
+
+def _simple_get_response_format(args: dict[str, Any]) -> str:
+    requested = str(args.get("response_format") or "auto").strip().lower()
+    if requested in {"diagnostic", "answer"}:
+        return requested
+    return "json"
+
+
+def _resource_kind_from_receipt_or_result(receipt: dict[str, Any], result: Any) -> str:
+    kind = str(receipt.get("resource_kind") or "").strip()
+    if kind:
+        return kind
+    data_ref = str(receipt.get("data_ref") or "").strip()
+    if data_ref.startswith("task:"):
+        return "task"
+    if data_ref.startswith("improvement:"):
+        return "improvement"
+    if data_ref.startswith("law:"):
+        return "law"
+    if data_ref.startswith("rule_candidate:"):
+        return "rule_candidate"
+    if data_ref.startswith("memory:"):
+        return "memory"
+    if isinstance(result, dict):
+        if result.get("task_id") and (isinstance(result.get("task"), dict) or isinstance(result.get("latest_checkpoint"), dict)):
+            return "task"
+        if result.get("artifact_key"):
+            return str(result.get("type") or "artifact")
+        if result.get("candidate_id"):
+            return "rule_candidate"
+    return ""
+
+
+def _compact_put_result(result: Any, *, receipt: dict[str, Any]) -> Any:
+    if not isinstance(result, dict):
+        return result
+    kind = _resource_kind_from_receipt_or_result(receipt, result)
+    return _compact_resource_result(kind, result) if kind else result
+
+
+def _compact_simple_put_packet(data: dict[str, Any], args: dict[str, Any], form_id: str) -> dict[str, Any]:
+    if str(args.get("detail") or "compact").strip().lower() == "full" or bool(args.get("diagnostic", False)):
+        return data
+    compact = dict(data)
+    receipt = data.get("receipt") if isinstance(data.get("receipt"), dict) else {}
+    if receipt:
+        receipt_keys = ("status", "form_id", "mode", "message", "id", "stage", "submitted_fields", "next_safe_action")
+        compact["receipt"] = {key: receipt.get(key) for key in receipt_keys if receipt.get(key) not in (None, "", [])}
+    if "result" in compact:
+        compact["result"] = _compact_put_result(compact.get("result"), receipt=receipt)
+    compact["details_available"] = True
+    return compact
+
+
+async def _build_simple_state_payload(args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
+    data = await build_mailbox_state_response(
+        args={
+            "project": str(args.get("project") or "mnemoforge"),
+            "state": str(args.get("state") or "planning"),
+            "runtime_profile_id": str(args.get("runtime_profile_id") or "unknown_cli"),
+            "diagnostic": bool(args.get("diagnostic", False)),
+        },
+        session_id=session_id,
+        dependencies=MailboxReadDependencies(get_session_identity_defaults=_get_session_identity_defaults),
+    )
+    data["simple_interface"] = {
+        "tools": ["help", "state", "get", "submit"],
+        "help": "Call help for protocol guidance.",
+        "read": "Call get with ref/query.",
+        "write": "Call submit with form_id/action and payload from this state packet. put remains a compatibility alias.",
+    }
+    data["next_safe_action"] = data.get("next_safe_action") or "Use get for reads or submit with one of the listed forms."
+    if str(args.get("detail") or "compact").strip().lower() != "full" and not bool(args.get("diagnostic", False)):
+        data["forms"] = [_compact_public_form(form) for form in (data.get("forms") or []) if isinstance(form, dict)]
+        data["details_available"] = True
+    return data
+
+
+async def _build_simple_get_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
+    ref = str(args.get("ref") or args.get("address") or args.get("data_ref") or "").strip()
+    if ref:
+        get_args = {**args, "ref": ref}
+        data = await _resolve_mailbox_public_ref(api_base, get_args)
+        if data is None:
+            data = await build_mailbox_get_response(
+                args=get_args,
+                session_id=session_id,
+                dependencies=MailboxReadDependencies(get_session_identity_defaults=_get_session_identity_defaults),
+            )
+        data["simple_interface"] = {"tool": "get", "mode": "ref"}
+        return _compact_simple_get_packet(data, args)
+
+    query = str(args.get("query") or args.get("question") or args.get("intent") or "").strip()
+    if query:
+        ask_args = {
+            "project": str(args.get("project") or "mnemoforge"),
+            "question": query,
+            "detail": str(args.get("detail") or "compact"),
+            "limit": int(args.get("limit") or 20),
+            "client_profile": str(args.get("client_profile") or "agent"),
+            "response_format": _simple_get_response_format(args),
+        }
+        data = await _build_ask_project_payload(api_base, ask_args, session_id=session_id)
+        return {
+            "state": str(args.get("state") or "planning"),
+            "project": ask_args["project"],
+            "receipt": {
+                "status": "accepted",
+                "message": "Natural read query resolved through the project expert.",
+                "resource_kind": "query",
+                "next_safe_action": "Use get with a returned ref for more detail, or put only after reviewing a public form.",
+            },
+            "result": _compact_ask_project_result(data, args),
+            "simple_interface": {"tool": "get", "mode": "query"},
+            "next_safe_action": "Use get with a returned ref for more detail, or put only after reviewing a public form.",
+            "details_available": True,
+        }
+
+    data = await _build_simple_state_payload(args, session_id=session_id)
+    data["receipt"] = {
+        "status": "needs_input",
+        "message": "get requires ref/address/data_ref or query/question.",
+        "next_safe_action": "Call get with a public ref or natural read-only query.",
+    }
+    return data
+
+
+async def _build_simple_submit_payload(
+    api_base: str,
+    args: dict[str, Any],
+    *,
+    session_id: str | None = None,
+    public_tool_name: str = "submit",
+) -> dict[str, Any]:
+    payload = dict(args.get("payload")) if isinstance(args.get("payload"), dict) else {}
+    form_id = str(args.get("form_id") or args.get("action") or payload.get("form_id") or "").strip()
+    if not form_id:
+        return {
+            "state": str(args.get("state") or "planning"),
+            "project": str(args.get("project") or payload.get("project") or "mnemoforge"),
+            "receipt": {
+                "status": "needs_input",
+                "message": f"{public_tool_name} requires form_id or action plus payload.",
+                "next_safe_action": "Call state for available forms, then submit with form_id and payload.",
+            },
+            "simple_interface": {"tool": public_tool_name},
+            "next_safe_action": "Call state for available forms, then submit with form_id and payload.",
+        }
+    if args.get("detail") and "detail" not in payload:
+        payload["detail"] = args.get("detail")
+    submit_args = {
+        "form_id": form_id,
+        "state": str(args.get("state") or "planning"),
+        "project": str(args.get("project") or payload.get("project") or "mnemoforge"),
+        "payload": payload,
+        "runtime_profile_id": str(args.get("runtime_profile_id") or "unknown_cli"),
+        "diagnostic": bool(args.get("diagnostic", False)),
+    }
+    data = await _build_mailbox_submit_packet(
+        args=submit_args,
+        payload=payload,
+        api_base=api_base,
+        session_id=session_id,
+    )
+    data["simple_interface"] = {"tool": public_tool_name, "form_id": form_id}
+    return _compact_simple_put_packet(data, args, form_id)
+
+
 
 
 _PROJECT_RULES_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
+    {
+        "intent_type": "propose_law",
+        "tool": "create_rule_candidate",
+        "mutating": True,
+        "examples": (
+            "propose new law",
+            "create proposed project law",
+            "this is a rule",
+            "save this as a project rule",
+            "add architecture rule",
+        ),
+        "arg_bonus": ("title", "statement"),
+        "reason": "New law proposal intent maps to creating a trial rule candidate through project_rules.",
+    },
     {
         "intent_type": "list_laws",
         "tool": "list_project_laws",
@@ -2834,6 +3451,8 @@ _PROJECT_RULES_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
         "mutating": False,
         "examples": (
             "review rule candidates",
+            "review trial rules",
+            "show due trial rules",
             "review packet",
             "why did you forget this rule",
             "why did the agent miss a rule",
@@ -2875,6 +3494,17 @@ _PROJECT_RULES_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
         "reason": "Candidate review changes candidate state and must be explicitly confirmed.",
     },
     {
+        "intent_type": "expire_trial_candidates",
+        "tool": "expire_trial_rule_candidates",
+        "mutating": True,
+        "examples": (
+            "expire stale trial rules",
+            "suppress expired trial rule candidates",
+            "clean up old trial candidates",
+        ),
+        "reason": "Expiring stale trial candidates suppresses candidates and must be explicitly confirmed.",
+    },
+    {
         "intent_type": "project_candidates_from_stenography",
         "tool": "project_rule_candidates_from_stenography",
         "mutating": True,
@@ -2891,6 +3521,7 @@ _PROJECT_RULES_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
 
 def _project_rules_payload_for_intent(args: dict[str, Any], intent_type: str) -> dict[str, Any]:
     intent = str(args.get("intent") or "").strip()
+    lowered_intent = intent.casefold()
     project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
     candidate_id = str(args.get("candidate_id") or "").strip()
     law_id = str(args.get("law_id") or "").strip()
@@ -2898,16 +3529,37 @@ def _project_rules_payload_for_intent(args: dict[str, Any], intent_type: str) ->
     max_matches = max(0, min(20, int(args.get("max_matches") or 5)))
     source_task_id = str(args.get("source_task_id") or "").strip()
     status = str(args.get("status") or "").strip()
+    review_due_requested = bool(args.get("review_due", False)) or (
+        "due" in lowered_intent and ("trial" in lowered_intent or "review" in lowered_intent)
+    )
 
     if intent_type == "inspect_law":
         return {"law_id": law_id}
     if intent_type == "list_laws":
+        valid_law_statuses = {"observed", "proposed", "reviewed", "user_confirmed", "active", "suppressed", "superseded", "archived", "all"}
+        selected_status = status if status in valid_law_statuses else ("active" if "active" in lowered_intent else "all")
         return {
             "project": project,
-            "status": status if status in {"observed", "proposed", "reviewed", "user_confirmed", "active", "suppressed", "superseded", "archived", "all"} else "active",
+            "status": selected_status,
             "include_promoted": True,
             "query": intent,
             "limit": min(limit, 200),
+        }
+    if intent_type == "propose_law":
+        return {
+            "project": project,
+            "title": args.get("title"),
+            "statement": args.get("statement") or intent,
+            "rationale": args.get("rationale") or "",
+            "evidence_refs": args.get("evidence_refs") or args.get("evidence") or [],
+            "target_scope": args.get("target_scope") or "project",
+            "target_status": args.get("target_status") or "trial",
+            "confirmed_by": args.get("confirmed_by"),
+            "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+            "topic_path": args.get("topic_path"),
+            "promotion_hint": args.get("promotion_hint") or "Review this trial rule after practical use.",
+            "review_after_days": args.get("review_after_days", 7),
+            "trial_days": args.get("trial_days", 30),
         }
     if intent_type == "promote_candidate":
         return {
@@ -2943,20 +3595,38 @@ def _project_rules_payload_for_intent(args: dict[str, Any], intent_type: str) ->
         }
     if intent_type == "project_candidates_from_stenography":
         return {"project": project, "limit": limit}
+    if intent_type == "expire_trial_candidates":
+        return {
+            "project": project,
+            "limit": limit,
+            "reason": str(args.get("reason") or "Trial rule candidate expired without enough evidence.").strip(),
+            "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
+        }
     if intent_type == "list_candidates":
         return {
             "project": project,
-            "status": status if status in {"candidate", "needs_clarification", "trial", "revision_pending", "rejected", "suppressed"} else "candidate",
+            "status": status if status in {"candidate", "needs_clarification", "trial", "revision_pending", "rejected", "suppressed"} else "trial" if review_due_requested else "candidate",
             "source_task_id": source_task_id,
+            "review_due": review_due_requested,
             "limit": limit,
         }
     return {
         "project": project,
-        "status": status if status in {"candidate", "needs_clarification", "trial", "revision_pending", "rejected", "suppressed"} else "candidate",
+        "status": status if status in {"candidate", "needs_clarification", "trial", "revision_pending", "rejected", "suppressed"} else "trial" if review_due_requested else "candidate",
         "source_task_id": source_task_id,
+        "review_due": review_due_requested,
         "limit": limit,
         "max_matches": max_matches,
     }
+
+
+def _project_rules_structural_route(args: dict[str, Any]) -> dict[str, Any] | None:
+    intent = str(args.get("intent") or "").casefold()
+    has_law_shape = bool(str(args.get("title") or "").strip() and str(args.get("statement") or "").strip())
+    proposal_terms = ("propose", "proposal", "new law", "create law", "create rule", "this is a rule", "save this as")
+    if has_law_shape and any(term in intent for term in proposal_terms):
+        return next(item for item in _PROJECT_RULES_ROUTE_CATALOG if item["intent_type"] == "propose_law")
+    return None
 
 
 def _project_rules_route(
@@ -2966,12 +3636,17 @@ def _project_rules_route(
     scorer_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     intent = str(args.get("intent") or "").strip()
+    structural_route = _project_rules_structural_route(args)
     selected_catalog_route, route_candidates = _selected_catalog_route(
         intent,
         _PROJECT_RULES_ROUTE_CATALOG,
         args,
         min_score=0.2,
     )
+    structural_match = False
+    if structural_route is not None:
+        selected_catalog_route = structural_route
+        structural_match = True
     if llm_decision:
         selected_catalog_route = _catalog_route_by_intent(
             _PROJECT_RULES_ROUTE_CATALOG,
@@ -2980,7 +3655,21 @@ def _project_rules_route(
     if selected_catalog_route is None:
         selected_catalog_route = next(item for item in _PROJECT_RULES_ROUTE_CATALOG if item["intent_type"] == "review_candidates")
     confidence = float((llm_decision or {}).get("confidence") or selected_catalog_route.get("confidence") or 0.65)
-    payload = _project_rules_payload_for_intent(args, str(selected_catalog_route["intent_type"]))
+    payload_args = args
+    if (
+        selected_catalog_route["intent_type"] == "list_laws"
+        and llm_decision
+        and not str(args.get("status") or "").strip()
+    ):
+        llm_text = " ".join(
+            [
+                str(llm_decision.get("reason") or ""),
+                str(llm_decision.get("matched_example") or ""),
+            ]
+        ).casefold()
+        if "active" in llm_text:
+            payload_args = {**args, "status": "active"}
+    payload = _project_rules_payload_for_intent(payload_args, str(selected_catalog_route["intent_type"]))
     return {
         "tool": selected_catalog_route["tool"],
         "intent_type": selected_catalog_route["intent_type"],
@@ -2989,6 +3678,7 @@ def _project_rules_route(
         "reason": str((llm_decision or {}).get("reason") or selected_catalog_route.get("reason") or "").strip(),
         "matched_example": str((llm_decision or {}).get("matched_example") or selected_catalog_route.get("matched_example") or "").strip(),
         "route_candidates": route_candidates,
+        "structural_match": structural_match,
         "scorer": scorer_meta or {
             "backend_requested": _facade_backend_requested(args),
             "backend_used": "lexical",
@@ -3025,6 +3715,11 @@ async def _build_project_rules_payload(api_base: str, args: dict[str, Any], *, s
         executed = True
     action_status = "executed" if executed else "needs_confirmation" if route["mutating"] else "ready"
     recommended_next_call = None
+    do_not_call = []
+    if action_status == "needs_confirmation":
+        do_not_call = ["promote_rule_candidate", "revise_law_from_rule_candidate", "review_rule_candidate"]
+        if route["tool"] in {"create_project_law", "create_rule_candidate"}:
+            do_not_call = ["memory_store", *do_not_call]
     if not executed:
         recommended_next_call = {
             "tool": "project_rules" if route["mutating"] else route["tool"],
@@ -3050,7 +3745,7 @@ async def _build_project_rules_payload(api_base: str, args: dict[str, Any], *, s
             "recommended_next_call": recommended_next_call,
             "confirmation_required": action_status == "needs_confirmation",
             "confirmation_phrase": "set allow_mutation=true after reviewing submit_payload" if action_status == "needs_confirmation" else "",
-            "do_not_call": ["promote_rule_candidate", "revise_law_from_rule_candidate", "review_rule_candidate"] if action_status == "needs_confirmation" else [],
+            "do_not_call": do_not_call,
             "warnings": warnings,
         },
         "executed": executed,
@@ -3058,7 +3753,7 @@ async def _build_project_rules_payload(api_base: str, args: dict[str, Any], *, s
         "result": result,
         "route_telemetry": route_telemetry,
         "warnings": warnings,
-        "next_safe_action": "Continue from the executed rule route result." if executed else "Review submit_payload before confirming governance mutation.",
+        "next_safe_action": "Continue from the executed rule route result." if executed else "Review submit_payload, then call agent_action.recommended_next_call exactly; do not call memory_store.",
     }
 
 
@@ -3322,6 +4017,25 @@ def _ask_project_select_route_lexical(args: dict[str, Any]) -> dict[str, Any]:
     if detail not in {"compact", "full"}:
         detail = "compact"
     response_format = _ask_project_response_format(args)
+    read_lookup_terms = (
+        "find",
+        "search",
+        "show",
+        "list",
+        "lookup",
+        "look up",
+        "read",
+        "get",
+        "details",
+        "detail",
+        "выведи",
+        "покажи",
+        "найди",
+        "прочитай",
+        "детали",
+    )
+    mutation_terms = ("save", "record", "close", "resolve", "delete", "promote", "approve", "create task", "write")
+    read_lookup = any(term in text for term in read_lookup_terms)
 
     route = {
         "facade": "project_context",
@@ -3375,7 +4089,7 @@ def _ask_project_select_route_lexical(args: dict[str, Any]) -> dict[str, Any]:
             confidence=0.82,
         )
 
-    if any(term in text for term in ("save", "record", "close", "resolve", "delete", "promote", "approve", "create task", "write")):
+    if any(term in text for term in mutation_terms) and not read_lookup:
         route["guardrail"] = "Mutation-like question detected; ask_project will not set allow_mutation=true."
         if any(term in text for term in ("save", "record", "checkpoint", "close")):
             route.update(
@@ -3466,6 +4180,28 @@ async def _ask_project_select_route(args: dict[str, Any]) -> dict[str, Any]:
     lexical_route = _ask_project_select_route_lexical(args)
     question = _ask_project_query_text(args)
     if not question:
+        return lexical_route
+    task_id_like = _extract_task_id_like_from_text(question)
+    if task_id_like:
+        lexical_route["scorer"] = {
+            "backend_requested": "auto",
+            "backend_used": "lexical",
+            "llm_attempted": False,
+            "fallback_reason": "",
+        }
+        lexical_route["structural_match"] = True
+        invalidated = _invalidate_conflicting_learned_route(
+            facade="ask_project",
+            args={"question": question},
+            structural_route={
+                "tool": "project_context",
+                "intent_type": "project_context",
+            },
+            allowed_intent_types={"project_context", "project_work", "project_verify", "project_capture"},
+        )
+        if invalidated:
+            lexical_route["scorer"]["invalidated_learned_pattern_id"] = invalidated.get("pattern_id", "")
+            lexical_route["scorer"]["invalidated_learned_pattern"] = invalidated
         return lexical_route
     learned = _learned_route_match(
         facade="ask_project",
@@ -3837,6 +4573,8 @@ def _facade_text(args: dict[str, Any]) -> str:
         part
         for part in (
             str(args.get("intent") or "").strip(),
+            str(args.get("question") or "").strip(),
+            str(args.get("query") or "").strip(),
             str(args.get("task") or "").strip(),
             str(args.get("summary") or "").strip(),
             str(args.get("raw_notes") or "").strip(),
@@ -3914,6 +4652,59 @@ def _record_learned_route_pattern(
         return ""
 
 
+def _invalidate_conflicting_learned_route(
+    *,
+    facade: str,
+    args: dict[str, Any],
+    structural_route: dict[str, Any],
+    allowed_intent_types: set[str],
+) -> dict[str, Any] | None:
+    text = _facade_text(args)
+    if not text.strip():
+        return None
+    try:
+        store = get_route_pattern_store()
+        learned = store.match(facade=facade, pattern=text, allowed_intent_types=allowed_intent_types)
+    except Exception:
+        return None
+    if not learned:
+        return None
+    learned_tool = str(learned.get("tool") or "").strip()
+    learned_intent = str(learned.get("intent_type") or "").strip()
+    expected_tool = str(structural_route.get("tool") or "").strip()
+    expected_intent = str(structural_route.get("intent_type") or "").strip()
+    if learned_tool == expected_tool and learned_intent == expected_intent:
+        return None
+    pattern_id = str(learned.get("pattern_id") or "").strip()
+    disabled = False
+    disable_pattern = getattr(store, "disable_pattern", None)
+    if callable(disable_pattern):
+        try:
+            disabled = bool(
+                disable_pattern(
+                    pattern_id,
+                    reason="conflicts_with_structural_route",
+                    metadata={
+                        "facade": facade,
+                        "expected_tool": expected_tool,
+                        "expected_intent_type": expected_intent,
+                        "learned_tool": learned_tool,
+                        "learned_intent_type": learned_intent,
+                    },
+                )
+            )
+        except Exception:
+            disabled = False
+    return {
+        "pattern_id": pattern_id,
+        "disabled": disabled,
+        "learned_tool": learned_tool,
+        "learned_intent_type": learned_intent,
+        "expected_tool": expected_tool,
+        "expected_intent_type": expected_intent,
+    }
+
+
 async def _facade_route_with_backend(
     *,
     facade: str,
@@ -3933,6 +4724,19 @@ async def _facade_route_with_backend(
     )
     candidates = lexical_route.get("route_candidates") or []
     if lexical_route.get("structural_match"):
+        invalidated = _invalidate_conflicting_learned_route(
+            facade=facade,
+            args=args,
+            structural_route=lexical_route,
+            allowed_intent_types={str(route["intent_type"]) for route in catalog},
+        )
+        if invalidated:
+            scorer = lexical_route.get("scorer") if isinstance(lexical_route.get("scorer"), dict) else {}
+            lexical_route["scorer"] = {
+                **scorer,
+                "invalidated_learned_pattern_id": invalidated.get("pattern_id", ""),
+                "invalidated_learned_pattern": invalidated,
+            }
         return lexical_route
     should_try_llm = backend_requested == "llm" or (
         backend_requested == "auto" and _route_needs_llm_disambiguation(candidates)
@@ -5775,6 +6579,11 @@ async def oauth_authorization_server(request: Request) -> JSONResponse:
 # ── Tool definitions (mirrors mcp/server.py TOOLS) ────────────────────────────
 
 TOOLS = [
+    tool_definition("help"),
+    tool_definition("state"),
+    tool_definition("get"),
+    tool_definition("submit"),
+    tool_definition("put"),
     {
         "name": "ask_project",
         "description": (
@@ -6197,7 +7006,7 @@ TOOLS = [
         "description": (
             "Thematic rule-governance facade. Use for intents such as 'this is a rule', "
             "'why did you forget the rule?', 'check project laws', 'review rule candidates', "
-            "or 'promote/revise a law'. It routes to laws, candidates, review packets, promotion, "
+            "'propose new law', or 'promote/revise a law'. It routes to laws, candidates, review packets, promotion, "
             "and revision tools while guarding all mutating governance actions unless allow_mutation=true."
         ),
         "inputSchema": {
@@ -6221,7 +7030,10 @@ TOOLS = [
                 "rationale": {"type": "string"},
                 "evidence": {"type": "array", "items": {"type": "string"}, "default": []},
                 "target_scope": {"type": "string", "enum": ["project", "family", "domain", "principle", "meta"]},
-                "target_status": {"type": "string", "enum": ["proposed", "user_confirmed", "active"], "default": "proposed"},
+                "target_status": {"type": "string", "enum": ["trial", "candidate", "proposed", "user_confirmed", "active"], "default": "trial"},
+                "review_due": {"type": "boolean", "default": False},
+                "review_after_days": {"type": "integer", "minimum": 0, "maximum": 365, "default": 7},
+                "trial_days": {"type": "integer", "minimum": 1, "maximum": 3650, "default": 30},
                 "confirmed_by": {"type": "string"},
                 "allow_mutation": {"type": "boolean", "default": False},
                 "diagnostic": {"type": "boolean", "default": False, "description": "Return a compact plain-text route diagnostic block."},
@@ -7231,239 +8043,16 @@ async def _get(api_base: str, path: str) -> dict:
         return r.json()
 
 
-_CHECKPOINT_HANDOFF_STAGES = {"blocked", "interrupted", "handoff", "completed"}
-_CHECKPOINT_SCOPE_CONFIRMATION = "current checkpoint belongs to this task"
-_CHECKPOINT_SCOPE_STOPWORDS = {
-    "a",
-    "about",
-    "across",
-    "add",
-    "added",
-    "agent",
-    "agents",
-    "all",
-    "also",
-    "an",
-    "and",
-    "any",
-    "api",
-    "are",
-    "artifact",
-    "artifacts",
-    "as",
-    "at",
-    "backed",
-    "be",
-    "because",
-    "by",
-    "can",
-    "checkpoint",
-    "checkpoints",
-    "code",
-    "condition",
-    "conditions",
-    "context",
-    "current",
-    "data",
-    "db",
-    "decision",
-    "decisions",
-    "doc",
-    "docs",
-    "documentation",
-    "done",
-    "for",
-    "from",
-    "generated",
-    "has",
-    "have",
-    "if",
-    "in",
-    "into",
-    "is",
-    "it",
-    "its",
-    "memory",
-    "mcp",
-    "must",
-    "new",
-    "not",
-    "of",
-    "on",
-    "or",
-    "path",
-    "project",
-    "projects",
-    "record",
-    "release",
-    "safe",
-    "server",
-    "should",
-    "source",
-    "state",
-    "status",
-    "step",
-    "mnemoforge",
-    "task",
-    "tasks",
-    "test",
-    "tests",
-    "that",
-    "the",
-    "this",
-    "to",
-    "tool",
-    "use",
-    "user",
-    "using",
-    "with",
-    "work",
-}
-
-
-def _checkpoint_handoff_label(args: dict[str, Any], stage: str) -> str:
-    label = str(args.get("handoff_label") or "").strip().lower()
-    if not label:
-        task_id = re.sub(r"[^a-z0-9_-]+", "-", str(args.get("task_id") or "").strip().lower()).strip("-_")
-        label = f"checkpoint-{(task_id or 'task')[:24]}-{stage}"
-    label = re.sub(r"[^a-z0-9_-]+", "-", label).strip("-_")
-    if not label or not re.match(r"^[a-z0-9]", label):
-        label = f"checkpoint-{label or stage}"
-    return label[:64]
-
-
 def _checkpoint_handoff_payload(args: dict[str, Any], *, stage: str, status: str) -> dict[str, Any]:
-    def _string_list(name: str) -> list[str]:
-        value = args.get(name) or []
-        if isinstance(value, str):
-            value = [value]
-        return [str(item).strip() for item in value if str(item).strip()]
-
-    project = str(args["project"]).strip()
-    task_id = str(args["task_id"]).strip()
-    summary = str(args["summary"]).strip()
-    next_step = str(args.get("next_step") or "").strip()
-    blockers = _string_list("blockers")
-    decisions = _string_list("decisions")
-    verification = _string_list("verification")
-    remaining_risk = _string_list("remaining_risk")
-    changed_files = _string_list("changed_files")
-    acted_by = str(args.get("acted_by") or "mcp-agent").strip() or "mcp-agent"
-    to_agent = str(args.get("to_agent") or acted_by).strip() or acted_by
-    key_facts = [*decisions, *verification, *remaining_risk][:10]
-    partial_parts = []
-    if blockers:
-        partial_parts.append("Blockers: " + "; ".join(blockers))
-    if next_step:
-        partial_parts.append("Next step: " + next_step)
-    if remaining_risk:
-        partial_parts.append("Remaining risk: " + "; ".join(remaining_risk))
-    return {
-        "from_agent": acted_by,
-        "to_agent": to_agent,
-        "project_id": project,
-        "phase": stage,
-        "priority": "high" if blockers or stage in {"blocked", "interrupted"} else "medium",
-        "owner_agent": to_agent,
-        "write_scope": changed_files or args.get("write_scope", []),
-        "why_now": str(args.get("reason") or f"Resume-relevant checkpoint at stage={stage}.").strip(),
-        "definition_of_done": "Resume from this checkpoint, preserve recorded task state, and update task progress before stopping.",
-        "expected_output_shape": "Short result summary, verification summary, remaining risks, and next checkpoint.",
-        "phase_objective": next_step or summary,
-        "execution_mode": "balanced",
-        "task_description": f"Checkpoint for task {task_id}: {summary}",
-        "partial_result": "\n".join(partial_parts) or None,
-        "key_facts": key_facts,
-        "task_id": task_id,
-        "handoff_label": _checkpoint_handoff_label(args, stage),
-        "reason": "checkpoint",
-        "agent_id": "handoff",
-    }
-
-
-def _checkpoint_scope_tokens(text: str) -> set[str]:
-    tokens = {
-        token
-        for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", str(text or "").lower())
-        if token not in _CHECKPOINT_SCOPE_STOPWORDS
-    }
-    expanded: set[str] = set(tokens)
-    for token in tokens:
-        expanded.update(part for part in re.split(r"[-_]+", token) if len(part) > 2 and part not in _CHECKPOINT_SCOPE_STOPWORDS)
-    return expanded
-
-
-def _checkpoint_scope_text(args: dict[str, Any]) -> str:
-    parts = [
-        args.get("summary"),
-        args.get("next_step"),
-        args.get("reason"),
-    ]
-    for key in ("blockers", "decisions", "changed_files", "verification", "remaining_risk", "stage_evidence_refs", "write_scope"):
-        value = args.get(key) or []
-        if isinstance(value, str):
-            parts.append(value)
-        else:
-            parts.extend(str(item) for item in value if str(item).strip())
-    return "\n".join(str(part) for part in parts if str(part or "").strip())
+    return checkpoint_handoff_payload(args, stage=stage, status=status)
 
 
 def _checkpoint_scope_guard_decision(args: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
-    task_text = "\n".join(
-        str(part)
-        for part in (
-            task.get("title"),
-            task.get("description"),
-            " ".join(str(tag) for tag in (task.get("tags") or [])),
-        )
-        if str(part or "").strip()
-    )
-    checkpoint_text = _checkpoint_scope_text(args)
-    task_tokens = _checkpoint_scope_tokens(task_text)
-    title_tokens = _checkpoint_scope_tokens(str(task.get("title") or ""))
-    checkpoint_tokens = _checkpoint_scope_tokens(checkpoint_text)
-    overlap = sorted(task_tokens & checkpoint_tokens)
-    title_overlap = sorted(title_tokens & checkpoint_tokens)
-    blocked = bool(task_tokens and checkpoint_tokens and len(overlap) < 2 and not title_overlap)
-    return {
-        "blocked": blocked,
-        "overlap": overlap[:12],
-        "title_overlap": title_overlap[:8],
-        "task_token_count": len(task_tokens),
-        "checkpoint_token_count": len(checkpoint_tokens),
-    }
+    return checkpoint_scope_guard_decision(args, task)
 
 
 async def _checkpoint_scope_guard(api_base: str, args: dict[str, Any]) -> dict[str, Any] | None:
-    confirmation = str(args.get("scope_confirmation") or "").strip().lower()
-    if confirmation == _CHECKPOINT_SCOPE_CONFIRMATION:
-        return None
-    project = str(args.get("project") or "").strip()
-    task_id = str(args.get("task_id") or "").strip()
-    if not project or not task_id:
-        return None
-    try:
-        task = await _get(api_base, f"/project/tasks/{quote(task_id, safe='')}?project={quote(project, safe='')}")
-    except Exception:
-        return None
-    decision = _checkpoint_scope_guard_decision(args, task)
-    if not decision["blocked"]:
-        return None
-    return {
-        "error": "checkpoint_scope_mismatch",
-        "task_checkpoint_recorded": False,
-        "project": project,
-        "task_id": task_id,
-        "task_title": task.get("title") or "",
-        "summary": str(args.get("summary") or "").strip(),
-        "scope_guard": decision,
-        "message": (
-            "Checkpoint text does not appear to belong to the selected task. "
-            "Use list_open_tasks/list_artifacts to choose the right task, create a new task for the shifted topic, "
-            f"or pass scope_confirmation='{_CHECKPOINT_SCOPE_CONFIRMATION}' only after human review."
-        ),
-        "recommended_next_tools": ["list_open_tasks", "list_artifacts", "reopen_task"],
-    }
+    return await checkpoint_scope_guard(api_base, args, get=_get)
 
 
 def _parse_task_checkpoint_change(change: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -7815,102 +8404,16 @@ def _task_mutation_requires_owned_claim(
     danger_mode: bool = False,
     danger_confirmation: str = "",
 ) -> dict[str, Any] | None:
-    from app.services.task_lease_service import get_task_lease_store, verify_work_token_for_mutation
-
-    project_clean = str(project or "mnemoforge").strip() or "mnemoforge"
-    task_clean = str(task_id or "").strip()
-    owner_clean = str(owner_agent or "codex").strip() or "codex"
-    session_clean = str(owner_session_id or "").strip()
-    work_token_clean = str(work_token or "").strip()
-
-    if not task_clean:
-        return {
-            "status": "conflict",
-            "error": "task_id_required",
-            "tool": tool_name,
-            "claim_allowed": False,
-            "next_safe_action": "Provide task_id for mutating task operations.",
-        }
-
-    active = get_task_lease_store().get_active_claim(project=project_clean, task_id=task_clean)
-    if active is None:
-        if not (danger_mode and str(danger_confirmation).strip().lower() == "authorize_session_bypass"):
-            return {
-                "status": "conflict",
-                "error": "active_claim_required",
-                "tool": tool_name,
-                "project": project_clean,
-                "task_id": task_clean,
-                "claim_allowed": False,
-                "next_safe_action": "Call claim_task or start_task_session before mutating task state.",
-            }
-        return None
-
-    # ── work_token as primary proof of ownership ──────────────────────────
-    # If a valid work_token is provided, it proves ownership regardless of
-    # session_id or owner_agent. This allows CLI tools that cannot keep an
-    # SSE session open to continue working with a claimed task.
-    if work_token_clean and verify_work_token_for_mutation(
-        store=get_task_lease_store(),
-        lease_id=active.lease_id,
-        work_token=work_token_clean,
-        task_id=task_clean,
-        project=project_clean,
-    ):
-        return None
-
-    # ── session_id + owner_agent as fallback proof of ownership ───────────
-    # Only when work_token is missing or invalid do we fall back to checking
-    # the SSE session identity.
-    if not session_clean:
-        if danger_mode and str(danger_confirmation).strip().lower() == "authorize_session_bypass":
-            import uuid
-            session_clean = f"danger-mode-{uuid.uuid4().hex[:8]}"
-        else:
-            return {
-                "status": "conflict",
-                "error": "session_id_required_for_mutation",
-                "tool": tool_name,
-                "claim_allowed": False,
-                "next_safe_action": "Claim task first and pass session_id for mutating operations.",
-            }
-
-    if active.owner_agent != owner_clean or active.session_id != session_clean:
-        if not (danger_mode and str(danger_confirmation).strip().lower() == "authorize_session_bypass"):
-            return {
-                "status": "conflict",
-                "error": "lease_owner_mismatch",
-                "tool": tool_name,
-                "project": project_clean,
-                "task_id": task_clean,
-                "owner_agent": active.owner_agent,
-                "owner_session_id": active.session_id,
-                "lease_id": active.lease_id,
-                "expires_at": active.expires_at.isoformat(),
-                "claim_allowed": False,
-                "next_safe_action": "Do not mutate this task; coordinate handoff or wait for lease release/expiry.",
-            }
-
-    if not work_token_clean:
-        if not (danger_mode and str(danger_confirmation).strip().lower() == "authorize_session_bypass"):
-            return {
-                "status": "conflict",
-                "error": "work_token_required",
-                "tool": tool_name,
-                "lease_id": active.lease_id,
-                "claim_allowed": False,
-                "next_safe_action": "Pass work_token from start_task_session for mutating operations.",
-            }
-    elif not verify_work_token_for_mutation(store=get_task_lease_store(), lease_id=active.lease_id, work_token=work_token_clean, task_id=task_clean, project=project_clean):
-        return {
-            "status": "conflict",
-            "error": "work_token_invalid",
-            "tool": tool_name,
-            "lease_id": active.lease_id,
-            "claim_allowed": False,
-            "next_safe_action": "Do not mutate this task; work_token verification failed.",
-        }
-    return None
+    return task_mutation_requires_owned_claim(
+        project=project,
+        task_id=task_id,
+        owner_agent=owner_agent,
+        owner_session_id=owner_session_id,
+        tool_name=tool_name,
+        work_token=work_token,
+        danger_mode=danger_mode,
+        danger_confirmation=danger_confirmation,
+    )
 
 
 def _semantic_tokens(text: str) -> set[str]:
@@ -8221,295 +8724,18 @@ async def _build_mailbox_submit_packet(
     api_base: str,
     session_id: str | None = None,
 ) -> dict[str, Any]:
-    form_id = str(args.get("form_id") or "").strip()
-    state = str(args.get("state") or "planning").strip() or "planning"
-    project = str(args.get("project") or payload.get("project") or "mnemoforge").strip() or "mnemoforge"
-    runtime_profile_id = str(args.get("runtime_profile_id") or "unknown_cli")
-    diagnostic = bool(args.get("diagnostic", False))
-
-    preflight = build_mailbox_submit_receipt(
-        form_id=form_id,
+    return await build_mailbox_action_submit_packet(
+        args=args,
         payload=payload,
-        state=state,
-        project=project,
-        runtime_profile_id=runtime_profile_id,
-        diagnostic=diagnostic,
+        api_base=api_base,
+        session_id=session_id,
+        dependencies=MailboxActionDependencies(
+            post=_post,
+            execute_tool=_execute_tool,
+            get_session_identity_defaults=_get_session_identity_defaults,
+            task_mutation_guard=_task_mutation_requires_owned_claim,
+        ),
     )
-    if preflight.get("receipt", {}).get("status") in {"rejected", "needs_input"}:
-        return preflight
-
-    form = mailbox_form_by_id(form_id)
-    if form is None or state not in mailbox_form_state_names(form):
-        return preflight
-    disabled_features = mailbox_form_disabled_features(
-        form,
-        project=project,
-        runtime_profile_id=runtime_profile_id,
-    )
-    if disabled_features:
-        return {
-            "state": state,
-            "project": project,
-            "receipt": {
-                "status": "feature_disabled",
-                "form_id": form.id,
-                "message": "This mailbox form depends on disabled functionality.",
-                "disabled_features": sorted(disabled_features),
-                "replacement_form_ids": form.replacement_form_ids,
-                "next_safe_action": "Request mailbox_state and choose an available replacement form.",
-            },
-        }
-
-    if form_id == "create_improvement":
-        return await _mailbox_create_improvement(
-            form=form,
-            payload=payload,
-            state=state,
-            project=project,
-            runtime_profile_id=runtime_profile_id,
-            diagnostic=diagnostic,
-        )
-    if form_id == "record_progress":
-        return await _mailbox_record_progress(
-            form=form,
-            payload=payload,
-            state=state,
-            project=project,
-            runtime_profile_id=runtime_profile_id,
-            diagnostic=diagnostic,
-            api_base=api_base,
-            session_id=session_id,
-        )
-    if form_id == "set_feature_gate":
-        return _mailbox_set_feature_gate(
-            form=form,
-            payload=payload,
-            state=state,
-            project=project,
-            runtime_profile_id=runtime_profile_id,
-            diagnostic=diagnostic,
-        )
-
-    return preflight
-
-
-async def _mailbox_create_improvement(
-    *,
-    form,
-    payload: dict[str, Any],
-    state: str,
-    project: str,
-    runtime_profile_id: str,
-    diagnostic: bool,
-) -> dict[str, Any]:
-    from app.services.improvements_store import get_improvements_store
-
-    title = str(payload["title"]).strip()
-    summary = str(payload["summary"]).strip()
-    next_step = str(payload["next_step"]).strip()
-    risk = str(payload.get("risk") or "").strip()
-    description_parts = [summary, f"Next step: {next_step}"]
-    if risk:
-        description_parts.append(f"Risk: {risk}")
-    evidence_refs = _string_list_arg(payload.get("evidence_refs"))
-    if evidence_refs:
-        description_parts.append("Evidence refs: " + ", ".join(evidence_refs))
-    uid, created = await get_improvements_store().upsert_by_title(
-        title=title,
-        description="\n".join(description_parts),
-        project=project,
-        agent_id=_mailbox_actor(payload),
-        importance_score=float(payload.get("importance_score") or 0.7),
-        tags=["mailbox", "mcp-fsm", "mcp-improvement"],
-    )
-    row = await get_improvements_store().get(uid)
-    result = {
-        "id": str(uid),
-        "artifact_key": f"improvement:{project}:{uid}",
-        "created": bool(created),
-        "title": row.get("title") if row else title,
-    }
-    actual_metadata = {
-        "result_kind": "artifact_created",
-        "artifact_type": "improvement",
-        "mutation": True,
-        "review_mode": False,
-        "internal_tool": "improvements_store.upsert_by_title",
-        "route_id": "mailbox.create_improvement.v1",
-    }
-    return build_mailbox_mutation_packet(
-        form=form,
-        payload=payload,
-        state=state,
-        project=project,
-        actual_metadata=actual_metadata,
-        result=result,
-        runtime_profile_id=runtime_profile_id,
-        diagnostic=diagnostic,
-    )
-
-
-def _mailbox_set_feature_gate(
-    *,
-    form,
-    payload: dict[str, Any],
-    state: str,
-    project: str,
-    runtime_profile_id: str,
-    diagnostic: bool,
-) -> dict[str, Any]:
-    from app.services.mcp_feature_gates import get_mcp_feature_gate_store
-
-    scope = str(payload.get("scope") or "session").strip().lower()
-    scope_id = str(payload.get("scope_id") or "").strip()
-    if not scope_id:
-        scope_id = {
-            "project": project,
-            "runtime_profile": runtime_profile_id,
-            "global": "global",
-        }.get(scope, str(payload.get("agent_fingerprint") or payload.get("agent_id") or "default").strip() or "default")
-    gate = get_mcp_feature_gate_store().set_gate(
-        feature_id=str(payload["feature_id"]).strip(),
-        scope=scope,
-        scope_id=scope_id,
-        enabled=bool(payload["enabled"]),
-        reason=str(payload.get("reason") or "mailbox_submit"),
-        updated_by=_mailbox_actor(payload),
-    )
-    packet = build_mailbox_mutation_packet(
-        form=form,
-        payload=payload,
-        state=state,
-        project=project,
-        actual_metadata={
-            "result_kind": "feature_gate_updated",
-            "mutation": True,
-            "internal_tool": "mcp_feature_gate_store.set_gate",
-            "route_id": "mailbox.set_feature_gate.v1",
-        },
-        result={
-            "id": f"{gate['feature_id']}:{gate['scope']}:{gate['scope_id']}",
-            "artifact_key": f"feature_gate:{gate['scope']}:{gate['scope_id']}:{gate['feature_id']}",
-        },
-        runtime_profile_id=runtime_profile_id,
-        diagnostic=diagnostic,
-    )
-    packet["receipt"].update(
-        {
-            "feature_id": gate["feature_id"],
-            "scope": gate["scope"],
-            "scope_id": gate["scope_id"],
-            "enabled": gate["enabled"],
-        }
-    )
-    return packet
-
-
-async def _mailbox_record_progress(
-    *,
-    form,
-    payload: dict[str, Any],
-    state: str,
-    project: str,
-    runtime_profile_id: str,
-    diagnostic: bool,
-    api_base: str,
-    session_id: str | None,
-) -> dict[str, Any]:
-    task_id = str(payload.get("task_id") or "").strip()
-    stage = str(payload.get("stage") or "in_progress").strip().lower() or "in_progress"
-    if task_id:
-        lease_guard = _task_mutation_requires_owned_claim(
-            project=project,
-            task_id=task_id,
-            owner_agent=_mailbox_actor(payload),
-            owner_session_id=str(payload.get("session_id") or session_id or ""),
-            tool_name="mailbox_submit.record_progress",
-            work_token=str(payload.get("work_token") or ""),
-            danger_mode=bool(payload.get("danger_mode", False)),
-            danger_confirmation=str(payload.get("danger_confirmation") or ""),
-        )
-        if lease_guard:
-            return {
-                "state": state,
-                "project": project,
-                "receipt": {
-                    "status": "conflict",
-                    "form_id": form.id,
-                    "message": "Task progress requires an active owned claim when task_id is provided.",
-                    "next_safe_action": lease_guard.get("next_safe_action", "Claim the task before recording task progress."),
-                },
-            }
-        checkpoint_args = {
-            "project": project,
-            "task_id": task_id,
-            "stage": stage,
-            "summary": str(payload["summary"]).strip(),
-            "changed_files": _string_list_arg(payload.get("changed_files")),
-            "verification": _string_list_arg(payload.get("verification")),
-            "next_step": str(payload.get("next_step") or "").strip(),
-            "status": str(payload.get("status") or "active").strip() or "active",
-            "reason": str(payload.get("reason") or "mailbox_record_progress").strip(),
-            "acted_by": _mailbox_actor(payload),
-            "source": "mailbox_submit.record_progress",
-            "checkpoint_mode": "lightweight",
-        }
-        checkpoint_payload = build_report_task_checkpoint_payload(checkpoint_args)
-        result = await _post(api_base, f"/project/tasks/{quote(task_id, safe='')}/changes", checkpoint_payload)
-        if result.get("id"):
-            result["artifact_key"] = f"task:{project}:{task_id}"
-            result["stage"] = stage
-        actual_metadata = {
-            "result_kind": "progress_recorded",
-            "mutation": True,
-            "artifact_type": "task_checkpoint",
-            "internal_tool": "project_task_change",
-            "route_id": "mailbox.record_progress.task_checkpoint.v1",
-        }
-        return build_mailbox_mutation_packet(
-            form=form,
-            payload=payload,
-            state=state,
-            project=project,
-            actual_metadata=actual_metadata,
-            result=result,
-            runtime_profile_id=runtime_profile_id,
-            diagnostic=diagnostic,
-        )
-
-    memory_payload = {
-        "content": str(payload["summary"]).strip(),
-        "memory_type": "context",
-        "category": "mnemoforge:progress",
-        "project": project,
-        "agent_id": _mailbox_actor(payload),
-        "importance_score": 0.5,
-        "tags": ["mailbox", "progress", f"stage:{stage}"],
-        "source": "mailbox_submit.record_progress",
-    }
-    result = await _post(api_base, "/memories", memory_payload)
-    result["stage"] = stage
-    actual_metadata = {
-        "result_kind": "progress_recorded",
-        "mutation": True,
-        "artifact_type": "memory",
-        "internal_tool": "memory_store",
-        "route_id": "mailbox.record_progress.memory.v1",
-    }
-    return build_mailbox_mutation_packet(
-        form=form,
-        payload=payload,
-        state=state,
-        project=project,
-        actual_metadata=actual_metadata,
-        result=result,
-        runtime_profile_id=runtime_profile_id,
-        diagnostic=diagnostic,
-    )
-
-
-def _mailbox_actor(payload: dict[str, Any]) -> str:
-    return str(payload.get("updated_by") or payload.get("agent_id") or "codex").strip() or "codex"
 
 
 async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None) -> str:
@@ -8523,6 +8749,26 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
     # Runs asynchronously and never blocks tool execution.
     asyncio.create_task(_mcp_live_observe(name, args, api_base))
 
+    if name == "help":
+        data = await _build_simple_help_payload(args, session_id=session_id)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    if name == "state":
+        data = await _build_simple_state_payload(args, session_id=session_id)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    if name == "get":
+        data = await _build_simple_get_payload(api_base, args, session_id=session_id)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    if name in {"put", "submit"}:
+        data = await _build_simple_submit_payload(api_base, args, session_id=session_id, public_tool_name=name)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
     if name == "ask_project":
         data = await _build_ask_project_payload(api_base, args, session_id=session_id)
         if str(args.get("response_format") or "").strip().lower() == "diagnostic":
@@ -8531,235 +8777,84 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             return json.dumps(data, indent=2, ensure_ascii=False)
         return str(data.get("result_text") or "")
 
-    if name == "memory_store":
-        data = await _post(api_base, "/memories", args)
-        return f"Stored memory {data['id']}\n{json.dumps(data, indent=2, ensure_ascii=False)}"
-
-    elif name == "memory_search":
-        results = await _post(api_base, "/memories/search", args)
-        if not results:
-            return "No memories found."
-        lines = []
-        for r in results:
-            m = r["memory"]
-            lines.append(f"[{r['score']:.3f}] ({m['memory_type']}) {m['content'][:200]}\n  id={m['id']}")
-        return "\n\n".join(lines)
-
-    elif name == "memory_tree_slice":
-        data = await _post(api_base, "/knowledge-tree/slice", args)
-        res = [f"Target Category: {data.get('target_category', 'general')}\n"]
-        for r in data.get("results", []):
-            m = r.get("memory", {})
-            res.append(
-                f"[{r.get('score', 0):.3f} | boost:+{r.get('tree_boost', 0):.3f}] ({m.get('category', 'general')}) {m.get('content', '')[:200]}\n  id={m.get('id')} path={m.get('topic_path')}"
-            )
-        return "\n\n".join(res)
-
-    elif name == "memory_context":
-        data = await _post(api_base, "/memories/context", args)
-        sid = data.get("session_id") or "—"
-        ctx = (data.get("context") or "")
-        snippet = ctx[:800]
-        more = "…" if len(ctx) > len(snippet) else ""
-        return (
-            f"session_id={sid} used={data.get('used_count',0)} sources={data.get('source_count',0)} "
-            f"scope_expanded={bool(data.get('scope_expanded'))}\n\n"
-            f"{snippet}{more}"
+    if name in {
+        "memory_store",
+        "memory_search",
+        "memory_tree_slice",
+        "memory_context",
+        "record_memory_outcome",
+        "memory_recent",
+        "memory_get",
+        "memory_delete",
+        "memory_batch_store",
+        "memory_cleanup",
+    }:
+        return await execute_memory_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=MemoryActionDependencies(get=_get, post=_post, delete=_delete),
         )
-
-    elif name == "record_memory_outcome":
-        data = await _post(api_base, "/outcomes", args)
-        return (
-            f"Recorded outcome: success={data.get('success')} session_id={data.get('session_id') or args.get('session_id')}\n"
-            f"updated={data.get('updated',0)} skipped={data.get('skipped',0)}"
-        )
-
-    elif name == "memory_recent":
-        params = f"?minutes={args.get('minutes', 10)}&limit={args.get('limit', 20)}"
-        if args.get("agent_id"):
-            params += f"&agent_id={args['agent_id']}"
-        results = await _get(api_base, f"/memories/recent{params}")
-        if not results:
-            return "No recent memories found."
-        lines = []
-        for m in results:
-            lines.append(f"[{m['timestamp'][:19]}] ({m['agent_id']}) {m['content'][:200]}\n  id={m['id']}")
-        return "\n\n".join(lines)
-
-    elif name == "memory_get":
-        data = await _get(api_base, f"/memories/{args['memory_id']}")
-        return json.dumps(data, indent=2, ensure_ascii=False)
-
-    elif name == "memory_delete":
-        await _delete(api_base, f"/memories/{args['memory_id']}")
-        return f"Deleted memory {args['memory_id']}"
-
-    elif name == "memory_batch_store":
-        # MCP clients sometimes serialize array args as JSON strings — normalise
-        import json as _json
-        memories = args.get("memories", [])
-        if isinstance(memories, str):
-            memories = _json.loads(memories)
-        data = await _post(api_base, "/memories/batch", {"memories": memories})
-        return f"Created {len(data['created_ids'])} memories. Failed: {data['failed_count']}"
-
-    elif name == "memory_cleanup":
-        data = await _delete(api_base, "/memories/cleanup", args)
-        return f"Deleted {data['deleted_count']} memories."
 
     elif name == "system_info":
-        data = await _get(api_base, "/system/info")
-        infra = data.get("infrastructure", {})
-        counters = data.get("counters", {})
-        components = data.get("components", [])
-        models = infra.get("ollama", {}).get("models", [])
-
-        lines = [
-            f"mnemoforge status: {data.get('status','?')} | uptime: {data.get('uptime_seconds',0)//60}m",
-            f"Qdrant: {'✓' if infra.get('qdrant',{}).get('reachable') else '✗'}  "
-            f"Ollama: {'✓' if infra.get('ollama',{}).get('reachable') else '✗'}  "
-            f"embedding: {infra.get('embedding_model','?')} ({infra.get('embedding_dimensions','?')}d)",
-            f"Models: {', '.join(models) or 'none'}",
-            f"",
-            f"Counters: memories={counters.get('memories',0)}  "
-            f"skills={counters.get('skills',0)}  "
-            f"layout_terms={counters.get('layout_terms',0)}",
-            f"",
-            f"Components ({len(components)}):",
-        ]
-        for c in components:
-            tag = "[core]" if c.get("status") == "core" else "[opt] "
-            lines.append(f"  {tag} {c['id']:20s} — {c['description'][:80]}")
-            endpoints = c.get("endpoints") or []
-            if endpoints:
-                lines.append(f"    endpoints: {', '.join(endpoints)}")
-
-        return "\n".join(lines)
-
+        return await execute_runtime_utility_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
+        )
     elif name == "memory_stats":
-        data = await _get(api_base, "/memories/stats")
-        return json.dumps(data, indent=2, ensure_ascii=False)
-
+        return await execute_runtime_utility_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
+        )
     elif name == "registry_best":
-        params = f"task_type={args['task_type']}&top={args.get('top', 3)}"
-        if args.get("exclude"):
-            params += f"&exclude={args['exclude']}"
-        data = await _get(api_base, f"/registry/best?{params}")
-        lines = [f"Best components for '{data['task_type']}':"]
-        for i, r in enumerate(data["ranked"], 1):
-            bar = "█" * int(r["score"] * 10) + "░" * (10 - int(r["score"] * 10))
-            lines.append(f"  {i}. {r['component']:20s} {bar} {r['score']:.3f}")
-        return "\n".join(lines)
-
+        return await execute_runtime_utility_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
+        )
     elif name == "registry_update":
-        data = await _post(api_base, "/registry/update", args)
-        status = "✓" if args.get("success") else "✗"
-        return f"{status} Updated {data['component']} / {data['task_type']} → score: {data['new_score']}"
-
+        return await execute_runtime_utility_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
+        )
     elif name == "registry_components":
-        data = await _get(api_base, "/registry/components")
-        lines = []
-        for comp, caps in data.items():
-            lines.append(f"\n{comp}:")
-            for task, info in sorted(caps.items(), key=lambda x: -x[1]["score"]):
-                bar = "█" * int(info["score"] * 10)
-                lines.append(f"  {task:25s} {bar} {info['score']:.2f}  ({info['success']}✓/{info['fail']}✗)")
-        return "\n".join(lines)
-
+        return await execute_runtime_utility_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
+        )
     elif name == "report_issue":
         data = await _post(api_base, "/improvements", args)
         return f"Improvement reported: {data['id']}\nTitle: {data['title']}\nStatus: {data['status']}"
 
     elif name == "review_improvement":
-        improvement_id = args["improvement_id"]
-        payload = {
-            key: args[key]
-            for key in ("stage", "verdict", "reviewed_by", "review_source", "reason")
-            if args.get(key) is not None
-        }
-        data = await _patch(api_base, f"/improvements/{improvement_id}/review", payload)
-        lines = [
-            f"Improvement reviewed: {data['id']}",
-            f"Title: {data['title']}",
-            f"Stage: {data.get('stage') or 'proposal'}",
-            f"Verdict: {data.get('verdict') or 'unset'}",
-            f"Status: {data['status']}",
-        ]
-        return "\n".join(lines)
+        return await execute_artifact_lifecycle_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=ArtifactLifecycleActionDependencies(get=_get, post=_post, patch=_patch),
+        )
 
-    elif name == "list_project_aliases":
-        project_id = str(args.get("project_id") or "").strip()
-        suffix = f"?project_id={quote(project_id, safe='')}" if project_id else ""
-        data = await _get(api_base, f"/project/identity/aliases{suffix}")
-        return json.dumps(data, indent=2, ensure_ascii=False)
-
-    elif name == "rename_project":
-        payload = {
-            "old_project_id": args["old_project_id"],
-            "new_project_id": args["new_project_id"],
-            "apply": bool(args.get("apply", False)),
-            "include_text": bool(args.get("include_text", False)),
-            "ensure_alias": bool(args.get("ensure_alias", True)),
-            "reason": str(args.get("reason") or ""),
-        }
-        data = await _post(api_base, "/project/rename", payload)
-        return json.dumps(data, indent=2, ensure_ascii=False)
-
-    elif name == "list_project_laws":
-        params = [
-            f"status={args.get('status', 'active')}",
-            f"limit={int(args.get('limit', 20))}",
-            f"include_promoted={str(bool(args.get('include_promoted', True))).lower()}",
-        ]
-        if args.get("project"):
-            params.append(f"project={args['project']}")
-        if args.get("scope"):
-            params.append(f"scope={args['scope']}")
-        data = await _get(api_base, f"/laws?{'&'.join(params)}")
-        items = list(data.get("items", []) or [])
-        context_refs = _project_context_rule_refs(args)
-        existing_ids = {str(item.get("id") or "") for item in items if isinstance(item, dict)}
-        items.extend(ref for ref in context_refs if str(ref.get("id") or "") not in existing_ids)
-        if not items:
-            return "No matching project laws."
-        lines = []
-        for i, item in enumerate(items, 1):
-            locality = "project-local" if item.get("is_project_local") else item.get("scope", "?")
-            source = str(item.get("source") or "laws").strip()
-            source_suffix = f" source={source}" if source != "laws" else ""
-            lines.append(
-                f"{i}. [{item.get('status','?')}] {item.get('title','')}\n"
-                f"   scope={item.get('scope','?')} locality={locality} project={item.get('project') or '-'}{source_suffix}\n"
-                f"   id={item.get('id')}"
-            )
-            rationale = str(item.get("rationale") or "").strip()
-            if rationale:
-                lines.append(f"   rationale={rationale[:240]}")
-        project = args.get("project", "all")
-        status = args.get("status", "active")
-        return f"Project laws ({project}, {status}):\n\n" + "\n\n".join(lines)
-
-    elif name == "get_project_law":
-        data = await _get(api_base, f"/laws/{args['law_id']}")
-        lines = [
-            f"title={data.get('title','')}",
-            f"status={data.get('status','?')} scope={data.get('scope','?')} project={data.get('project') or '-'} version={data.get('version','1.0')}",
-            f"statement={data.get('statement','')}",
-        ]
-        if data.get("rationale"):
-            lines.append(f"rationale={data['rationale']}")
-        evidence = data.get("evidence") or []
-        if evidence:
-            lines.append("evidence:")
-            lines.extend(f"- {item}" for item in evidence[:5])
-        candidate = data.get("candidate_revision")
-        if candidate:
-            lines.append(f"candidate_status={candidate.get('status', 'proposed')}")
-            lines.append(f"candidate_statement={candidate.get('statement', '')}")
-        if data.get("confirmed_by"):
-            lines.append(f"confirmed_by={data.get('confirmed_by')}")
-        lines.append(f"id={data.get('id')}")
-        return "\n".join(lines)
+    elif name in {"list_project_aliases", "rename_project", "list_project_laws", "get_project_law", "create_project_law", "create_rule_candidate"}:
+        return await execute_project_governance_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=ProjectGovernanceActionDependencies(
+                get=_get,
+                post=_post,
+                annotate_payload=_annotate_structured_tool_payload,
+                project_context_rule_refs=_project_context_rule_refs,
+            ),
+        )
 
     elif name == "project_rule_candidates_from_stenography":
         payload = {
@@ -8799,115 +8894,33 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             return _format_route_answer(data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
-    elif name == "list_rule_candidates":
-        params = [f"limit={int(args.get('limit', 100))}"]
-        if args.get("project"):
-            params.append(f"project={args['project']}")
-        if args.get("status"):
-            params.append(f"status={args['status']}")
-        if args.get("source_task_id"):
-            params.append(f"source_task_id={args['source_task_id']}")
-        data = await _get(api_base, f"/laws/candidates?{'&'.join(params)}")
-        items = data.get("items", [])
-        if not items:
-            return "No matching rule candidates."
-        lines = []
-        for i, item in enumerate(items, 1):
-            lines.append(
-                f"{i}. [{item.get('status','?')}] {item.get('statement','')}\n"
-                f"   scope={item.get('scope','?')} project={item.get('project','?')} topic={item.get('topic_path') or '-'}\n"
-                f"   candidate_id={item.get('candidate_id')} source_span_id={item.get('source_span_id')}"
-            )
-        return f"Rule candidates ({data.get('total', len(items))}):\n\n" + "\n\n".join(lines)
-
-    elif name == "get_rule_candidate_review_packet":
-        payload = {
-            "project": args.get("project"),
-            "status": args.get("status", "candidate"),
-            "source_task_id": args.get("source_task_id"),
-            "limit": int(args.get("limit") or 100),
-            "max_matches": int(args.get("max_matches") or 5),
-        }
-        payload = {key: value for key, value in payload.items() if value not in (None, "")}
-        data = await _post(api_base, "/laws/candidates/review-packet", payload)
-        data = _annotate_structured_tool_payload(name, data)
-        return json.dumps(data, indent=2, ensure_ascii=False)
-
-    elif name == "review_rule_candidate":
-        candidate_id = str(args["candidate_id"]).strip()
-        payload = {
-            "action": str(args["action"]).strip(),
-            "reason": str(args["reason"]).strip(),
-            "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
-            "source": str(args.get("source") or "mcp_rule_candidate_review").strip() or "mcp_rule_candidate_review",
-        }
-        data = await _post(api_base, f"/laws/candidates/{candidate_id}/review", payload)
-        data = _annotate_structured_tool_payload(name, data)
-        return json.dumps(data, indent=2, ensure_ascii=False)
-
-    elif name == "promote_rule_candidate":
-        candidate_id = str(args["candidate_id"]).strip()
-        payload = {
-            "title": args.get("title"),
-            "target_scope": args.get("target_scope"),
-            "status": args.get("status", "proposed"),
-            "reason": str(args["reason"]).strip(),
-            "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
-            "source": str(args.get("source") or "mcp_rule_candidate_promotion").strip() or "mcp_rule_candidate_promotion",
-            "confirmed_by": args.get("confirmed_by"),
-            "confirmation_source": args.get("confirmation_source", "mcp_rule_candidate_promotion"),
-        }
-        payload = {key: value for key, value in payload.items() if value not in (None, "")}
-        data = await _post(api_base, f"/laws/candidates/{candidate_id}/promote", payload)
-        data = _annotate_structured_tool_payload(name, data)
-        return json.dumps(data, indent=2, ensure_ascii=False)
-
-    elif name == "revise_law_from_rule_candidate":
-        candidate_id = str(args["candidate_id"]).strip()
-        payload = {
-            "law_id": str(args["law_id"]).strip(),
-            "reason": str(args["reason"]).strip(),
-            "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
-            "source": str(args.get("source") or "mcp_rule_candidate_law_revision").strip()
-            or "mcp_rule_candidate_law_revision",
-            "title": args.get("title"),
-            "statement": args.get("statement"),
-            "rationale": args.get("rationale"),
-            "evidence": args.get("evidence"),
-        }
-        payload = {key: value for key, value in payload.items() if value not in (None, "")}
-        data = await _post(api_base, f"/laws/candidates/{candidate_id}/revise-law", payload)
-        data = _annotate_structured_tool_payload(name, data)
-        return json.dumps(data, indent=2, ensure_ascii=False)
-
-    elif name == "list_learning_candidates":
-        query = build_list_learning_candidates_query(args)
-        data = await _get(api_base, f"/learning/artifacts?{query}")
-        return format_list_learning_candidates_response(data)
-
-    elif name == "approve_learning_candidate":
-        data = await _post(
-            api_base,
-            f"/learning/candidates/{args['artifact_id']}/approve",
-            build_approve_learning_candidate_payload(args),
+    elif name in {
+        "list_rule_candidates",
+        "get_rule_candidate_review_packet",
+        "review_rule_candidate",
+        "promote_rule_candidate",
+        "revise_law_from_rule_candidate",
+        "expire_trial_rule_candidates",
+    }:
+        return await execute_project_governance_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=ProjectGovernanceActionDependencies(
+                get=_get,
+                post=_post,
+                annotate_payload=_annotate_structured_tool_payload,
+                project_context_rule_refs=_project_context_rule_refs,
+            ),
         )
-        return format_learning_candidate_transition(data, action="approved")
 
-    elif name == "defer_learning_candidate":
-        data = await _post(
-            api_base,
-            f"/learning/candidates/{args['artifact_id']}/defer",
-            build_defer_learning_candidate_payload(args),
+    elif name in {"list_learning_candidates", "approve_learning_candidate", "defer_learning_candidate", "reject_learning_candidate"}:
+        return await execute_artifact_lifecycle_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=ArtifactLifecycleActionDependencies(get=_get, post=_post, patch=_patch),
         )
-        return format_learning_candidate_transition(data, action="deferred")
-
-    elif name == "reject_learning_candidate":
-        data = await _post(
-            api_base,
-            f"/learning/candidates/{args['artifact_id']}/reject",
-            build_reject_learning_candidate_payload(args),
-        )
-        return format_learning_candidate_transition(data, action="rejected")
 
     elif name == "improvements_report":
         project = args.get("project", "mnemoforge")
@@ -8981,23 +8994,20 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             )
         return "\n".join(lines)
 
-    elif name == "set_canonical_status":
-        data = await _patch(
-            api_base,
-            f"/canonicals/{args['canonical_id']}/status",
-            build_set_canonical_status_payload(args),
+    elif name in {"set_canonical_status", "merge_canonicals"}:
+        return await execute_artifact_lifecycle_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=ArtifactLifecycleActionDependencies(get=_get, post=_post, patch=_patch),
         )
-        return format_set_canonical_status_response(data)
 
-    elif name == "merge_canonicals":
-        data = await _post(
-            api_base,
-            f"/canonicals/{args['source_id']}/merge",
-            build_merge_canonicals_payload(args),
-        )
-        return (
-            f"Merged canonical {data['source_id']} → {data['target_id']}\n"
-            f"topic_path={data['topic_path']} supports={data['merged_support_count']}"
+    elif name in SKILL_ROUTING_ACTIONS:
+        return await execute_skill_routing_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=SkillRoutingActionDependencies(get=_get, post=_post),
         )
 
     elif name == "crystallize_solution":
@@ -9036,28 +9046,45 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             f"platform='{data.get('platform', 'claude')}') to publish."
         )
 
-    elif name == "model_available":
-        params = ""
-        if args.get("task_type"):
-            params = f"?task_type={args['task_type']}"
-        models = await _get(api_base, f"/models/available{params}")
-        if not models:
-            return "No available cloud models. All models may be at quota or in cooldown."
-        lines = ["Available cloud models:"]
-        for m in models:
-            bar = "█" * int(m["remaining_pct"] / 10) + "░" * (10 - int(m["remaining_pct"] / 10))
-            lines.append(f"  {m['priority']}. {m['model_id']:15s} [{m['provider']}] {bar} {m['remaining_pct']:.0f}% remaining ({m['remaining']:,} {m['limit_unit']})")
-        return "\n".join(lines)
+    elif name in {"model_available", "report_limit_hit"}:
+        return await execute_runtime_utility_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
+        )
 
-    elif name == "report_limit_hit":
-        data = await _post(api_base, "/models/report_limit", args)
-        cooldown = data.get("cooldown_until")
-        if cooldown:
-            import time as _time
-            secs = max(0, int(cooldown - _time.time()))
-            return f"⛔ {args['model_id']} marked as rate-limited. Cooldown: {secs}s. Use model_available to find alternatives."
-        return f"⛔ {args['model_id']} marked as rate-limited. Use model_available to find alternatives."
+    elif name in HANDOFF_ACTIONS:
+        return await execute_handoff_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=HandoffActionDependencies(
+                post=_post,
+                get=_get,
+                build_handoff_context_summary=_build_handoff_context_summary,
+                build_handoff_context_refs=_build_handoff_context_refs,
+                summarize_ref_counts=_summarize_handoff_ref_counts,
+                format_scope=_format_handoff_scope,
+                format_background_payload=_format_handoff_background_payload,
+                extract_handoff_field=_extract_handoff_field,
+                sanitize_content_preview=_sanitize_handoff_content_preview,
+                format_workspace_summary=_format_handoff_workspace_summary,
+                format_decomposition=_format_handoff_decomposition,
+                format_created_task_packets=_format_created_task_packets,
+                format_route_task_packet_execution=_format_route_task_packet_execution,
+                format_dispatch_background_task_packet=_format_dispatch_background_task_packet,
+                format_reconcile_background_task_packet=_format_reconcile_background_task_packet,
+            ),
+        )
 
+    elif name in SKILL_ROUTING_ACTIONS:
+        return await execute_skill_routing_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=SkillRoutingActionDependencies(get=_get, post=_post),
+        )
     elif name == "handoff_task":
         phase = args.get("phase")
         project_id = args.get("project_id")
@@ -9537,20 +9564,30 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         return f"Skill: {data['name']}\nInstall to: {data['install_path']}\n\n--- SKILL.md ---\n{data['content']}"
 
     elif name == "get_artifact":
-        artifact_key = args["artifact_key"]
-        data = await _get(api_base, f"/artifacts/{quote(artifact_key, safe='')}")
-        return json.dumps(data, indent=2, ensure_ascii=False)
+        return await execute_artifact_lifecycle_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=ArtifactLifecycleActionDependencies(
+                get=_get,
+                post=_post,
+                patch=_patch,
+                annotate_payload=_annotate_structured_tool_payload,
+            ),
+        )
 
     elif name == "list_artifacts":
-        query = build_list_artifacts_query(args)
-        data = await _get(api_base, f"/artifacts?{query}")
-        return json.dumps(data, indent=2, ensure_ascii=False)
+        return await execute_artifact_lifecycle_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=ArtifactLifecycleActionDependencies(get=_get, post=_post, patch=_patch),
+        )
     elif name == "mailbox_state":
-        data = build_mailbox_state_packet(
-            state=str(args.get("state") or "planning"),
-            project=str(args.get("project") or "mnemoforge"),
-            runtime_profile_id=str(args.get("runtime_profile_id") or "unknown_cli"),
-            diagnostic=bool(args.get("diagnostic", False)),
+        data = await build_mailbox_state_response(
+            args=args,
+            session_id=session_id,
+            dependencies=MailboxReadDependencies(get_session_identity_defaults=_get_session_identity_defaults),
         )
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
@@ -9560,30 +9597,27 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
     elif name == "mailbox_get":
-        data = build_mailbox_get_packet(
-            ref=str(args.get("ref") or ""),
-            state=str(args.get("state") or "planning"),
-            project=str(args.get("project") or "mnemoforge"),
-            runtime_profile_id=str(args.get("runtime_profile_id") or "unknown_cli"),
-            diagnostic=bool(args.get("diagnostic", False)),
+        data = await _resolve_mailbox_public_ref(api_base, args)
+        if data is None:
+            data = await build_mailbox_get_response(
+                args=args,
+                session_id=session_id,
+                dependencies=MailboxReadDependencies(get_session_identity_defaults=_get_session_identity_defaults),
+            )
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    elif name in {"reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes"}:
+        return await execute_artifact_lifecycle_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=ArtifactLifecycleActionDependencies(
+                get=_get,
+                post=_post,
+                patch=_patch,
+                annotate_payload=_annotate_structured_tool_payload,
+            ),
         )
-        data = _annotate_structured_tool_payload(name, data)
-        return json.dumps(data, indent=2, ensure_ascii=False)
-    elif name == "reconcile_completed_checkpoints":
-        payload = build_reconcile_completed_checkpoints_payload(args)
-        data = await _post(api_base, "/artifacts/reconcile-completed-checkpoints", payload)
-        data = _annotate_structured_tool_payload(name, data)
-        return json.dumps(data, indent=2, ensure_ascii=False)
-    elif name == "review_completed_checkpoint_scope":
-        payload = build_review_completed_checkpoint_scope_payload(args)
-        data = await _post(api_base, "/artifacts/completed-checkpoint-scope-review", payload)
-        data = _annotate_structured_tool_payload(name, data)
-        return json.dumps(data, indent=2, ensure_ascii=False)
-    elif name == "review_completed_checkpoint_scopes":
-        payload = build_review_completed_checkpoint_scopes_payload(args)
-        data = await _post(api_base, "/artifacts/completed-checkpoint-scope-review/batch", payload)
-        data = _annotate_structured_tool_payload(name, data)
-        return json.dumps(data, indent=2, ensure_ascii=False)
     elif name == "list_open_tasks":
         query = build_list_open_tasks_query(args)
         data = await _get(api_base, f"/artifacts?{query}")
@@ -9855,506 +9889,39 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name == "start_task_session":
-        from app.services.stenographer_service import ProtocolViolation, get_stenographer_store
-        from app.services.task_lease_service import TaskLeaseConflict, get_task_lease_store, start_task_lease_auto_heartbeat, stop_task_lease_auto_heartbeat
-        import uuid
-
-        project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
-        task_id = str(args["task_id"]).strip()
-        owner_agent = str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex"
-        lease_session_id = str(args.get("session_id") or session_id or "").strip()
-        
-        # danger_mode: auto-generate session_id if confirmed by user
-        danger_mode = bool(args.get("danger_mode", False))
-        danger_confirmation = str(args.get("danger_confirmation", "")).strip().lower()
-        if not lease_session_id:
-            if danger_mode and danger_confirmation == "authorize_session_bypass":
-                lease_session_id = f"danger-mode-{uuid.uuid4().hex[:8]}"
-            else:
-                raise ValueError("session_id is required for start_task_session. Set danger_mode=true with danger_confirmation='authorize_session_bypass' for recovery operations.")
-
-        lease_store = get_task_lease_store()
-        session_store = get_stenographer_store()
-        claim = None
-        auto_heartbeat_enabled = bool(args.get("auto_heartbeat", True))
-        auto_heartbeat = None
-        try:
-            claim = lease_store.claim(
-                project=project,
-                task_id=task_id,
-                owner_agent=owner_agent,
-                session_id=lease_session_id,
-                lease_ttl_seconds=int(args.get("lease_ttl_seconds") or 900),
-            )
-            work = session_store.start_work_session(
-                project=project,
-                task_id=task_id,
-                agent_id=owner_agent,
-                session_id=lease_session_id,
-                role=str(args.get("role") or "worker"),
-                work_id=str(args.get("work_id") or ""),
-                parent_work_id=str(args.get("parent_work_id") or ""),
-                parent_task_id=str(args.get("parent_task_id") or ""),
-                spawn_reason=str(args.get("spawn_reason") or ""),
-                return_condition=str(args.get("return_condition") or ""),
-                scope=args.get("scope") or [],
-                summary=str(args.get("summary") or ""),
-            )
-            if auto_heartbeat_enabled:
-                auto_heartbeat = start_task_lease_auto_heartbeat(
-                    store=lease_store,
-                    lease=claim.lease,
-                    heartbeat_seconds=float(args["heartbeat_seconds"]) if args.get("heartbeat_seconds") else None,
-                )
-        except TaskLeaseConflict as exc:
-            data = {
-                "status": "conflict",
-                "error": exc.to_dict(),
-                "claim_allowed": False,
-                "owner_agent": exc.active_lease.owner_agent,
-                "owner_session_id": exc.active_lease.session_id,
-                "expires_at": exc.active_lease.expires_at.isoformat(),
-                "next_safe_action": "Task is already claimed by another session. Do not start work session.",
-            }
-            data = _annotate_structured_tool_payload(name, data)
-            return json.dumps(data, indent=2, ensure_ascii=False)
-        except ProtocolViolation as exc:
-            if claim is not None:
-                stop_task_lease_auto_heartbeat(claim.lease.lease_id)
-                try:
-                    lease_store.release(
-                        lease_id=claim.lease.lease_id,
-                        owner_agent=owner_agent,
-                        session_id=lease_session_id,
-                        reason="start_task_session_rollback",
-                    )
-                except Exception:
-                    pass
-            raise ValueError(str(exc)) from exc
-
-        try:
-            checkpoint_payload = build_report_task_checkpoint_payload(
-                {
-                    "project": project,
-                    "task_id": task_id,
-                    "stage": "in_progress",
-                    "summary": str(args.get("summary") or "Task claimed; work session started."),
-                    "status": "active",
-                    "reason": str(args.get("reason") or "start_task_session"),
-                    "acted_by": str(args.get("acted_by") or owner_agent),
-                    "source": str(args.get("source") or "start_task_session"),
-                    "checkpoint_mode": str(args.get("checkpoint_mode") or "lightweight"),
-                }
-            )
-            checkpoint = await _post(
-                api_base,
-                f"/project/tasks/{quote(task_id, safe='')}/changes",
-                checkpoint_payload,
-            )
-        except Exception:
-            if claim is not None:
-                stop_task_lease_auto_heartbeat(claim.lease.lease_id)
-            try:
-                session_store.end_work_session(
-                    work_id=work.work_id,
-                    task_id=task_id,
-                    agent_id=owner_agent,
-                    session_id=lease_session_id,
-                    status="interrupted",
-                    result="start_task_session rollback after checkpoint write failure",
-                )
-            except Exception:
-                pass
-            try:
-                lease_store.release(
-                    lease_id=claim.lease.lease_id,
-                    owner_agent=owner_agent,
-                    session_id=lease_session_id,
-                    reason="start_task_session_checkpoint_failed",
-                )
-            except Exception:
-                pass
-            raise
-        data = {
-            "status": "started",
-            "project": project,
-            "task_id": task_id,
-            "owner_agent": owner_agent,
-            "owner_session_id": lease_session_id,
-            "lease": claim.lease.model_dump(mode="json"),
-            "lease_status": claim.status,
-            "work_token": claim.work_token,
-            "auto_heartbeat": {
-                "enabled": auto_heartbeat_enabled,
-                "heartbeat_seconds": auto_heartbeat.heartbeat_seconds if auto_heartbeat is not None else None,
-            },
-            "work_session": work.model_dump(mode="json"),
-            "checkpoint": checkpoint,
-            "next_safe_action": (
-                "Continue implementation; lease auto-heartbeat is active for this process and finish_task_session will stop it."
-                if auto_heartbeat_enabled
-                else "Continue implementation and send heartbeat_task_claim while session is active."
+        data = await start_task_session_action(
+            args=args,
+            api_base=api_base,
+            session_id=session_id,
+            dependencies=TaskSessionActionDependencies(
+                post=_post,
+                get_session_identity_defaults=_get_session_identity_defaults,
             ),
-        }
+        )
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name == "finish_task_session":
-        from app.services.stenographer_service import ProtocolViolation, get_stenographer_store
-        from app.services.task_lease_service import get_task_lease_store, stop_task_lease_auto_heartbeat, verify_work_token_for_mutation
-        import uuid
-
-        project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
-        task_id = str(args["task_id"]).strip()
-        owner_agent = str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex"
-        lease_session_id = str(args.get("session_id") or session_id or "").strip()
-        work_token = str(args.get("work_token") or "").strip()
-
-        # danger_mode: auto-generate session_id if confirmed by user
-        danger_mode = bool(args.get("danger_mode", False))
-        danger_confirmation = str(args.get("danger_confirmation", "")).strip().lower()
-        if not lease_session_id and not work_token:
-            if danger_mode and danger_confirmation == "authorize_session_bypass":
-                lease_session_id = f"danger-mode-{uuid.uuid4().hex[:8]}"
-            else:
-                raise ValueError("session_id is required for finish_task_session. Set danger_mode=true with danger_confirmation='authorize_session_bypass' for recovery operations.")
-
-        lease_store = get_task_lease_store()
-        active = lease_store.get_active_claim(project=project, task_id=task_id)
-        if active is None:
-            if danger_mode and danger_confirmation == "authorize_session_bypass":
-                pass  # bypass: no active claim needed when recovery mode is authorized
-            else:
-                data = {
-                    "status": "conflict",
-                    "error": "active_claim_required",
-                    "project": project,
-                    "task_id": task_id,
-                    "claim_allowed": False,
-                    "next_safe_action": "Call start_task_session before finishing task work.",
-                }
-                data = _annotate_structured_tool_payload(name, data)
-                return json.dumps(data, indent=2, ensure_ascii=False)
-
-        # ── work_token as primary proof of ownership ──────────────────
-        # If a valid work_token is provided, it proves ownership regardless
-        # of session_id. This allows CLI tools and post-restart scenarios
-        # to finish a task session without the original SSE session.
-        work_token_valid = False
-        if active is not None and work_token:
-            work_token_valid = verify_work_token_for_mutation(
-                store=lease_store,
-                lease_id=active.lease_id,
-                work_token=work_token,
-                task_id=task_id,
-                project=project,
-            )
-
-        if active is not None and not work_token_valid and (active.owner_agent != owner_agent or active.session_id != lease_session_id):
-            if danger_mode and danger_confirmation == "authorize_session_bypass":
-                pass  # bypass: owner/session mismatch allowed in recovery mode
-            else:
-                data = {
-                    "status": "conflict",
-                    "error": "lease_owner_mismatch",
-                    "project": project,
-                    "task_id": task_id,
-                    "owner_agent": active.owner_agent,
-                    "owner_session_id": active.session_id,
-                    "lease_id": active.lease_id,
-                    "expires_at": active.expires_at.isoformat(),
-                    "claim_allowed": False,
-                    "next_safe_action": "Do not finish or mutate this task; coordinate handoff or wait for lease release/expiry.",
-                }
-                data = _annotate_structured_tool_payload(name, data)
-                return json.dumps(data, indent=2, ensure_ascii=False)
-
-        # Auto-detect work_id from active work session if not explicitly provided
-        session_store = get_stenographer_store()
-        explicit_work_id = str(args.get("work_id") or "").strip()
-        if explicit_work_id:
-            work_id = explicit_work_id
-        else:
-            # Primary: search by session_id (original SSE session owner)
-            active_work = session_store.get_active_work_by_task(
-                project=project,
-                task_id=task_id,
-                agent_id=owner_agent,
-                session_id=lease_session_id,
-            )
-            # Fallback: if work_token proves ownership, search without session_id
-            # (handles server restart / session loss scenarios)
-            if active_work is None and work_token_valid:
-                active_work = session_store.get_active_work_by_task_any_session(
-                    project=project,
-                    task_id=task_id,
-                    agent_id=owner_agent,
-                )
-            if active_work is None:
-                data = {
-                    "status": "conflict",
-                    "error": "work_session_not_found",
-                    "project": project,
-                    "task_id": task_id,
-                    "message": "No active work session found for this task. Provide work_id explicitly or start a work session first.",
-                    "next_safe_action": "Provide work_id parameter or call start_work_session first.",
-                }
-                data = _annotate_structured_tool_payload(name, data)
-                return json.dumps(data, indent=2, ensure_ascii=False)
-            work_id = active_work.work_id
-
-        checkpoint_payload = build_report_task_checkpoint_payload(
-            {
-                "project": project,
-                "task_id": task_id,
-                "stage": "completed",
-                "summary": str(args.get("summary") or "Task session finished."),
-                "status": "done",
-                "changed_files": _string_list_arg(args.get("changed_files")),
-                "verification": _string_list_arg(args.get("verification")),
-                "next_step": str(args.get("next_step") or "").strip(),
-                "next_step_scope": str(args.get("next_step_scope") or "none").strip() or "none",
-                "reason": str(args.get("reason") or "finish_task_session"),
-                "acted_by": str(args.get("acted_by") or owner_agent),
-                "source": str(args.get("source") or "finish_task_session"),
-                "checkpoint_mode": str(args.get("checkpoint_mode") or "standard"),
-            }
+        data = await finish_task_session_action(
+            args=args,
+            api_base=api_base,
+            session_id=session_id,
+            dependencies=TaskSessionActionDependencies(
+                post=_post,
+                get=_get,
+                get_session_identity_defaults=_get_session_identity_defaults,
+            ),
         )
-        checkpoint = await _post(
-            api_base,
-            f"/project/tasks/{quote(task_id, safe='')}/changes",
-            checkpoint_payload,
-        )
-
-        session_store = get_stenographer_store()
-        if str(args.get("status") or "completed") == "completed":
-            for item in _string_list_arg(args.get("verification")):
-                session_store.record_span(
-                    project=project,
-                    task_id=task_id,
-                    work_id=work_id,
-                    agent_id=owner_agent,
-                    session_id=lease_session_id,
-                    kind="verification",
-                    source="finish_task_session",
-                    content=item,
-                )
-            for item in _string_list_arg(args.get("changed_files")):
-                session_store.record_span(
-                    project=project,
-                    task_id=task_id,
-                    work_id=work_id,
-                    agent_id=owner_agent,
-                    session_id=lease_session_id,
-                    kind="changed_files",
-                    source="finish_task_session",
-                    content=item,
-                )
-            next_step_text = str(args.get("next_step") or "").strip()
-            if next_step_text:
-                session_store.record_span(
-                    project=project,
-                    task_id=task_id,
-                    work_id=work_id,
-                    agent_id=owner_agent,
-                    session_id=lease_session_id,
-                    kind="next_step",
-                    source="finish_task_session",
-                    content=next_step_text,
-                )
-        try:
-            # When work_token proves ownership, bypass session_id-based checks
-            if work_token_valid:
-                work = session_store.end_work_session_by_work_id(
-                    work_id=work_id,
-                    status=str(args.get("status") or "completed"),
-                    result=str(args.get("result") or ""),
-                )
-            else:
-                work = session_store.end_work_session(
-                    work_id=work_id,
-                    task_id=task_id,
-                    agent_id=owner_agent,
-                    session_id=lease_session_id,
-                    status=str(args.get("status") or "completed"),
-                    result=str(args.get("result") or ""),
-                )
-        except ProtocolViolation as exc:
-            raise ValueError(str(exc)) from exc
-
-        if active is not None:
-            release_session_id = active.session_id if work_token_valid else lease_session_id
-            released = lease_store.release(
-                lease_id=active.lease_id,
-                owner_agent=owner_agent,
-                session_id=release_session_id,
-                reason=str(args.get("release_reason") or "finished"),
-                status="released",
-            )
-            stop_task_lease_auto_heartbeat(active.lease_id)
-            release_payload = {
-                "status": released.status,
-                "lease": released.model_dump(mode="json"),
-            }
-        else:
-            release_payload = {
-                "status": "bypassed",
-                "note": "No active lease to release; danger_mode bypass was used.",
-            }
-
-        # ── Resolve unified artifact (improvement or task) ────────
-        # finish_task_session завершает work session и освобождает lease,
-        # но не меняет статус самого task/improvement item.
-        # Пытаемся resolve improvement (созданный record_work_result),
-        # затем task, и только как fallback — reopen project task.
-        _resolved = False
-        for artifact_type in ("improvement", "task"):
-            artifact_key = f"{artifact_type}:{quote(project, safe='')}:{quote(task_id, safe='')}"
-            try:
-                artifact = await _get(api_base, f"/artifacts/{quote(artifact_key, safe='')}")
-                if artifact and artifact.get("status") in ("open", "active"):
-                    await _post(
-                        api_base,
-                        f"/artifacts/{quote(artifact_key, safe='')}/resolve",
-                        {
-                            "acted_by": owner_agent,
-                            "action_source": "finish_task_session",
-                            "reason": "Task session finished.",
-                        },
-                    )
-                    _resolved = True
-                    break
-            except Exception:
-                continue
-
-        if not _resolved:
-            # Fallback: попробовать reopen project task в Qdrant
-            try:
-                await _post(
-                    api_base,
-                    f"/project/tasks/{quote(task_id, safe='')}/reopen",
-                    {
-                        "status": "done",
-                        "reason": "finish_task_session",
-                        "acted_by": owner_agent,
-                        "source": "finish_task_session",
-                    },
-                )
-            except Exception:
-                import logging
-                logging.getLogger(__name__).info(
-                    "finish_task_session: no artifact or project task to close for task %s", task_id
-                )
-
-        data = {
-            "status": "finished",
-            "project": project,
-            "task_id": task_id,
-            "owner_agent": owner_agent,
-            "owner_session_id": lease_session_id,
-            "checkpoint": checkpoint,
-            "work_session": work.model_dump(mode="json"),
-            "release": release_payload,
-            "next_safe_action": "If release.status is conflict, coordinate with current owner or use force_release_task_claim.",
-        }
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name in {"claim_task", "heartbeat_task_claim", "release_task_claim", "force_release_task_claim", "list_task_claims"}:
-        from app.services.task_lease_service import TaskLeaseConflict, TaskLeaseUnavailable, get_task_lease_store, stop_task_lease_auto_heartbeat
-
-        store = get_task_lease_store()
-        owner_agent = str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex"
-        lease_session_id = str(args.get("session_id") or session_id or "").strip()
-        try:
-            if name == "claim_task":
-                if not lease_session_id:
-                    raise ValueError("session_id is required for claim_task")
-                claim = store.claim(
-                    project=str(args.get("project") or "mnemoforge"),
-                    task_id=str(args["task_id"]),
-                    owner_agent=owner_agent,
-                    session_id=lease_session_id,
-                    lease_ttl_seconds=int(args.get("lease_ttl_seconds") or 900),
-                )
-                data = claim.model_dump(mode="json")
-                data["next_safe_action"] = "Start or continue work while the task claim is active."
-            elif name == "heartbeat_task_claim":
-                if not lease_session_id:
-                    raise ValueError("session_id is required for heartbeat_task_claim")
-                lease = store.heartbeat(
-                    lease_id=str(args["lease_id"]),
-                    owner_agent=owner_agent,
-                    session_id=lease_session_id,
-                    lease_ttl_seconds=int(args["lease_ttl_seconds"]) if args.get("lease_ttl_seconds") else None,
-                )
-                data = {
-                    "status": "renewed",
-                    "lease": lease.model_dump(mode="json"),
-                    "next_safe_action": "Continue work; the task claim expiration was extended.",
-                }
-            elif name == "release_task_claim":
-                if not lease_session_id:
-                    raise ValueError("session_id is required for release_task_claim")
-                lease = store.release(
-                    lease_id=str(args["lease_id"]),
-                    owner_agent=owner_agent,
-                    session_id=lease_session_id,
-                    reason=str(args.get("reason") or "released"),
-                    status=str(args.get("status") or "released"),
-                )
-                stop_task_lease_auto_heartbeat(lease.lease_id)
-                data = {
-                    "status": lease.status,
-                    "lease": lease.model_dump(mode="json"),
-                    "next_safe_action": "The task claim is no longer active.",
-                }
-            elif name == "force_release_task_claim":
-                lease = store.force_release(
-                    lease_id=str(args["lease_id"]),
-                    acted_by=str(args.get("acted_by") or owner_agent).strip() or owner_agent,
-                    reason=str(args.get("reason") or "force_released"),
-                    status=str(args.get("status") or "released"),
-                )
-                stop_task_lease_auto_heartbeat(lease.lease_id)
-                data = {
-                    "status": lease.status,
-                    "lease": lease.model_dump(mode="json"),
-                    "force_released": True,
-                    "next_safe_action": "The task claim was force-released; coordinate before reclaiming.",
-                }
-            else:
-                leases = store.list_leases(
-                    project=str(args.get("project") or "") or None,
-                    task_id=str(args.get("task_id") or "") or None,
-                    owner_agent=str(args.get("owner_agent") or "") or None,
-                    status=str(args.get("status") or "active"),
-                    limit=int(args.get("limit") or 50),
-                )
-                data = {
-                    "status": "listed",
-                    "count": len(leases),
-                    "leases": [lease.model_dump(mode="json") for lease in leases],
-                    "next_safe_action": "Avoid active claims owned by another agent; stale claims are expired before listing.",
-                }
-        except TaskLeaseConflict as exc:
-            data = {
-                "status": "conflict",
-                "error": exc.to_dict(),
-                "claim_allowed": False,
-                "owner_agent": exc.active_lease.owner_agent,
-                "owner_session_id": exc.active_lease.session_id,
-                "expires_at": exc.active_lease.expires_at.isoformat(),
-                "next_safe_action": "Do not start this task; choose another task or wait for the claim to expire.",
-            }
-        except TaskLeaseUnavailable as exc:
-            data = {
-                "status": "conflict",
-                "error": exc.to_dict(),
-                "claim_allowed": False,
-                "lease": exc.lease.model_dump(mode="json"),
-                "next_safe_action": "The claim is no longer active; call start_task_session or claim_task again before mutating task state.",
-            }
+        data = await execute_task_lease_action(
+            name=name,
+            args=args,
+            session_id=session_id,
+            dependencies=TaskLeaseActionDependencies(get_session_identity_defaults=_get_session_identity_defaults),
+        )
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
@@ -10367,146 +9934,14 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         "record_stenographer_span",
         "list_stenographer_spans",
     }:
-        from app.services.stenographer_service import ProtocolViolation, get_stenographer_store
-
-        store = get_stenographer_store()
-        agent_id = str(args.get("agent_id") or "codex").strip() or "codex"
-        protocol_session_id = str(args.get("session_id") or session_id or agent_id).strip() or agent_id
-        try:
-            if name == "get_work_session_state":
-                data = store.get_state(agent_id=agent_id, session_id=protocol_session_id).model_dump(mode="json")
-            elif name == "start_work_session":
-                lease_guard = _task_mutation_requires_owned_claim(
-                    project=str(args.get("project") or "mnemoforge"),
-                    task_id=str(args.get("task_id") or ""),
-                    owner_agent=agent_id,
-                    owner_session_id=protocol_session_id,
-                    tool_name=name,
-                    work_token=str(args.get("work_token") or ""),
-                    danger_mode=bool(args.get("danger_mode", False)),
-                    danger_confirmation=str(args.get("danger_confirmation") or ""),
-                )
-                if lease_guard:
-                    data = lease_guard
-                    data = _annotate_structured_tool_payload(name, data)
-                    return json.dumps(data, indent=2, ensure_ascii=False)
-                data = store.start_work_session(
-                    project=str(args.get("project") or "mnemoforge"),
-                    task_id=str(args["task_id"]),
-                    agent_id=agent_id,
-                    session_id=protocol_session_id,
-                    role=str(args.get("role") or "worker"),
-                    work_id=str(args.get("work_id") or ""),
-                    parent_work_id=str(args.get("parent_work_id") or ""),
-                    parent_task_id=str(args.get("parent_task_id") or ""),
-                    spawn_reason=str(args.get("spawn_reason") or ""),
-                    return_condition=str(args.get("return_condition") or ""),
-                    scope=args.get("scope") or [],
-                    summary=str(args.get("summary") or ""),
-                ).model_dump(mode="json")
-            elif name == "park_work_session":
-                data = store.park_work_session(
-                    work_id=str(args["work_id"]),
-                    agent_id=agent_id,
-                    session_id=protocol_session_id,
-                    reason=str(args["reason"]),
-                    child_task_id=str(args.get("child_task_id") or ""),
-                    child_work_id=str(args.get("child_work_id") or ""),
-                ).model_dump(mode="json")
-            elif name == "resume_work_session":
-                data = store.resume_work_session(
-                    work_id=str(args["work_id"]),
-                    agent_id=agent_id,
-                    session_id=protocol_session_id,
-                    child_work_id=str(args.get("child_work_id") or ""),
-                    result=str(args.get("result") or ""),
-                ).model_dump(mode="json")
-            elif name == "end_work_session":
-                lease_guard = _task_mutation_requires_owned_claim(
-                    project=str(args.get("project") or "mnemoforge"),
-                    task_id=str(args.get("task_id") or ""),
-                    owner_agent=agent_id,
-                    owner_session_id=protocol_session_id,
-                    tool_name=name,
-                    work_token=str(args.get("work_token") or ""),
-                    danger_mode=bool(args.get("danger_mode", False)),
-                    danger_confirmation=str(args.get("danger_confirmation") or ""),
-                )
-                if lease_guard:
-                    data = lease_guard
-                    data = _annotate_structured_tool_payload(name, data)
-                    return json.dumps(data, indent=2, ensure_ascii=False)
-                data = store.end_work_session(
-                    work_id=str(args["work_id"]),
-                    task_id=str(args["task_id"]),
-                    agent_id=agent_id,
-                    session_id=protocol_session_id,
-                    status=str(args["status"]),
-                    result=str(args.get("result") or ""),
-                ).model_dump(mode="json")
-                if str(args.get("status") or "").strip() == "completed":
-                    spans = store.list_spans(
-                        project=str(data.get("project") or "") or None,
-                        task_id=str(args["task_id"]),
-                        work_id=str(args["work_id"]),
-                        limit=50,
-                    )
-                    if spans:
-                        data["stenographer_span_count"] = len(spans)
-                        from app.services.checkpoint_draft_service import get_checkpoint_draft_store
-
-                        latest_draft = get_checkpoint_draft_store().latest_for_work(
-                            project=str(data.get("project") or ""),
-                            task_id=str(args["task_id"]),
-                            work_id=str(args["work_id"]),
-                        )
-                        if latest_draft and latest_draft.status == "approved":
-                            data["approved_checkpoint_draft_id"] = latest_draft.draft_id
-                            data["saved_change_id"] = latest_draft.saved_change_id
-                            data["recommended_next_tool"] = "get_task_execution_context"
-                            data["closeout_notice"] = (
-                                "Stenographer spans already have an approved checkpoint draft. "
-                                "Use get_task_execution_context for the next operational step."
-                            )
-                        else:
-                            data["recommended_next_tool"] = "clerk_draft_report"
-                            data["closeout_notice"] = (
-                                "Stenographer spans exist for this completed work session. "
-                                "Use clerk_draft_report to structure them into a review-only checkpoint/report draft before governed memory mutation."
-                            )
-            elif name == "record_stenographer_span":
-                data = store.record_span(
-                    project=str(args.get("project") or "mnemoforge"),
-                    task_id=str(args.get("task_id") or ""),
-                    work_id=str(args.get("work_id") or ""),
-                    agent_id=agent_id,
-                    session_id=protocol_session_id,
-                    kind=str(args["kind"]),
-                    source=str(args.get("source") or ""),
-                    content=str(args["content"]),
-                ).model_dump(mode="json")
-            else:
-                data = {
-                    "total": 0,
-                    "items": [
-                        item.model_dump(mode="json")
-                        for item in store.list_spans(
-                            project=str(args.get("project") or "") or None,
-                            task_id=str(args.get("task_id") or "") or None,
-                            work_id=str(args.get("work_id") or "") or None,
-                            agent_id=str(args.get("agent_id") or "") or None,
-                            session_id=str(args.get("session_id") or "") or None,
-                            limit=int(args.get("limit") or 50),
-                        )
-                    ],
-                }
-                data["total"] = len(data["items"])
-            data = _annotate_structured_tool_payload(name, data)
-            return json.dumps(data, indent=2, ensure_ascii=False)
-        except ProtocolViolation as exc:
-            data = exc.to_dict()
-            data = _annotate_structured_tool_payload(name, data)
-            return json.dumps(data, indent=2, ensure_ascii=False)
+        data = execute_work_session_action(
+            name=name,
+            args=args,
+            session_id=session_id,
+            dependencies=WorkSessionActionDependencies(task_mutation_guard=_task_mutation_requires_owned_claim),
+        )
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name in {
         "clerk_draft_report",
@@ -10517,207 +9952,30 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         "reject_checkpoint_draft",
     }:
         from app.dependencies import get_llm_gateway, get_ollama, get_qdrant
-        from app.services.checkpoint_draft_service import (
-            DraftValidationError,
-            approve_checkpoint_draft,
-            draft_checkpoint_from_spans,
-            get_checkpoint_draft,
-            reject_checkpoint_draft,
-            revise_checkpoint_draft,
+        data = await execute_checkpoint_draft_action(
+            name=name,
+            args=args,
+            dependencies=CheckpointDraftActionDependencies(
+                llm_gateway=get_llm_gateway(),
+                qdrant=get_qdrant(),
+                ollama=get_ollama(),
+            ),
         )
-
-        try:
-            if name == "clerk_draft_report":
-                if str(args.get("raw_notes") or "").strip():
-                    from app.services.memory_scribe_service import draft_task_checkpoint
-
-                    data = await draft_task_checkpoint(
-                        {
-                            **args,
-                            "reason": str(args.get("reason") or "clerk_draft_report"),
-                        },
-                        get_llm_gateway(),
-                    )
-                    data["clerk_mode"] = "raw_notes"
-                    data["mutates_memory"] = False
-                    data["recommended_next_tool"] = "record_task_checkpoint" if data.get("validation_report", {}).get("can_approve") else "revise_notes_or_add_evidence"
-                else:
-                    data = (
-                        await draft_checkpoint_from_spans(
-                            {
-                                **args,
-                                "reason": str(args.get("reason") or "clerk_draft_report"),
-                                "preserve_evidence": bool(args.get("preserve_evidence", True)),
-                            },
-                            get_llm_gateway(),
-                        )
-                    ).model_dump(mode="json")
-                    data["clerk_mode"] = "stenographer_spans"
-                    data["mutates_memory"] = False
-                    data["recommended_next_tool"] = _checkpoint_draft_recommended_next_tool(data)
-            elif name == "draft_checkpoint_from_spans":
-                data = (
-                    await draft_checkpoint_from_spans(args, get_llm_gateway())
-                ).model_dump(mode="json")
-                data["mutates_memory"] = False
-                data["recommended_next_tool"] = _checkpoint_draft_recommended_next_tool(data)
-            elif name == "get_checkpoint_draft":
-                record = get_checkpoint_draft(
-                    str(args["draft_id"]),
-                    int(args["version"]) if args.get("version") is not None else None,
-                )
-                data = record.model_dump(mode="json")
-                if str(args.get("view") or "preview") == "preview":
-                    data = {
-                        "draft_id": data["draft_id"],
-                        "version": data["version"],
-                        "status": data["status"],
-                        "project": data["project"],
-                        "task_id": data["task_id"],
-                        "work_id": data["work_id"],
-                        "preview": data["preview"],
-                        "validation_report": data["validation_report"],
-                        "metrics": data["metrics"],
-                        "content_hash": data["content_hash"],
-                        "source_span_ids": data["source_span_ids"],
-                        "recommended_next_tool": _checkpoint_draft_recommended_next_tool(data),
-                    }
-            elif name == "revise_checkpoint_draft":
-                data = revise_checkpoint_draft(
-                    str(args["draft_id"]),
-                    args.get("patch") or {},
-                    revised_by=str(args.get("revised_by") or "codex"),
-                ).model_dump(mode="json")
-                data["mutates_memory"] = False
-                data["recommended_next_tool"] = _checkpoint_draft_recommended_next_tool(data)
-            elif name == "approve_checkpoint_draft":
-                before_approve = get_checkpoint_draft(
-                    str(args["draft_id"]),
-                    int(args["version"]),
-                )
-                was_approved = before_approve.status == "approved"
-                data = (
-                    await approve_checkpoint_draft(
-                        str(args["draft_id"]),
-                        int(args["version"]),
-                        approved_by=str(args.get("approved_by") or "codex"),
-                        qdrant=get_qdrant(),
-                        ollama=get_ollama(),
-                    )
-                ).model_dump(mode="json")
-                data["mutates_memory"] = True
-                data["saved_by_reference"] = True
-                data["already_approved"] = was_approved
-                data["recommended_next_tool"] = _checkpoint_draft_recommended_next_tool(data)
-            else:
-                data = reject_checkpoint_draft(
-                    str(args["draft_id"]),
-                    int(args["version"]),
-                    rejected_by=str(args.get("rejected_by") or "codex"),
-                    reason=str(args.get("reason") or ""),
-                ).model_dump(mode="json")
-                data["mutates_memory"] = False
-            data = _annotate_structured_tool_payload(name, data)
-            return json.dumps(data, indent=2, ensure_ascii=False)
-        except DraftValidationError as exc:
-            data = _annotate_structured_tool_payload(name, exc.to_dict())
-            return json.dumps(data, indent=2, ensure_ascii=False)
+        data = _annotate_structured_tool_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name in {"report_task_checkpoint", "record_task_checkpoint"}:
-        from app.services.mcp_session_store import get_session_store
-
-        lease_guard = _task_mutation_requires_owned_claim(
-            project=str(args.get("project") or "mnemoforge"),
-            task_id=str(args.get("task_id") or ""),
-            owner_agent=str(args.get("owner_agent") or args.get("agent_id") or args.get("acted_by") or "codex"),
-            owner_session_id=str(args.get("session_id") or session_id or ""),
-            tool_name=name,
-            work_token=str(args.get("work_token") or ""),
-            danger_mode=bool(args.get("danger_mode", False)),
-            danger_confirmation=str(args.get("danger_confirmation") or ""),
+        return await execute_task_checkpoint_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            session_id=session_id,
+            dependencies=TaskCheckpointActionDependencies(
+                post=_post,
+                get=_get,
+                task_mutation_guard=_task_mutation_requires_owned_claim,
+            ),
         )
-        if lease_guard:
-            lease_guard = _annotate_structured_tool_payload(name, lease_guard)
-            return json.dumps(lease_guard, indent=2, ensure_ascii=False)
-
-        payload = build_report_task_checkpoint_payload(args)
-        task_id = str(args["task_id"]).strip()
-        stage = str(args["stage"]).strip().lower()
-        status_tag = next((tag for tag in payload.get("tags", []) if str(tag).startswith("task_status:")), "")
-        status = str(args.get("status") or "").strip().lower()
-        if not status and isinstance(status_tag, str) and ":" in status_tag:
-            status = status_tag.split(":", 1)[1]
-        if not status:
-            status = "active"
-        if session_id:
-            try:
-                await get_session_store().patch_context(
-                    session_id,
-                    {
-                        "current_task_checkpoint": {
-                            "project": str(args["project"]).strip(),
-                            "task_id": task_id,
-                            "stage": stage,
-                            "status": status,
-                            "summary": str(args["summary"]).strip(),
-                            "blockers": [str(item).strip() for item in (args.get("blockers") or []) if str(item).strip()],
-                            "next_step": str(args.get("next_step") or "").strip(),
-                            "reason": str(args.get("reason") or "").strip(),
-                        },
-                        "task_checkpoint_recorded": False,
-                    },
-                )
-            except Exception:
-                pass
-        scope_guard_error = await _checkpoint_scope_guard(api_base, args)
-        if scope_guard_error:
-            return json.dumps(scope_guard_error, indent=2, ensure_ascii=False)
-        data = await _post(api_base, f"/project/tasks/{quote(task_id, safe='')}/changes", payload)
-        if data.get("id"):
-            data["stage_evidence"] = f"checkpoint:{data['id']}"
-        handoff_data = None
-        handoff_error = None
-        if name == "record_task_checkpoint" and stage in _CHECKPOINT_HANDOFF_STAGES:
-            try:
-                handoff_data = await _post(api_base, "/models/handoff", _checkpoint_handoff_payload(args, stage=stage, status=status))
-            except Exception as exc:
-                handoff_error = str(exc)
-        if session_id:
-            try:
-                await get_session_store().patch_context(
-                    session_id,
-                    {
-                        "current_task_checkpoint": {
-                            "project": str(args["project"]).strip(),
-                            "task_id": task_id,
-                            "stage": stage,
-                            "status": status,
-                            "summary": str(args["summary"]).strip(),
-                            "blockers": [str(item).strip() for item in (args.get("blockers") or []) if str(item).strip()],
-                            "next_step": str(args.get("next_step") or "").strip(),
-                            "reason": str(args.get("reason") or "").strip(),
-                            "recorded_at": time.time(),
-                            "stage_evidence": data.get("stage_evidence", ""),
-                        },
-                        "task_checkpoint_recorded": True,
-                        "task_checkpoint_recorded_at": time.time(),
-                        "stage_evidence": data.get("stage_evidence", ""),
-                    },
-                )
-            except Exception:
-                pass
-        data["task_id"] = task_id
-        data["stage"] = stage
-        data["status"] = status
-        if handoff_data:
-            data["handoff_packet_created"] = True
-            data["handoff_memory_id"] = handoff_data.get("memory_id")
-            data["handoff_label"] = handoff_data.get("handoff_label")
-        elif name == "record_task_checkpoint":
-            data["handoff_packet_created"] = False
-            if handoff_error:
-                data["handoff_error"] = handoff_error
-        return format_task_checkpoint_response(data)
 
     elif name == "reopen_task":
         task_id = str(args["task_id"]).strip()
@@ -10725,185 +9983,39 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         data = await _post(api_base, f"/project/tasks/{quote(task_id, safe='')}/reopen", payload)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
-    elif name == "list_tool_families":
-        data = _build_tool_families_payload(
-            include_compatibility_note=bool(args.get("include_compatibility_note", True)),
+    elif name in {"list_tool_families", "tool_family_tools", "tool_explain", "tool_recommend", "tool_feedback"}:
+        return await execute_tool_discovery_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            session_id=session_id,
+            dependencies=ToolDiscoveryActionDependencies(
+                post=_post,
+                build_tool_families_payload=_build_tool_families_payload,
+                build_family_tools_payload=_build_family_tools_payload,
+                build_tool_explanation=_build_tool_explanation,
+                build_tool_recommendation=_build_tool_recommendation,
+                get_tool_stage=get_tool_stage,
+                record_tool_feedback=record_tool_feedback,
+                annotate_payload=_annotate_structured_tool_payload,
+            ),
         )
-        data = _annotate_structured_tool_payload(name, data)
-        return format_list_tool_families_response(data)
 
-    elif name == "tool_family_tools":
-        family = str(args["family"]).strip()
-        depth = str(args.get("depth", "brief")).strip() or "brief"
-        data = _build_family_tools_payload(
-            family,
-            depth=depth,
-            limit=int(args.get("limit", 12)),
+    elif name in {"resolve_artifact", "reopen_artifact"}:
+        return await execute_artifact_lifecycle_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=ArtifactLifecycleActionDependencies(get=_get, post=_post, patch=_patch),
         )
-        data = _annotate_structured_tool_payload(name, data)
-        return format_tool_family_tools_response(data)
-
-    elif name == "tool_explain":
-        tool_name = str(args["tool_name"]).strip()
-        task_context = str(args.get("task_context") or "").strip()
-        data = _build_tool_explanation(tool_name, task_context=task_context)
-        data = _annotate_structured_tool_payload(name, data)
-        return format_tool_explain_response(data)
-
-    elif name == "tool_recommend":
-        task = str(args["task"]).strip()
-        project_id = str(args.get("project_id") or "").strip()
-        top_n = int(args.get("top_n", 3))
-        data = _build_tool_recommendation(task, project_id=project_id, top_n=top_n)
-        if project_id:
-            try:
-                project_bundle = await _post(
-                    api_base,
-                    "/project/enrich-task",
-                    {
-                        "project_id": project_id,
-                        "task": task,
-                        "max_components": 3,
-                    },
-                )
-                project_calls = project_bundle.get("recommended_mcp_calls") or []
-                if project_calls:
-                    data["project_recommended_calls"] = project_calls[:top_n]
-                    data["project_context_summary"] = str(project_bundle.get("context") or "").strip()[:1200]
-            except Exception:
-                pass
-        data = _annotate_structured_tool_payload(name, data)
-        return format_tool_recommend_response(data)
-
-    elif name == "tool_feedback":
-        from app.services.learning_store import get_learning_store
-
-        tool_name = str(args["tool_name"]).strip()
-        tool_stage = str(args.get("tool_stage") or get_tool_stage(tool_name)).strip() or "testing"
-        valence = str(args["valence"]).strip().lower()
-        worked = bool(args.get("worked", valence == "positive"))
-        scope = str(args.get("scope") or "").strip()
-        what_was_tested = str(args.get("what_was_tested") or "").strip()
-        expected_behavior = str(args.get("expected_behavior") or "").strip()
-        observed_behavior = str(args.get("observed_behavior") or "").strip()
-        friction = str(args.get("friction") or "").strip()
-        suggestion = str(args.get("suggestion") or "").strip()
-        next_action = str(args.get("next_action") or "").strip()
-        assessment = str(args.get("assessment") or "").strip()
-        task_context = str(args.get("task_context") or "").strip()
-        missing_fields = args.get("missing_fields") or []
-        if isinstance(missing_fields, str):
-            missing_fields = [missing_fields]
-        payload = {
-            "tool_name": tool_name,
-            "tool_stage": tool_stage,
-            "project_id": str(args.get("project_id") or "").strip(),
-            "task_context": task_context,
-            "friction": friction,
-            "suggestion": suggestion,
-            "missing_fields": [str(item).strip() for item in missing_fields if str(item).strip()],
-            "worked": worked,
-            "agent_id": str(args.get("agent_id") or "mcp-agent").strip() or "mcp-agent",
-            "session_id": str(args.get("session_id") or session_id or "").strip(),
-        }
-        valence_for_store = "positive" if worked and valence != "negative" else "negative"
-        magnitude = 0.9 if valence_for_store == "positive" else 0.4
-        store = get_learning_store()
-        feedback_id = await store.write_feedback(
-            valence=valence_for_store,
-            episode_id=payload["session_id"],
-            magnitude=magnitude,
-            source="mcp_tool_feedback",
-            payload=payload,
-        )
-        try:
-            record_tool_feedback(
-                tool_name=tool_name,
-                valence=valence_for_store,
-                tool_stage=tool_stage,
-                worked=worked,
-                friction=friction,
-                suggestion=suggestion,
-                task_context=task_context,
-                project_id=payload["project_id"],
-                agent_id=payload["agent_id"],
-                session_id=payload["session_id"],
-                missing_fields=payload["missing_fields"],
-            )
-        except Exception:
-            pass
-        try:
-            await store.write_event(
-                event_type="artifact_feedback",
-                agent_id=payload["agent_id"],
-                project=payload["project_id"],
-                transport="mcp",
-                episode_id=payload["session_id"],
-                context_signature=f"tool={tool_name};stage={tool_stage};transport=mcp",
-                payload={
-                    "tool_name": tool_name,
-                    "tool_stage": tool_stage,
-                    "valence": valence_for_store,
-                    "worked": worked,
-                    "friction": friction,
-                    "suggestion": suggestion,
-                "missing_fields": payload["missing_fields"],
-                "task_context": task_context,
-            },
-        )
-        except Exception:
-            pass
-        data = _build_tool_feedback_envelope(
-            tool_name=tool_name,
-            tool_stage=tool_stage,
-            valence=valence_for_store,
-            worked=worked,
-            friction=friction,
-            suggestion=suggestion,
-            task_context=task_context,
-            project_id=payload["project_id"],
-            agent_id=payload["agent_id"],
-            session_id=payload["session_id"],
-            missing_fields=payload["missing_fields"],
-            feedback_id=feedback_id,
-            assessment=assessment or None,
-            scope=scope,
-            what_was_tested=what_was_tested,
-            expected_behavior=expected_behavior,
-            observed_behavior=observed_behavior,
-            next_action=next_action,
-        )
-        return format_tool_feedback_response(data)
-
-    elif name == "resolve_artifact":
-        artifact_key = args["artifact_key"]
-        payload = {
-            "acted_by": args.get("acted_by", "user"),
-            "action_source": args.get("action_source", "inline_user_approval"),
-            "reason": args.get("reason", ""),
-        }
-        data = await _post(api_base, f"/artifacts/{quote(artifact_key, safe='')}/resolve", payload)
-        return json.dumps(data, indent=2, ensure_ascii=False)
-
-    elif name == "reopen_artifact":
-        artifact_key = args["artifact_key"]
-        project = args.get("project")
-        if not project and ":" in artifact_key:
-            project = artifact_key.split(":", 2)[1]
-        payload = {
-            "project": project,
-            "status": args.get("status", "active"),
-            "reason": args.get("reason", "reopen_artifact"),
-            "acted_by": args.get("acted_by", "user"),
-            "action_source": args.get("action_source", "unified_artifact"),
-            "source": args.get("source", "unified-artifact"),
-        }
-        data = await _post(api_base, f"/artifacts/{quote(artifact_key, safe='')}/reopen", payload)
-        return json.dumps(data, indent=2, ensure_ascii=False)
 
     elif name == "memory_health":
-        data = await _get(api_base, "/health")
-        return json.dumps(data, indent=2, ensure_ascii=False)
+        return await execute_runtime_utility_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
+        )
 
     elif name == "ingest_file":
         data = await _post(api_base, "/ingest/file", args)
@@ -11006,12 +10118,13 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
 
         sections.append(
             "EXPERT HELPER GUIDANCE:\n"
-            "  Start project work with mailbox_state for the current public workflow packet.\n"
-            "  Use mailbox_submit/mailbox_get for the public workflow protocol before falling back to specialized tools.\n"
-            "  Use ask_project/project_work only when the mailbox packet directs a facade fallback or for natural human/project questions.\n"
-            "  Use get_task_execution_context when the mailbox packet explicitly directs task-context enrichment.\n"
+            "  Public surface first: help, state, get, submit.\n"
+            "  Do not bootstrap from mcp_settings.json, alwaysAllow, client allowlists, or cached full tool lists.\n"
+            "  Start project work with state for the current public workflow packet.\n"
+            "  Use get for public refs/read-only questions and submit for public forms before falling back to specialized tools.\n"
+            "  Use ask_project/project_work only when state/get/help directs a facade fallback or for natural human/project questions.\n"
             "  Stay on the compact surface unless you need deep/debug access.\n"
-            "  For task continuation, call pull_task_context first for read-only checkpoint replay; use reopen_task only to reactivate a closed/inactive task.\n"
+            "  For task continuation, use get with task:<project>:<task_id> or submit get_task_context first; use reopen_task only to reactivate a closed/inactive task.\n"
             "  Treat runtime details such as Docker test contours as project-specific hints from project context, not universal rules."
         )
 
@@ -11151,28 +10264,13 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             f"report_id={data.get('report_id', '?')} success={data.get('stats', {}).get('success')}"
         )
 
-    elif name == "load_instruction_layer":
-        from app.services.instruction_layers import (
-            get_l3_layer,
-            get_l4_layer,
+    elif name in {"load_instruction_layer", "list_instruction_layers"}:
+        return await execute_runtime_utility_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
         )
-        layer = args.get("layer", "L3")
-        if layer == "L3":
-            category = args.get("category", "memory_operations")
-            section = args.get("section", "api_reference")
-            content = get_l3_layer(category, section)
-        elif layer == "L4":
-            section = args.get("section", "advanced_patterns")
-            content = get_l4_layer(section)
-        else:
-            return f"Invalid layer: {layer}. Use 'L3' or 'L4'."
-        return format_load_instruction_layer_response(content)
-
-    elif name == "list_instruction_layers":
-        from app.services.instruction_layers import list_available_layers
-        payload = build_list_instruction_layers_payload(args)
-        layers = list_available_layers(payload.get("layer"))
-        return format_list_instruction_layers_response(layers)
 
     elif name == "search_project_knowledge":
         data = await _post(api_base, "/project/search", {
@@ -11355,22 +10453,21 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         data = await _get(api_base, "/admin/storage-trust")
         return format_storage_trust_response(data)
 
-    elif name == "send_coordination_message":
-        data = await _post(api_base, "/models/coordination/messages", build_send_coordination_message_payload(args))
-        return format_coordination_message(data, prefix="Sent coordination message")
-    elif name == "pickup_coordination_messages":
-        data = await _post(api_base, "/models/coordination/pickup", build_pickup_coordination_payload(args))
-        return format_coordination_list(data, empty_text=f"No new coordination messages for agent '{args['agent_id']}'.")
-    elif name == "list_coordination_messages":
-        data = await _get(api_base, f"/models/coordination/messages?{build_list_coordination_query(args)}")
-        return format_coordination_list(data, empty_text="No coordination messages matched the query.")
-    elif name == "update_coordination_message_status":
-        data = await _post(
-            api_base,
-            f"/models/coordination/messages/{args['message_id']}/status",
-            build_coordination_status_payload(args),
+    elif name in COORDINATION_ACTIONS:
+        return await execute_coordination_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=CoordinationActionDependencies(get=_get, post=_post),
         )
-        return format_coordination_message(data, prefix="Updated coordination message")
+
+    elif name == "get_task_status":
+        return await execute_runtime_utility_action(
+            name=name,
+            args=args,
+            api_base=api_base,
+            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
+        )
 
     elif name == "get_task_status":
         data = await _get(api_base, f"/tasks/{args['job_id']}")
@@ -11516,6 +10613,25 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
         requested_context_hygiene_mode = _extract_requested_context_hygiene_mode(init_params)
         negotiated_tool_catalog_mode = requested_tool_catalog_mode or str(inferred_modes.get("tool_catalog_mode") or "") or _default_tool_catalog_mode()
         negotiated_context_hygiene_mode = requested_context_hygiene_mode or str(inferred_modes.get("context_hygiene_mode") or "")
+        runtime_profile_id = _extract_runtime_profile_id(init_params, inferred_modes)
+        model_name = _extract_model_name(init_params)
+        agent_fingerprint = ""
+        try:
+            from app.services.mcp_agent_identity import build_fingerprint_from_identity, load_or_create_agent_identity
+
+            identity = load_or_create_agent_identity(
+                client_name=agent_name or "unknown-client",
+                runtime_profile_id=runtime_profile_id,
+            )
+            agent_fingerprint = build_fingerprint_from_identity(
+                identity,
+                workspace_root=os.getenv("MNEMOFORGE_WORKSPACE_ROOT") or os.getcwd(),
+                client_name=agent_name or "",
+                model_name=model_name,
+                runtime_profile_id=runtime_profile_id,
+            )
+        except Exception:
+            agent_fingerprint = ""
         inferred_context_mode = bool(inferred_modes.get("reason")) and (
             not requested_tool_catalog_mode or not requested_context_hygiene_mode
         )
@@ -11535,6 +10651,9 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
                 "dialogue_snippets": [],
                 "tool_catalog_mode": negotiated_tool_catalog_mode,
                 "context_hygiene_mode": negotiated_context_hygiene_mode,
+                "runtime_profile_id": runtime_profile_id,
+                "agent_fingerprint": agent_fingerprint,
+                "model_name": model_name,
             })
 
         result: dict = {
@@ -11561,6 +10680,16 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
                     result["_mnemoforge"]["context_hygiene"]["inference_reason"] = inferred_modes.get("reason")
                 if inferred_modes.get("model_context_window"):
                     result["_mnemoforge"]["context_hygiene"]["model_context_window"] = inferred_modes.get("model_context_window")
+            result["_mnemoforge"]["agent_identity"] = {
+                "agent_id": agent_id,
+                "agent_fingerprint": agent_fingerprint,
+                "runtime_profile_id": runtime_profile_id,
+                "model_name": model_name,
+                "claim_defaults": {
+                    "agent_fingerprint": agent_fingerprint,
+                    "runtime_profile_id": runtime_profile_id,
+                },
+            }
         return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
     elif method in ("initialized", "notifications/initialized"):

@@ -1,0 +1,52 @@
+{
+  "id": "create_law",
+  "title": "Create law",
+  "purpose": "Create a project law directly when the operator has already approved the statement, avoiding orphaned candidate-only workflows.",
+  "states": ["planning", "operator_review"],
+  "mode": "write",
+  "required_fields": ["project", "title", "statement"],
+  "optional_fields": ["rationale", "evidence", "status", "target_scope", "confirmed_by", "confirmation_source", "topic_path", "tags", "agent_id"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "title": {"type": "string"},
+      "statement": {"type": "string"},
+      "rationale": {"type": "string"},
+      "evidence": {"type": "array", "items": {"type": "string"}},
+      "status": {
+        "type": "string",
+        "enum": ["observed", "proposed", "reviewed", "user_confirmed", "active", "suppressed", "superseded", "archived"],
+        "default": "proposed"
+      },
+      "target_scope": {
+        "type": "string",
+        "enum": ["project", "family", "domain", "principle", "meta"],
+        "default": "project"
+      },
+      "confirmed_by": {"type": "string"},
+      "confirmation_source": {"type": "string", "default": "mailbox_submit.create_law"},
+      "topic_path": {"type": "string"},
+      "tags": {"type": "array", "items": {"type": "string"}},
+      "agent_id": {"type": "string", "default": "codex"}
+    },
+    "required": ["project", "title", "statement"]
+  },
+  "assistance": {
+    "clerk_available": true,
+    "can_use_stenography": true,
+    "default_mode": "validate"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["create_improvement"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "law_created",
+      "artifact_type": "project_law",
+      "mutation": true
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "artifact_key"]
+  },
+  "public_hint": "Default status is proposed. To create an active/user_confirmed law, provide confirmed_by explicitly."
+}

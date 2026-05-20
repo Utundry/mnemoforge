@@ -1,0 +1,40 @@
+{
+  "id": "store_memory",
+  "title": "Store memory",
+  "purpose": "Store a bounded project fact, note, or observation through the public mailbox instead of using internal memory tools directly.",
+  "states": ["planning", "implementation", "checkpointing", "handoff"],
+  "mode": "write",
+  "required_fields": ["project", "content"],
+  "optional_fields": ["memory_type", "category", "importance_score", "tags", "source", "agent_id"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "content": {"type": "string"},
+      "memory_type": {"type": "string", "default": "context"},
+      "category": {"type": "string", "default": "mnemoforge:fact"},
+      "importance_score": {"type": "number", "default": 0.6},
+      "tags": {"type": "array", "items": {"type": "string"}},
+      "source": {"type": "string", "default": "mailbox_submit.store_memory"},
+      "agent_id": {"type": "string", "default": "codex"}
+    },
+    "required": ["project", "content"]
+  },
+  "assistance": {
+    "clerk_available": true,
+    "can_use_stenography": true,
+    "default_mode": "validate"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["record_progress", "create_improvement"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "memory_stored",
+      "artifact_type": "memory",
+      "mutation": true
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "artifact_key"]
+  },
+  "public_hint": "Use this for plain facts or context that are not tasks, checkpoints, or laws."
+}

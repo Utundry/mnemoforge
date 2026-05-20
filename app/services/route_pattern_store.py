@@ -260,6 +260,46 @@ class RoutePatternStore:
             )
             self._conn.commit()
 
+    def disable_pattern(
+        self,
+        pattern_id: str,
+        *,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        pattern_id = str(pattern_id or "").strip()
+        if not pattern_id:
+            return False
+        now = time.time()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT metadata_json FROM route_patterns WHERE id = ? AND disabled = 0",
+                (pattern_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            current_metadata: dict[str, Any] = {}
+            try:
+                current_metadata = json.loads(row["metadata_json"] or "{}")
+            except Exception:
+                current_metadata = {}
+            current_metadata["disabled_reason"] = str(reason or "invalidated").strip() or "invalidated"
+            current_metadata["disabled_at"] = now
+            if metadata:
+                current_metadata["disabled_context"] = metadata
+            self._conn.execute(
+                """
+                UPDATE route_patterns
+                SET disabled = 1,
+                    metadata_json = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (json.dumps(current_metadata, ensure_ascii=False), now, pattern_id),
+            )
+            self._conn.commit()
+            return True
+
 
 _store: RoutePatternStore | None = None
 

@@ -187,3 +187,17 @@ class MailboxProtocolSpec(BaseModel):
     purpose: str = Field(..., min_length=1)
     external_actions: list[MailboxProtocolAction] = Field(default_factory=list)
     default_action: str = "mailbox_state"
+
+
+class MailboxFormVisibilityRule(BaseModel):
+    packet_profile: Literal["minimal", "compact", "normal", "diagnostic"]
+    hidden_form_ids: list[str] = Field(default_factory=list)
+    hide_only_when_form_ids_available: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+
+class MailboxFormPolicySpec(BaseModel):
+    version: int = Field(default=1, ge=1)
+    purpose: str = Field(..., min_length=1)
+    state_priorities: dict[WorkflowStateName, list[str]] = Field(default_factory=dict)
+    visibility_rules: list[MailboxFormVisibilityRule] = Field(default_factory=list)

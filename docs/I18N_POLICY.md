@@ -35,6 +35,13 @@ Do not mix languages in the same public guide unless the non-English text is a d
 - Avoid non-ASCII slogans, personal notes, or private shorthand in public release files.
 - Keep provider names, command names, environment variables, and API fields unchanged.
 
+## Internal Agent And Server Strings
+
+- Keep agent-facing, tool-facing, server-facing, and diagnostic strings in code English-only.
+- Use localized natural language only for direct user dialogue or explicitly localized UI/content surfaces.
+- Treat mojibake or corrupted encoding in code as a defect: do not copy it into new modules, and replace it with clear English UTF-8/ASCII text or remove the obsolete branch when safe.
+- MCP/tool contracts should remain language-stable so weaker agents can follow the workflow without language drift.
+
 ## Internal Notes
 
 Historical or planning documents may remain in their original language temporarily, but public release readiness should track and gradually translate them before they are linked from public entry points.

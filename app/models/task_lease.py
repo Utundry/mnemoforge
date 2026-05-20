@@ -16,6 +16,8 @@ class TaskLeaseRecord(BaseModel):
     task_id: str
     owner_agent: str
     session_id: str = ""
+    agent_fingerprint: str = ""
+    runtime_profile_id: str = ""
     status: str = Field("active", pattern=TASK_LEASE_STATUS_PATTERN)
     claimed_at: datetime
     heartbeat_at: datetime
@@ -32,6 +34,7 @@ class TaskLeaseClaimResult(BaseModel):
     status: str
     lease: TaskLeaseRecord
     previous_claim_expired: bool = False
+    same_fingerprint_reclaim: bool = False
     previous_lease: Optional[TaskLeaseRecord] = None
     work_token: str = ""
 

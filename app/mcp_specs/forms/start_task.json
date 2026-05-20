@@ -1,0 +1,43 @@
+{
+  "id": "start_task",
+  "title": "Start task session",
+  "purpose": "Claim a task lease, start a work session, and record an initial lightweight checkpoint through one public mailbox form.",
+  "states": ["planning", "implementation"],
+  "mode": "transition",
+  "required_fields": ["project", "task_id"],
+  "optional_fields": ["owner_agent", "session_id", "agent_fingerprint", "runtime_profile_id", "work_token", "lease_ttl_seconds", "auto_heartbeat", "heartbeat_seconds", "role", "summary"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "task_id": {"type": "string"},
+      "owner_agent": {"type": "string", "default": "codex"},
+      "session_id": {"type": "string"},
+      "agent_fingerprint": {"type": "string"},
+      "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
+      "work_token": {"type": "string"},
+      "lease_ttl_seconds": {"type": "integer", "minimum": 5, "maximum": 86400, "default": 900},
+      "auto_heartbeat": {"type": "boolean", "default": true},
+      "heartbeat_seconds": {"type": "number", "minimum": 1},
+      "role": {"type": "string", "default": "worker"},
+      "summary": {"type": "string", "default": "Task claimed; work session started."}
+    },
+    "required": ["project", "task_id"]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "none"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["claim_task", "get_task_context"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "task_started",
+      "mutation": true
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "lease", "work_token", "work_session"]
+  },
+  "public_hint": "Use this when you are beginning real implementation work; keep the returned work_token for checkpoints, finish, or recovery."
+}
