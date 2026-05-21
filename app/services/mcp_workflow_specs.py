@@ -11,6 +11,7 @@ from app.models.mcp_workflow import (
     MailboxFormSpec,
     MailboxProtocolSpec,
     McpRouteCatalogSpec,
+    McpToolContractCatalogSpec,
     McpToolFamilyRegistry,
     McpToolSurfaceSpec,
     RuntimeProfileSpec,
@@ -138,6 +139,23 @@ def load_tool_surface_spec(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> McpToolSur
     return McpToolSurfaceSpec.model_validate(_load_json(path))
 
 
+def load_tool_contract_catalog_spec(
+    catalog: str,
+    *,
+    spec_root: Path = DEFAULT_SPEC_ROOT,
+) -> McpToolContractCatalogSpec:
+    catalog_name = str(catalog or "").strip()
+    path = spec_root / "tool_contracts" / f"{catalog_name}.json"
+    spec = McpToolContractCatalogSpec.model_validate(_load_json(path))
+    if spec.id != catalog_name:
+        raise WorkflowSpecError(f"Tool contract catalog id mismatch: expected {catalog_name}, got {spec.id}")
+    tool_names = [tool.name for tool in spec.tools]
+    duplicates = {tool_name for tool_name in tool_names if tool_names.count(tool_name) > 1}
+    if duplicates:
+        raise WorkflowSpecError(f"Duplicate tool contract names for {catalog_name}: {', '.join(sorted(duplicates))}")
+    return spec
+
+
 def list_mailbox_form_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> list[MailboxFormSpec]:
     forms_dir = spec_root / "forms"
     if not forms_dir.exists():
@@ -185,6 +203,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
     route_catalogs_by_facade = {catalog.facade: catalog for catalog in route_catalogs}
     tool_family_registry = load_tool_family_registry(spec_root=spec_root)
     tool_surface = load_tool_surface_spec(spec_root=spec_root)
+    public_tool_contracts = load_tool_contract_catalog_spec("public_surface", spec_root=spec_root)
     mailbox_forms = list_mailbox_form_specs(spec_root=spec_root)
     known_state_ids = {spec.id for spec in state_specs}
     known_toggle_ids = {toggle.id for toggle in feature_registry.toggles}
@@ -262,6 +281,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         ],
         "tool_families": [family.id for family in tool_family_registry.families],
         "tool_surface_public_entrypoints": tool_surface.public_entrypoints,
+        "public_tool_contracts": [tool.name for tool in public_tool_contracts.tools],
     }
 
 

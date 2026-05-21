@@ -5,156 +5,15 @@ from copy import deepcopy
 from typing import Any
 from urllib.parse import quote
 
+from app.services.mcp_workflow_specs import load_tool_contract_catalog_spec
 
-_SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "get": {
-        "name": "get",
-        "description": (
-            "Simple read entrypoint for weak/local models. Use ref for public addresses such as "
-            "task:mnemoforge:<id>, mailbox_get:memory:<project>:<id>, or mailbox_state:<project>:planning; "
-            "use query for natural read-only questions. The server chooses the safe read route."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "ref": {"type": "string", "description": "Public data reference/address to read."},
-                "query": {"type": "string", "description": "Natural read-only question when no ref is known."},
-                "question": {"type": "string", "description": "Alias for query."},
-                "project": {"type": "string", "default": "mnemoforge"},
-                "agent_id": {
-                    "type": "string",
-                    "description": "Optional reading agent identity for task or handoff-scoped packets.",
-                },
-                "state": {
-                    "type": "string",
-                    "default": "planning",
-                    "enum": [
-                        "planning",
-                        "implementation",
-                        "verification",
-                        "live_validation",
-                        "checkpointing",
-                        "handoff",
-                        "operator_review",
-                    ],
-                },
-                "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20},
-                "response_format": {"type": "string", "enum": ["auto", "json", "answer", "diagnostic"], "default": "auto"},
-                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
-                "diagnostic": {"type": "boolean", "default": False},
-            },
-        },
-    },
-    "put": {
-        "name": "put",
-        "description": (
-            "Compatibility alias for submit. Submit a public mailbox form by setting "
-            "form_id (or action) and payload; the server validates state, guardrails, and ownership before any mutation."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "form_id": {"type": "string", "description": "Public form id from help/get mailbox state."},
-                "action": {"type": "string", "description": "Alias for form_id."},
-                "payload": {"type": "object", "additionalProperties": True, "default": {}},
-                "project": {"type": "string", "default": "mnemoforge"},
-                "state": {
-                    "type": "string",
-                    "default": "planning",
-                    "enum": [
-                        "planning",
-                        "implementation",
-                        "verification",
-                        "live_validation",
-                        "checkpointing",
-                        "handoff",
-                        "operator_review",
-                    ],
-                },
-                "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
-                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
-                "diagnostic": {"type": "boolean", "default": False},
-            },
-        },
-    },
-    "submit": {
-        "name": "submit",
-        "description": (
-            "Simple form-submission entrypoint for weak/local models. Submit a public mailbox form by setting "
-            "form_id (or action) and payload; the server validates state, guardrails, and ownership before any mutation."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "form_id": {"type": "string", "description": "Public form id from state."},
-                "action": {"type": "string", "description": "Alias for form_id."},
-                "payload": {"type": "object", "additionalProperties": True, "default": {}},
-                "project": {"type": "string", "default": "mnemoforge"},
-                "state": {
-                    "type": "string",
-                    "default": "planning",
-                    "enum": [
-                        "planning",
-                        "implementation",
-                        "verification",
-                        "live_validation",
-                        "checkpointing",
-                        "handoff",
-                        "operator_review",
-                    ],
-                },
-                "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
-                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
-                "diagnostic": {"type": "boolean", "default": False},
-            },
-        },
-    },
-    "state": {
-        "name": "state",
-        "description": (
-            "Return the current public workflow/FSM state packet: allowed forms/actions, next safe action, "
-            "runtime-profile limits, and optional diagnostics when permitted."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project": {"type": "string", "default": "mnemoforge"},
-                "state": {
-                    "type": "string",
-                    "default": "planning",
-                    "enum": [
-                        "planning",
-                        "implementation",
-                        "verification",
-                        "live_validation",
-                        "checkpointing",
-                        "handoff",
-                        "operator_review",
-                    ],
-                },
-                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
-                "diagnostic": {"type": "boolean", "default": False},
-            },
-        },
-    },
-    "help": {
-        "name": "help",
-        "description": (
-            "Simple static guidance entrypoint for weak/local models. Explains the four-tool protocol "
-            "without returning the full dynamic workflow packet. Use state for current forms/actions."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project": {"type": "string", "default": "mnemoforge"},
-                "topic": {"type": "string", "description": "Optional user topic; currently returned as guidance context."},
-                "detail": {"type": "string", "enum": ["brief", "full"], "default": "brief"},
-                "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
-                "diagnostic": {"type": "boolean", "default": False},
-            },
-        },
-    },
+_DECLARATIVE_TOOL_DEFINITIONS = {
+    tool.name: tool.model_dump()
+    for tool in load_tool_contract_catalog_spec("public_surface").tools
+}
+
+
+_PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     "load_instruction_layer": {
         "name": "load_instruction_layer",
         "description": (
@@ -2323,6 +2182,12 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+}
+
+
+_SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
+    **_DECLARATIVE_TOOL_DEFINITIONS,
+    **_PYTHON_TOOL_DEFINITIONS,
 }
 
 

@@ -243,3 +243,16 @@ class McpToolSurfaceSpec(BaseModel):
     compatibility_tools: list[str] = Field(default_factory=list)
     compact_tool_names: list[str] = Field(default_factory=list)
     compact_fill_tools: list[str] = Field(default_factory=list)
+
+
+class McpToolDefinitionSpec(BaseModel):
+    name: str = Field(..., min_length=1)
+    description: str = Field(..., min_length=1)
+    inputSchema: dict[str, Any] = Field(default_factory=dict)
+
+
+class McpToolContractCatalogSpec(BaseModel):
+    version: int = Field(default=1, ge=1)
+    id: str = Field(..., min_length=1)
+    purpose: str = Field(..., min_length=1)
+    tools: list[McpToolDefinitionSpec] = Field(default_factory=list)

@@ -23,6 +23,7 @@ from app.services.mcp_workflow_specs import (
     load_runtime_profile_spec,
     load_state_spec,
     load_task_lease_spec,
+    load_tool_contract_catalog_spec,
     load_tool_family_registry,
     load_tool_surface_spec,
     validate_specs,
@@ -62,6 +63,7 @@ def test_default_workflow_specs_validate() -> None:
     assert "propose_law" in summary["project_rules_route_intents"]
     assert "tool_discovery" in summary["tool_families"]
     assert summary["tool_surface_public_entrypoints"] == ["help", "state", "get", "submit"]
+    assert summary["public_tool_contracts"] == ["help", "state", "get", "submit", "put"]
     assert {
         "claim_task",
         "close_task",
@@ -246,6 +248,15 @@ def test_tool_surface_priority_is_declarative() -> None:
     assert spec.public_entrypoints == ["help", "state", "get", "submit"]
     assert "mailbox_get" in spec.compatibility_tools
     assert spec.compact_tool_names[:4] == spec.public_entrypoints
+
+
+def test_public_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("public_surface")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert list(contracts)[:4] == ["help", "state", "get", "submit"]
+    assert contracts["get"].inputSchema["properties"]["response_format"]["default"] == "auto"
+    assert contracts["put"].description.startswith("Compatibility alias")
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:
