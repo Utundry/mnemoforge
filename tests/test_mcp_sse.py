@@ -1569,6 +1569,17 @@ class TestMcpToolExecution:
         data = json.loads(result)
         assert data["receipt"]["status"] == "conflict"
         assert "active owned claim" in data["receipt"]["message"]
+        assert "same task_id and agent_fingerprint" in data["receipt"]["next_safe_action"]
+        assert data["receipt"]["recommended_reclaim_call"] == {
+            "tool": "submit",
+            "form_id": "start_task",
+            "state": "planning",
+            "project": "alpha",
+            "payload": {
+                "project": "alpha",
+                "task_id": "task-1",
+            },
+        }
 
     async def test_simple_submit_start_task_compact_keeps_work_token_and_next_forms(self, monkeypatch):
         from app.services import stenographer_service as stenographer_mod
@@ -1609,6 +1620,75 @@ class TestMcpToolExecution:
             assert data["receipt"]["work_token"]
             assert data["receipt"]["next_state"] == "implementation"
             assert {"record_progress", "finish_task"} <= set(data["receipt"]["next_forms"])
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
+    async def test_simple_submit_start_task_reclaims_expired_same_fingerprint_lease(self, monkeypatch):
+        from datetime import timedelta
+
+        from app.services import stenographer_service as stenographer_mod
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            return {"id": f"checkpoint-{payload.get('stage')}", **payload}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        payload = {
+            "project": "alpha",
+            "task_id": "task-simple-ttl-reclaim",
+            "owner_agent": "codex",
+            "agent_fingerprint": "agentfp:simple-ttl-reclaim",
+            "auto_heartbeat": False,
+            "lease_ttl_seconds": 5,
+        }
+        try:
+            started = json.loads(
+                await mcp_sse._execute_tool(
+                    "submit",
+                    {
+                        "form_id": "start_task",
+                        "state": "planning",
+                        "project": "alpha",
+                        "payload": payload,
+                    },
+                    "http://test",
+                )
+            )
+            first_lease = lease_store.get_active_claim(project="alpha", task_id=payload["task_id"])
+            assert first_lease is not None
+            lease_store.expire_stale(now=first_lease.expires_at + timedelta(seconds=1))
+
+            reclaimed = json.loads(
+                await mcp_sse._execute_tool(
+                    "submit",
+                    {
+                        "form_id": "start_task",
+                        "state": "planning",
+                        "project": "alpha",
+                        "payload": payload,
+                    },
+                    "http://test",
+                )
+            )
+
+            assert reclaimed["receipt"]["status"] == "reclaimed_after_ttl"
+            assert reclaimed["receipt"]["work_token"]
+            assert reclaimed["receipt"]["work_token"] != started["receipt"]["work_token"]
+            assert reclaimed["receipt"]["work_session_resumed"] is True
+            assert reclaimed["receipt"]["work_session"]["work_id"] == started["receipt"]["work_session"]["work_id"]
+            assert reclaimed["receipt"]["reclaim"] == {
+                "same_fingerprint": True,
+                "reason": "previous_lease_expired",
+                "previous_lease_id": first_lease.lease_id,
+                "previous_status": "expired",
+            }
         finally:
             lease_store.close()
             stenographer_store.close()
@@ -1841,7 +1921,10 @@ class TestMcpToolExecution:
         assert put_result["result"]["title"] == "Use simple mailbox aliases."
 
     async def test_simple_get_compacts_task_payload_by_default_and_full_keeps_details(self, monkeypatch):
+        seen_args: list[dict] = []
+
         async def fake_pull_context(api_base: str, args: dict):
+            seen_args.append(dict(args))
             return {
                 "project": args["project"],
                 "task_id": args["task_id"],
@@ -1889,6 +1972,43 @@ class TestMcpToolExecution:
         assert "token_budget" not in compact["result"]
         assert full["result"]["available_layers"]["task_history"]["available"] is True
         assert full["result"]["token_budget"]["estimated_tokens"] == 9000
+        assert seen_args[0]["agent_id"] == ""
+
+    async def test_simple_get_task_ref_forwards_agent_identity_for_handoff_reads(self, monkeypatch):
+        seen_args: list[dict] = []
+
+        async def fake_pull_context(api_base: str, args: dict):
+            seen_args.append(dict(args))
+            return {
+                "project": args["project"],
+                "task_id": args["task_id"],
+                "status": "ready",
+                "task": {"title": "Handoff-aware task.", "status": "planning"},
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_pull_task_context_payload", fake_pull_context)
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "get")
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"ref": "task:alpha:task-123", "agent_id": "handoff-reader"},
+                "http://test",
+            )
+        )
+
+        assert result["result"]["task_id"] == "task-123"
+        assert tool["inputSchema"]["properties"]["agent_id"]["type"] == "string"
+        assert seen_args == [
+            {
+                "project": "alpha",
+                "task_id": "task-123",
+                "detail": "compact",
+                "include_handoffs": True,
+                "agent_id": "handoff-reader",
+                "limit": 10,
+            }
+        ]
 
     async def test_simple_get_accepts_auto_response_format_for_weak_clients(self, monkeypatch):
         async def fake_pull_context(api_base: str, args: dict):
@@ -6131,7 +6251,7 @@ class TestMcpToolExecution:
                 task_id="task-1",
                 owner_agent="claude",
                 session_id="sess-claude",
-                lease_ttl_seconds=30,
+                lease_ttl_seconds=900,
             )
             result = await mcp_sse._execute_tool(
                 "start_task_session",
@@ -6149,6 +6269,59 @@ class TestMcpToolExecution:
             assert data["owner_session_id"] == "sess-claude"
         finally:
             store.close()
+
+    async def test_start_task_session_resumes_same_task_work_session(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+        from app.services import stenographer_service as stenographer_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            if path.startswith("/project/tasks/") and path.endswith("/changes"):
+                return {"id": "checkpoint-resume-1", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            first = json.loads(
+                await mcp_sse._execute_tool(
+                    "start_task_session",
+                    {
+                        "project": "alpha",
+                        "task_id": "task-1",
+                        "agent_id": "codex",
+                        "session_id": "sess-codex",
+                        "auto_heartbeat": False,
+                    },
+                    "http://test",
+                )
+            )
+            resumed = json.loads(
+                await mcp_sse._execute_tool(
+                    "start_task_session",
+                    {
+                        "project": "alpha",
+                        "task_id": "task-1",
+                        "agent_id": "codex",
+                        "session_id": "sess-codex",
+                        "auto_heartbeat": False,
+                    },
+                    "http://test",
+                )
+            )
+
+            assert resumed["status"] == "started"
+            assert resumed["lease_status"] == "renewed"
+            assert resumed["work_session_resumed"] is True
+            assert resumed["work_session"]["work_id"] == first["work_session"]["work_id"]
+        finally:
+            lease_store.close()
+            stenographer_store.close()
 
     async def test_finish_task_session_completes_and_releases_claim(self, monkeypatch):
         from pathlib import Path

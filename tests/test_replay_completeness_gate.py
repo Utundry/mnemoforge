@@ -111,7 +111,8 @@ async def test_replay_completeness_v1_release_gate_reconstructs_fixture_project_
         },
         "http://test",
     )
-    assert json.loads(claimed)["status"] in {"claimed", "renewed"}
+    claimed_data = json.loads(claimed)
+    assert claimed_data["status"] in {"claimed", "renewed"}
 
     checkpoint = await mcp_sse._execute_tool(
         "record_task_checkpoint",
@@ -129,6 +130,7 @@ async def test_replay_completeness_v1_release_gate_reconstructs_fixture_project_
             "next_step": "Continue with the next implementation slice from replay_completeness_v1 output.",
             "acted_by": "codex",
             "to_agent": "codex",
+            "work_token": claimed_data["work_token"],
         },
         "http://test",
     )
@@ -136,7 +138,7 @@ async def test_replay_completeness_v1_release_gate_reconstructs_fixture_project_
     released = await mcp_sse._execute_tool(
         "release_task_claim",
         {
-            "lease_id": json.loads(claimed)["lease"]["lease_id"],
+            "lease_id": claimed_data["lease"]["lease_id"],
             "owner_agent": "codex",
             "session_id": "sess-gate",
             "reason": "checkpoint_recorded",

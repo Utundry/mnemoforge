@@ -8,7 +8,12 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from scripts.testing_guard import assert_db_backed_test_target
 
@@ -55,6 +60,14 @@ def _mcp_text(tool_name: str, arguments: dict[str, Any]) -> str:
     return str(content[0].get("text") or "")
 
 
+def _mcp_json(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    text = _mcp_text(tool_name, arguments)
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise AssertionError(f"{tool_name} returned a non-object JSON payload")
+    return data
+
+
 def _wait_health() -> None:
     deadline = time.time() + 90
     last_error = ""
@@ -86,31 +99,190 @@ def main() -> int:
 
         listed = _mcp("tools/list")
         tools = {tool.get("name") for tool in listed.get("result", {}).get("tools", [])}
-        for required in ("continue_task", "record_task_checkpoint", "enrich_task_with_context"):
+        for required in ("help", "state", "get", "submit"):
             _assert(required in tools, f"tools/list contains {required}")
 
-        improvement = _request(
-            "POST",
-            "/api/v1/improvements",
+        protocol_help = _mcp_json(
+            "help",
             {
-                "title": "Docker remote MCP replay fixture",
-                "description": "\n".join(
-                    [
-                        "Build an isolated Docker remote MCP replay fixture.",
-                        "Assumption: test storage is separate from working MnemoForge data.",
-                        "Constraint: client communicates over the Docker network.",
-                        "Definition of done: replay drill executes its selected first tool.",
-                    ]
-                ),
                 "project": project,
-                "agent_id": "docker-e2e",
-                "importance_score": 0.9,
-                "tags": ["docker-e2e", "remote-mcp", "replay"],
+                "detail": "brief",
+                "runtime_profile_id": "weak_mcp_operator",
             },
-            timeout=60.0,
         )
-        task_id = str(improvement["id"])
+        _assert(protocol_help.get("simple_interface", {}).get("tools") == ["help", "state", "get", "submit"], "help exposes four-tool protocol")
+
+        planning = _mcp_json(
+            "state",
+            {
+                "project": project,
+                "state": "planning",
+                "runtime_profile_id": "weak_mcp_operator",
+            },
+        )
+        planning_forms = {form.get("form_id") for form in planning.get("forms") or []}
+        _assert({"create_improvement", "start_task", "store_memory"} <= planning_forms, "planning state exposes weak-model forms")
+
+        memory = _mcp_json(
+            "submit",
+            {
+                "project": project,
+                "state": "planning",
+                "runtime_profile_id": "weak_mcp_operator",
+                "form_id": "store_memory",
+                "payload": {
+                    "project": project,
+                    "content": "Docker remote MCP semantic get smoke fact for mailbox memory lookup.",
+                    "category": "docker-e2e:simple-mailbox",
+                    "memory_type": "context",
+                    "importance_score": 0.2,
+                    "tags": ["docker-e2e", "simple-get"],
+                    "agent_id": "docker-e2e",
+                },
+            },
+        )
+        memory_id = str(memory.get("receipt", {}).get("id") or "")
+        _assert(bool(memory_id), "submit store_memory returns memory id")
+
+        semantic_get = _mcp_json(
+            "get",
+            {
+                "project": project,
+                "query": "Docker remote MCP semantic get smoke fact mailbox memory lookup",
+                "runtime_profile_id": "weak_mcp_operator",
+                "limit": 5,
+            },
+        )
+        _assert(semantic_get.get("receipt", {}).get("resource_kind") == "memory_search", "get(query) routes semantic reads to memory_search")
+        _assert(semantic_get.get("simple_interface", {}).get("route") == "memory_search", "get(query) exposes memory_search route")
+
+        simple_improvement = _mcp_json(
+            "submit",
+            {
+                "project": project,
+                "state": "planning",
+                "runtime_profile_id": "weak_mcp_operator",
+                "form_id": "create_improvement",
+                "payload": {
+                    "project": project,
+                    "title": "Docker remote MCP simple mailbox task",
+                    "summary": "Validate public mailbox task lifecycle over remote MCP.",
+                    "next_step": "Start, checkpoint, and finish through submit.",
+                    "importance_score": 0.2,
+                },
+            },
+        )
+        simple_task_id = str(simple_improvement.get("receipt", {}).get("task_id") or "")
+        _assert(bool(simple_task_id), "submit create_improvement returns task_id")
+
+        started = _mcp_json(
+            "submit",
+            {
+                "project": project,
+                "state": "planning",
+                "runtime_profile_id": "weak_mcp_operator",
+                "form_id": "start_task",
+                "payload": {
+                    "project": project,
+                    "task_id": simple_task_id,
+                    "owner_agent": "docker-e2e",
+                    "agent_fingerprint": f"docker-e2e:{project}",
+                    "runtime_profile_id": "weak_mcp_operator",
+                    "auto_heartbeat": False,
+                    "summary": "Remote simple mailbox lifecycle started.",
+                },
+            },
+        )
+        work_token = str(started.get("receipt", {}).get("work_token") or "")
+        _assert(started.get("receipt", {}).get("status") == "started", "submit start_task starts session")
+        _assert(bool(work_token), "submit start_task returns work_token")
+
+        progress = _mcp_json(
+            "submit",
+            {
+                "project": project,
+                "state": "implementation",
+                "runtime_profile_id": "weak_mcp_operator",
+                "form_id": "record_progress",
+                "payload": {
+                    "project": project,
+                    "task_id": simple_task_id,
+                    "owner_agent": "docker-e2e",
+                    "work_token": work_token,
+                    "summary": "Recorded simple mailbox remote lifecycle evidence.",
+                    "changed_files": ["scripts/docker_remote_mcp_e2e.py"],
+                    "verification": ["Remote simple mailbox progress accepted."],
+                    "next_step": "No follow-up.",
+                    "stage": "handoff",
+                },
+            },
+        )
+        _assert(progress.get("receipt", {}).get("status") == "accepted", "submit record_progress stores task evidence")
+
+        finished = _mcp_json(
+            "submit",
+            {
+                "project": project,
+                "state": "handoff",
+                "runtime_profile_id": "weak_mcp_operator",
+                "form_id": "finish_task",
+                "payload": {
+                    "project": project,
+                    "task_id": simple_task_id,
+                    "owner_agent": "docker-e2e",
+                    "work_token": work_token,
+                    "summary": "Finished remote simple mailbox lifecycle without repeating progress evidence.",
+                },
+            },
+        )
+        _assert(finished.get("receipt", {}).get("status") == "finished", "submit finish_task finishes after record_progress evidence")
+
+        improvement = _mcp_json(
+            "submit",
+            {
+                "project": project,
+                "state": "planning",
+                "runtime_profile_id": "weak_mcp_operator",
+                "form_id": "create_improvement",
+                "payload": {
+                    "project": project,
+                    "title": "Docker remote MCP replay fixture",
+                    "summary": "\n".join(
+                        [
+                            "Build an isolated Docker remote MCP replay fixture.",
+                            "Assumption: test storage is separate from working MnemoForge data.",
+                            "Constraint: client communicates over the Docker network.",
+                            "Definition of done: replay drill executes its selected first tool.",
+                        ]
+                    ),
+                    "next_step": "Record replay fixture task changes and checkpoint.",
+                    "importance_score": 0.9,
+                },
+            },
+        )
+        task_id = str(improvement.get("receipt", {}).get("task_id") or "")
         _assert(bool(task_id), "created linked improvement/task fixture")
+
+        replay_started = _mcp_json(
+            "submit",
+            {
+                "project": project,
+                "state": "planning",
+                "runtime_profile_id": "weak_mcp_operator",
+                "form_id": "start_task",
+                "payload": {
+                    "project": project,
+                    "task_id": task_id,
+                    "owner_agent": "docker-e2e",
+                    "agent_fingerprint": f"docker-e2e-replay:{project}",
+                    "runtime_profile_id": "weak_mcp_operator",
+                    "auto_heartbeat": False,
+                    "summary": "Remote replay fixture work started.",
+                },
+            },
+        )
+        replay_work_token = str(replay_started.get("receipt", {}).get("work_token") or "")
+        _assert(bool(replay_work_token), "replay fixture start_task returns work_token")
 
         for change_type, content in (
             ("decision", "Decision: remote MCP e2e must stay isolated from working storage."),
@@ -147,24 +319,48 @@ def main() -> int:
                 "next_step": "Invoke the replay drill selected first tool.",
                 "acted_by": "docker-e2e",
                 "to_agent": "docker-e2e",
+                "work_token": replay_work_token,
             },
         )
         _assert("Checkpoint recorded" in checkpoint_text, "record_task_checkpoint recorded checkpoint")
+        _assert("handoff_packet_created=True" in checkpoint_text, f"record_task_checkpoint created replay handoff text={checkpoint_text}")
 
-        replay_text = _mcp_text(
-            "continue_task",
+        replay_released = _mcp_json(
+            "submit",
             {
                 "project": project,
-                "task_id": task_id,
+                "state": "handoff",
+                "runtime_profile_id": "weak_mcp_operator",
+                "form_id": "release_task_claim",
+                "payload": {
+                    "project": project,
+                    "task_id": task_id,
+                    "owner_agent": "docker-e2e",
+                    "reason": "Read replay context after checkpoint.",
+                },
+            },
+        )
+        _assert(replay_released.get("receipt", {}).get("status") == "released", "replay fixture releases claim before public read")
+
+        replay_packet = _mcp_json(
+            "get",
+            {
+                "ref": f"task:{project}:{task_id}",
+                "project": project,
                 "agent_id": "docker-e2e",
-                "include_handoffs": True,
                 "detail": "full",
+                "runtime_profile_id": "weak_mcp_operator",
                 "limit": 10,
             },
         )
-        replay = json.loads(replay_text)
+        replay = replay_packet["result"]
+        _assert("replay_completeness" in replay, f"get(task ref, detail=full) exposes replay fields keys={sorted(replay.keys())}")
         _assert(replay["replay_completeness"]["status"] == "complete", "continue_task replay completeness complete")
-        _assert(replay["execution_readiness"]["status"] == "ready", "continue_task execution readiness ready")
+        readiness = replay["execution_readiness"]
+        _assert(
+            readiness["status"] == "ready",
+            f"continue_task execution readiness ready status={readiness['status']} missing={readiness.get('missing_evidence')}",
+        )
         _assert(replay["replay_drill"]["status"] == "ready", "continue_task replay drill ready")
 
         first_tool = replay["replay_drill"]["first_tool"]
@@ -206,24 +402,23 @@ def main() -> int:
         _assert(enrich_full.get("detail") == "full", "handoff enrich full detail expands full layer")
         _assert(len(str(enrich_full.get("context") or "")) >= len(str(enrich_compact.get("context") or "")), "handoff enrich full context is not smaller than compact context")
 
-        compact_text = _mcp_text(
-            "continue_task",
+        compact_packet = _mcp_json(
+            "get",
             {
+                "ref": f"task:{project}:{task_id}",
                 "project": project,
-                "task_id": task_id,
                 "agent_id": "docker-e2e",
-                "include_handoffs": True,
+                "runtime_profile_id": "weak_mcp_operator",
                 "limit": 10,
             },
         )
-        compact = json.loads(compact_text)
-        _assert(compact.get("detail") == "compact", "continue_task defaults to compact detail")
+        compact = compact_packet["result"]
+        _assert(compact_packet.get("simple_interface", {}).get("mode") == "ref", "get(task ref) uses public ref mode")
         _assert("replay_bundle" not in compact, "compact continue_task omits replay_bundle")
-        _assert(compact.get("available_layers", {}).get("task_history", {}).get("count", 0) >= 4, "compact continue_task exposes available layer index")
-        overhead = compact.get("token_overhead") or {}
-        _assert(bool(overhead.get("within_budget")), "compact continue_task stays within token overhead budget")
+        _assert(compact.get("task_id") == task_id, "compact get(task ref) keeps task identity")
+        _assert(compact.get("latest_checkpoint", {}).get("summary"), "compact get(task ref) keeps latest checkpoint summary")
 
-        print("[PASS] Docker remote MCP replay e2e completed")
+        print("[PASS] Docker remote MCP simple mailbox and replay e2e completed")
         return 0
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")

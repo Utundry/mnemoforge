@@ -403,14 +403,26 @@ async def mailbox_start_task(
         }
     actual_metadata = {"result_kind": "task_started", "mutation": True}
     health = evaluate_mailbox_postconditions(form, actual_metadata)
+    previous_lease = public_lease_payload(result.get("previous_lease"))
+    reclaim = _start_task_reclaim_payload(result=result, previous_lease=previous_lease)
+    reclaimed_after_ttl = reclaim.get("reason") == "previous_lease_expired"
+    resumed = bool(result.get("work_session_resumed"))
     receipt = {
-        "status": "started",
+        "status": "reclaimed_after_ttl" if reclaimed_after_ttl else "started",
         "form_id": form.id,
         "mode": form.mode,
-        "message": "Task session started.",
+        "message": (
+            "Task lease reclaimed after TTL expiry; the same-fingerprint work session is ready."
+            if reclaimed_after_ttl
+            else "Task session resumed."
+            if resumed
+            else "Task session started."
+        ),
         "lease": public_lease_payload(result.get("lease")),
         "work_token": result.get("work_token"),
         "work_session": result.get("work_session"),
+        "work_session_resumed": resumed,
+        "reclaim": reclaim,
         "auto_heartbeat": result.get("auto_heartbeat"),
         "next_state": "implementation",
         "next_forms": ["record_progress", "finish_task", "release_task_claim"],
@@ -1001,6 +1013,12 @@ async def mailbox_record_progress(
             danger_confirmation=str(payload.get("danger_confirmation") or ""),
         )
         if lease_guard:
+            reclaim_call = _record_progress_reclaim_call(
+                payload=payload,
+                project=project,
+                task_id=task_id,
+                lease_guard=lease_guard,
+            )
             return {
                 "state": state,
                 "project": project,
@@ -1008,6 +1026,7 @@ async def mailbox_record_progress(
                     "status": "conflict",
                     "form_id": form.id,
                     "message": "Task progress requires an active owned claim when task_id is provided.",
+                    "recommended_reclaim_call": reclaim_call,
                     "next_safe_action": lease_guard.get("next_safe_action", "Claim the task before recording task progress."),
                 },
             }
@@ -1096,6 +1115,47 @@ def _generated_mailbox_session_id(payload: dict[str, Any]) -> str:
     if fingerprint:
         return f"mailbox-auto-{owner}-{fingerprint}"[:120]
     return f"mailbox-auto-{uuid.uuid4().hex[:12]}"
+
+
+def _start_task_reclaim_payload(*, result: dict[str, Any], previous_lease: dict[str, Any]) -> dict[str, Any]:
+    if not result.get("same_fingerprint_reclaim"):
+        return {}
+    previous_status = str(previous_lease.get("status") or "").strip()
+    reason = "previous_lease_expired" if previous_status == "expired" else "same_fingerprint_reclaim"
+    return _compact(
+        {
+            "same_fingerprint": True,
+            "reason": reason,
+            "previous_lease_id": previous_lease.get("lease_id"),
+            "previous_status": previous_status,
+        }
+    )
+
+
+def _record_progress_reclaim_call(
+    *,
+    payload: dict[str, Any],
+    project: str,
+    task_id: str,
+    lease_guard: dict[str, Any],
+) -> dict[str, Any]:
+    if lease_guard.get("error") != "active_claim_required":
+        return {}
+    reclaim_payload = _compact(
+        {
+            "project": project,
+            "task_id": task_id,
+            "owner_agent": payload.get("owner_agent") or payload.get("agent_id"),
+            "agent_fingerprint": payload.get("agent_fingerprint"),
+        }
+    )
+    return {
+        "tool": "submit",
+        "form_id": "start_task",
+        "state": "planning",
+        "project": project,
+        "payload": reclaim_payload,
+    }
 
 
 def _record_closeout_spans_from_progress(

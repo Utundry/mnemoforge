@@ -1050,6 +1050,76 @@ def build_handoff_compact_enrich_context(bundle: ProjectContextBundle) -> str:
     return "\n".join(line for line in lines if line is not None).strip()
 
 
+def build_handoff_compact_enrich_layers(bundle: ProjectContextBundle) -> dict[str, Any]:
+    """Keep handoff enrichment inspectable without returning full source layers."""
+
+    def compact_row(row: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+        compact = {}
+        for field in fields:
+            value = row.get(field)
+            if value in (None, "", [], {}):
+                continue
+            if field in {"content", "description", "rationale", "statement", "observation"}:
+                value = _clip_text(value, 180)
+            compact[field] = value
+        return compact
+
+    triage = bundle.task_triage or {}
+    return {
+        "components": [
+            compact_row(row, ("component_id", "name", "key_files"))
+            for row in bundle.components[:3]
+        ],
+        "laws": [
+            compact_row(row, ("id", "title", "status", "statement", "rationale"))
+            for row in bundle.laws[:5]
+        ],
+        "improvements": [
+            compact_row(row, ("id", "title", "stage", "importance_score", "description"))
+            for row in bundle.improvements[:3]
+        ],
+        "runtime_hints": [
+            compact_row(row, ("id", "label", "content", "observation"))
+            for row in bundle.runtime_hints[:3]
+        ],
+        "memoirs": [
+            compact_row(row, ("id", "title", "timestamp"))
+            for row in bundle.memoirs[:3]
+        ],
+        "tasks": [
+            compact_row(row, ("task_id", "title", "status"))
+            for row in bundle.tasks[:3]
+        ],
+        "task_triage": {
+            "recommended_task_id": triage.get("recommended_task_id"),
+            "items": [
+                compact_row(row, ("task_id", "title", "status", "recommended_action"))
+                for row in list(triage.get("items") or [])[:3]
+            ],
+        },
+        "task_capture_candidates": [
+            compact_row(row, ("id", "kind", "task_id"))
+            for row in bundle.task_capture_candidates[:3]
+        ],
+        "docs_sections": [
+            compact_row(row, ("id", "name", "section_key", "projection_state"))
+            for row in bundle.docs_sections[:5]
+        ],
+        "promoted_canonicals": [
+            compact_row(row, ("id", "scope", "topic_path", "content"))
+            for row in bundle.promoted_canonicals[:3]
+        ],
+        "operational_instincts": [
+            compact_row(row, ("id", "label", "content"))
+            for row in bundle.operational_instincts[:3]
+        ],
+        "recommended_mcp_calls": [
+            compact_row(row, ("tool", "reason", "why", "arguments"))
+            for row in bundle.recommended_mcp_calls[:5]
+        ],
+    }
+
+
 def _canonical_signal(row: dict[str, Any]) -> tuple[str, str, str]:
     return (
         str(row.get("scope") or ""),

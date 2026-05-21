@@ -127,6 +127,8 @@ async def test_enrich_task_handoff_compact_uses_compact_law_projection(client, m
     assert "## Available Layers" in data["context"]
     assert data["available_layers"]["laws"]["count"] == 1
     assert data["token_budget"]["basis"] == "model_context_window_ratio"
+    assert data["laws"][0]["rationale"].startswith("This prevents silent architecture drift")
+    assert data["token_budget"]["within_soft_limit"] is True
 
     full_resp = await client.post(f"{PREFIX}/project/enrich-task", json={
         "project_id": "alpha",

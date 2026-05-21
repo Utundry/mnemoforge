@@ -73,10 +73,28 @@ from app.services.mcp_mailbox_actions import (
     build_mailbox_submit_packet as build_mailbox_action_submit_packet,
     public_mailbox_error_message,
 )
+from app.services.mcp_ask_project_actions import (
+    ask_project_query_text as _ask_project_query_text,
+    ask_project_response_format as _ask_project_response_format,
+    select_ask_project_lexical_route,
+)
 from app.services.mcp_mailbox_read import (
     MailboxReadDependencies,
     build_mailbox_get_response,
     build_mailbox_state_response,
+)
+from app.services.mcp_simple_read_actions import (
+    PublicRefDependencies,
+    SimpleReadDependencies,
+    build_simple_get_query_response,
+    build_simple_public_ref_response,
+)
+from app.services.mcp_simple_surface_actions import (
+    SimpleSurfaceDependencies,
+    build_simple_get_response,
+    build_simple_help_response,
+    build_simple_state_response,
+    build_simple_submit_response,
 )
 from app.services.mcp_task_lease_actions import (
     TaskLeaseActionDependencies,
@@ -2934,542 +2952,65 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
     return result
 
 
-def _mailbox_public_ref_address(args: dict[str, Any]) -> dict[str, str] | None:
-    ref = str(args.get("ref") or "").strip()
-    if not ref:
-        return None
-    if ref.startswith("mailbox_state:"):
-        return None
-    parts = ref.split(":")
-    if parts and parts[0] == "mailbox_get":
-        parts = parts[1:]
-    if not parts:
-        return None
-
-    default_project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
-    kind = parts[0].strip()
-    if kind == "artifact" and len(parts) >= 4:
-        artifact_type = parts[1].strip()
-        project = parts[2].strip() or default_project
-        local_id = ":".join(parts[3:]).strip()
-        if artifact_type and local_id:
-            return {
-                "kind": "artifact",
-                "artifact_type": artifact_type,
-                "project": project,
-                "local_id": local_id,
-                "artifact_key": f"{artifact_type}:{project}:{local_id}",
-            }
-    if kind in {"task", "improvement"} and len(parts) >= 3:
-        project = parts[1].strip() or default_project
-        local_id = ":".join(parts[2:]).strip()
-        if local_id:
-            return {
-                "kind": kind,
-                "artifact_type": kind,
-                "project": project,
-                "local_id": local_id,
-                "artifact_key": f"{kind}:{project}:{local_id}",
-            }
-    if kind in {"law", "rule_candidate", "candidate", "memory"} and len(parts) >= 2:
-        project = parts[1].strip() if len(parts) >= 3 else default_project
-        local_id = ":".join(parts[2:] if len(parts) >= 3 else parts[1:]).strip()
-        if local_id:
-            normalized_kind = "rule_candidate" if kind == "candidate" else kind
-            return {"kind": normalized_kind, "project": project or default_project, "local_id": local_id}
-    if len(parts) >= 3:
-        project = parts[1].strip() or default_project
-        local_id = ":".join(parts[2:]).strip()
-        if local_id:
-            return {"kind": kind, "project": project, "local_id": local_id}
-    return None
-
-
 async def _resolve_mailbox_public_ref(api_base: str, args: dict[str, Any]) -> dict[str, Any] | None:
-    address = _mailbox_public_ref_address(args)
-    if not address:
-        return None
+    return await build_simple_public_ref_response(
+        api_base=api_base,
+        args=args,
+        dependencies=PublicRefDependencies(
+            get=_get,
+            get_task_context=_build_pull_task_context_payload,
+            public_error_message=public_mailbox_error_message,
+        ),
+    )
 
-    kind = address["kind"]
-    project = address.get("project") or str(args.get("project") or "mnemoforge")
-    local_id = address.get("local_id") or ""
-    requested_ref = str(args.get("ref") or "").strip()
-    normalized_ref = address.get("artifact_key") or f"{kind}:{project}:{local_id}"
-    try:
-        if kind == "task":
-            result = await _build_pull_task_context_payload(
-                api_base,
-                {
-                    "project": project,
-                    "task_id": local_id,
-                    "detail": str(args.get("detail") or "compact"),
-                    "include_handoffs": True,
-                    "limit": int(args.get("limit") or 10),
-                },
-            )
-            next_safe_action = result.get("next_safe_action") or "Review task context before claiming or editing."
-        elif kind in {"improvement", "artifact"}:
-            artifact_key = address.get("artifact_key") or f"{kind}:{project}:{local_id}"
-            result = await _get(api_base, f"/artifacts/{quote(artifact_key, safe='')}")
-            next_safe_action = "Review this read-only artifact before choosing any mutating mailbox form."
-        elif kind == "law":
-            result = await _get(api_base, f"/laws/{quote(local_id, safe='')}")
-            next_safe_action = "Review this read-only law before proposing revisions or candidates."
-        elif kind == "rule_candidate":
-            result = await _get(api_base, f"/laws/candidates/{quote(local_id, safe='')}")
-            next_safe_action = "Review this read-only rule candidate before any promotion, revision, or review action."
-        elif kind == "memory":
-            result = await _get(api_base, f"/memories/{quote(local_id, safe='')}")
-            next_safe_action = "Review this read-only memory before creating new facts or updates."
-        else:
-            return {
-                "state": str(args.get("state") or "planning"),
-                "project": project,
-                "receipt": {
-                    "status": "unsupported_ref_kind",
-                    "message": f"Mailbox public ref kind is not yet mapped to a read-only resolver: {kind}",
-                    "data_ref": normalized_ref,
-                    "requested_ref": requested_ref,
-                    "supported_ref_kinds": ["task", "improvement", "artifact", "law", "rule_candidate", "memory"],
-                    "next_safe_action": "Use mailbox_state for available forms, or ask_project/project_work for natural read-only lookup.",
-                },
-                "next_safe_action": "Use mailbox_state for available forms, or ask_project/project_work for natural read-only lookup.",
-            }
-    except Exception as exc:
-        return {
-            "state": str(args.get("state") or "planning"),
-            "project": project,
-            "receipt": {
-                "status": "not_found",
-                "message": public_mailbox_error_message(exc),
-                "data_ref": normalized_ref,
-                "requested_ref": requested_ref,
-                "next_safe_action": "Verify the public ref from the latest list/open/context result, then request mailbox_get again.",
-            },
-            "next_safe_action": "Verify the public ref from the latest list/open/context result, then request mailbox_get again.",
-        }
 
-    return {
-        "state": str(args.get("state") or "planning"),
-        "project": project,
-        "receipt": {
-            "status": "accepted",
-            "message": "Public mailbox reference resolved through a read-only handler.",
-            "resource_kind": kind,
-            "data_ref": normalized_ref,
-            "requested_ref": requested_ref,
-            "next_safe_action": next_safe_action,
-        },
-        "result": result,
-        "next_safe_action": next_safe_action,
-    }
+def _simple_surface_dependencies() -> SimpleSurfaceDependencies:
+    return SimpleSurfaceDependencies(
+        get_session_identity_defaults=_get_session_identity_defaults,
+        resolve_public_ref=_resolve_mailbox_public_ref,
+        resolve_query=lambda base, query_args, sid: build_simple_get_query_response(
+            api_base=base,
+            args=query_args,
+            session_id=sid,
+            dependencies=SimpleReadDependencies(
+                post=_post,
+                query_project_expert=lambda expert_base, expert_args, expert_sid: _build_ask_project_payload(
+                    expert_base,
+                    expert_args,
+                    session_id=expert_sid,
+                ),
+                extract_task_id_like=_extract_task_id_like_from_text,
+            ),
+        ),
+        submit_mailbox_form=lambda submit_args, payload, base, sid: _build_mailbox_submit_packet(
+            args=submit_args,
+            payload=payload,
+            api_base=base,
+            session_id=sid,
+        ),
+        tool_surface_role=_tool_surface_role,
+    )
 
 
 async def _build_simple_help_payload(args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
-    project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
-    topic = str(args.get("topic") or "").strip()
-    detail = str(args.get("detail") or "brief").strip().lower()
-    if detail not in {"brief", "full"}:
-        detail = "brief"
-    guide: dict[str, Any] = {
-        "status": "ok",
-        "project": project,
-        "purpose": "Use the four public tools as a stable mailbox protocol.",
-        "tools": {
-            "help": "Static protocol guide. Use this when you do not know what to call.",
-            "state": "Current workflow/FSM packet with allowed public forms and next safe action.",
-            "get": "Read data by public ref/address or ask a natural read-only question.",
-            "submit": "Submit a public form/action payload; server applies guardrails before mutation.",
-            "put": "Compatibility alias for submit.",
-        },
-        "examples": [
-            {"tool": "state", "arguments": {"project": project, "state": "planning"}},
-            {"tool": "get", "arguments": {"ref": f"task:{project}:<task_id>"}},
-            {"tool": "get", "arguments": {"query": "list active tasks", "project": project}},
-            {"tool": "submit", "arguments": {"action": "get_task_context", "payload": {"project": project, "task_id": "<task_id>"}}},
-        ],
-        "rules": [
-            "Use get/state before submit when context is incomplete.",
-            "Do not invent internal refs; use refs returned by get/state/results.",
-            "Diagnostics are optional parameters and may be ignored for weak runtime profiles.",
-        ],
-        "topic": topic,
-        "next_safe_action": "Call state for the current workflow packet, or get for a read-only request.",
-    }
-    if detail == "full":
-        guide["legacy_compatibility"] = {
-            "mailbox_state": "legacy alias for state",
-            "mailbox_get": "legacy read-by-ref surface behind get",
-            "mailbox_submit": "legacy form submit surface behind submit",
-        }
-    guide["simple_interface"] = {
-        "tools": ["help", "state", "get", "submit"],
-        "guide": "Call help for protocol guidance.",
-        "state": "Call state for current forms/actions.",
-        "read": "Call get with ref for a known public address, or query for a natural read-only question.",
-        "write": "Call submit with form_id/action and payload from the state packet. put remains a compatibility alias.",
-        "topic": topic,
-    }
-    return guide
-
-
-def _compact_public_form(form: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "form_id": form.get("form_id"),
-        "title": form.get("title"),
-        "mode": form.get("mode"),
-        "required_fields": form.get("required_fields") or [],
-        "optional_fields": form.get("optional_fields") or [],
-        "hint": form.get("hint"),
-    }
-
-
-def _public_recommendation_for_tool(tool_name: Any, result: dict[str, Any]) -> dict[str, Any]:
-    internal_tool = str(tool_name or "").strip()
-    project = str(result.get("project") or "mnemoforge").strip() or "mnemoforge"
-    task_id = str(result.get("task_id") or "").strip()
-    if internal_tool in {"record_task_checkpoint", "report_task_checkpoint"}:
-        payload: dict[str, Any] = {"project": project}
-        if task_id:
-            payload["task_id"] = task_id
-        return {
-            "tool": "submit",
-            "form_id": "record_progress",
-            "payload": payload,
-            "why": "Use the public form-submission surface instead of calling checkpoint tools directly.",
-            "internal_tool": internal_tool,
-        }
-    if internal_tool in {"pull_task_context", "get_task_execution_context"}:
-        payload = {"project": project}
-        if task_id:
-            payload["task_id"] = task_id
-        return {
-            "tool": "submit",
-            "form_id": "get_task_context",
-            "payload": payload,
-            "why": "Use the public form-submission surface for task context.",
-            "internal_tool": internal_tool,
-        }
-    if internal_tool:
-        return {
-            "tool": internal_tool if _tool_surface_role(internal_tool) == "public_entrypoint" else "state",
-            "why": "Request the current workflow state before using specialized fallback tools.",
-            "internal_tool": internal_tool if _tool_surface_role(internal_tool) != "public_entrypoint" else "",
-        }
-    return {"tool": "state", "why": "Request the current workflow state before choosing the next action."}
-
-
-def _compact_task_resource(result: dict[str, Any]) -> dict[str, Any]:
-    task = result.get("task") if isinstance(result.get("task"), dict) else {}
-    latest = result.get("latest_checkpoint") if isinstance(result.get("latest_checkpoint"), dict) else {}
-    readiness = result.get("execution_readiness") if isinstance(result.get("execution_readiness"), dict) else {}
-    public_recommendation = _public_recommendation_for_tool(result.get("recommended_first_tool"), result)
-    return {
-        "task_id": result.get("task_id") or task.get("task_id"),
-        "status": result.get("status"),
-        "title": task.get("title") or result.get("title"),
-        "task_status": task.get("status"),
-        "latest_checkpoint": {
-            "id": latest.get("id"),
-            "stage": latest.get("stage"),
-            "status": latest.get("status"),
-            "summary": latest.get("summary"),
-            "next_step": latest.get("next_step"),
-        } if latest else None,
-        "execution_readiness": {
-            "status": readiness.get("status"),
-            "missing_evidence": readiness.get("missing_evidence") or [],
-            "recommended_next_action": readiness.get("recommended_next_action"),
-        } if readiness else None,
-        "recommended_first_tool": public_recommendation.get("tool"),
-        "recommended_next_call": public_recommendation,
-        "next_safe_action": result.get("next_safe_action"),
-    }
-
-
-def _compact_resource_result(kind: str, result: Any) -> Any:
-    if not isinstance(result, dict):
-        return result
-    if kind == "task":
-        return {key: value for key, value in _compact_task_resource(result).items() if value not in (None, "", [])}
-    if kind in {"improvement", "artifact"}:
-        keys = ("artifact_key", "type", "id", "project", "title", "description", "status", "stage", "linked_artifact_key", "linked_status")
-        return {key: result.get(key) for key in keys if result.get(key) not in (None, "", [])}
-    if kind == "law":
-        keys = ("id", "project", "title", "status", "scope", "statement", "rationale", "version")
-        return {key: result.get(key) for key in keys if result.get(key) not in (None, "", [])}
-    if kind == "rule_candidate":
-        keys = ("candidate_id", "project", "status", "scope", "statement", "rationale", "trial_review_after", "trial_expires_at")
-        return {key: result.get(key) for key in keys if result.get(key) not in (None, "", [])}
-    if kind == "memory":
-        keys = ("id", "content", "memory_type", "category", "project", "created_at", "updated_at", "importance_score")
-        return {key: result.get(key) for key in keys if result.get(key) not in (None, "", [])}
-    return result
-
-
-def _compact_simple_get_packet(data: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-    if str(args.get("detail") or "compact").strip().lower() == "full" or bool(args.get("diagnostic", False)):
-        return data
-    receipt = data.get("receipt") if isinstance(data.get("receipt"), dict) else {}
-    kind = str(receipt.get("resource_kind") or "").strip()
-    compact = dict(data)
-    compact["result"] = _compact_resource_result(kind, data.get("result"))
-    compact["details_available"] = True
-    return compact
-
-
-def _compact_ask_project_result(data: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-    if str(args.get("detail") or "compact").strip().lower() == "full" or bool(args.get("diagnostic", False)):
-        return data
-    route = data.get("selected_expert_route") if isinstance(data.get("selected_expert_route"), dict) else {}
-    text = str(data.get("result_text") or "").strip()
-    return {
-        "status": data.get("status"),
-        "question": data.get("question"),
-        "selected_facade": route.get("facade"),
-        "answer": text[:1200],
-    }
-
-
-def _simple_get_response_format(args: dict[str, Any]) -> str:
-    requested = str(args.get("response_format") or "auto").strip().lower()
-    if requested in {"diagnostic", "answer"}:
-        return requested
-    return "json"
-
-
-def _resource_kind_from_receipt_or_result(receipt: dict[str, Any], result: Any) -> str:
-    kind = str(receipt.get("resource_kind") or "").strip()
-    if kind:
-        return kind
-    data_ref = str(receipt.get("data_ref") or "").strip()
-    if data_ref.startswith("task:"):
-        return "task"
-    if data_ref.startswith("improvement:"):
-        return "improvement"
-    if data_ref.startswith("law:"):
-        return "law"
-    if data_ref.startswith("rule_candidate:"):
-        return "rule_candidate"
-    if data_ref.startswith("memory:"):
-        return "memory"
-    if isinstance(result, dict):
-        if result.get("task_id") and (isinstance(result.get("task"), dict) or isinstance(result.get("latest_checkpoint"), dict)):
-            return "task"
-        if result.get("artifact_key"):
-            return str(result.get("type") or "artifact")
-        if result.get("candidate_id"):
-            return "rule_candidate"
-    return ""
-
-
-def _compact_put_result(result: Any, *, receipt: dict[str, Any]) -> Any:
-    if not isinstance(result, dict):
-        return result
-    kind = _resource_kind_from_receipt_or_result(receipt, result)
-    return _compact_resource_result(kind, result) if kind else result
-
-
-def _compact_simple_put_packet(data: dict[str, Any], args: dict[str, Any], form_id: str) -> dict[str, Any]:
-    if str(args.get("detail") or "compact").strip().lower() == "full" or bool(args.get("diagnostic", False)):
-        return data
-    compact = dict(data)
-    receipt = data.get("receipt") if isinstance(data.get("receipt"), dict) else {}
-    if receipt:
-        receipt_keys = (
-            "status",
-            "form_id",
-            "mode",
-            "message",
-            "id",
-            "artifact_key",
-            "task_id",
-            "linked_artifact_key",
-            "stage",
-            "work_token",
-            "lease",
-            "work_session",
-            "release",
-            "next_state",
-            "next_forms",
-            "close_status",
-            "task_status",
-            "superseded_by",
-            "submitted_fields",
-            "next_safe_action",
-        )
-        compact["receipt"] = {key: receipt.get(key) for key in receipt_keys if receipt.get(key) not in (None, "", [])}
-    if "result" in compact:
-        compact["result"] = _compact_put_result(compact.get("result"), receipt=receipt)
-    compact["details_available"] = True
-    return compact
-
-
-def _simple_get_query_uses_project_expert(query: str) -> bool:
-    text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
-    task_id_like = _extract_task_id_like_from_text(query)
-    if task_id_like:
-        return True
-    project_terms = (
-        "task",
-        "tasks",
-        "active work",
-        "open work",
-        "priority",
-        "continue",
-        "readiness",
-        "ready",
-        "usable",
-        "verify",
-        "verification",
-        "restart",
-        "health",
-        "rule",
-        "rules",
-        "law",
-        "laws",
-        "constraint",
-        "constraints",
-        "checkpoint",
-        "claim",
-        "lease",
-        "work_token",
-        "finish_task",
-        "project_context",
-        "задач",
-        "задачи",
-        "активные",
-        "приоритет",
-        "продолж",
-        "готов",
-        "провер",
-        "вериф",
-        "перезапуск",
-        "здоров",
-        "правил",
-        "закон",
-        "огранич",
-    )
-    return any(term in text for term in project_terms)
-
-
-def _compact_memory_search_results(results: Any) -> list[dict[str, Any]]:
-    compact: list[dict[str, Any]] = []
-    if not isinstance(results, list):
-        return compact
-    for item in results[:10]:
-        if not isinstance(item, dict):
-            continue
-        memory = item.get("memory") if isinstance(item.get("memory"), dict) else {}
-        compact.append(
-            {
-                "id": memory.get("id"),
-                "content": memory.get("content"),
-                "memory_type": memory.get("memory_type"),
-                "category": memory.get("category"),
-                "project": memory.get("project"),
-                "score": item.get("score"),
-            }
-        )
-    return compact
+    return build_simple_help_response(args)
 
 
 async def _build_simple_state_payload(args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
-    data = await build_mailbox_state_response(
-        args={
-            "project": str(args.get("project") or "mnemoforge"),
-            "state": str(args.get("state") or "planning"),
-            "runtime_profile_id": str(args.get("runtime_profile_id") or "unknown_cli"),
-            "diagnostic": bool(args.get("diagnostic", False)),
-        },
+    return await build_simple_state_response(
+        args=args,
         session_id=session_id,
-        dependencies=MailboxReadDependencies(get_session_identity_defaults=_get_session_identity_defaults),
+        dependencies=_simple_surface_dependencies(),
     )
-    data["simple_interface"] = {
-        "tools": ["help", "state", "get", "submit"],
-        "help": "Call help for protocol guidance.",
-        "read": "Call get with ref/query.",
-        "write": "Call submit with form_id/action and payload from this state packet. put remains a compatibility alias.",
-    }
-    data["next_safe_action"] = data.get("next_safe_action") or "Use get for reads or submit with one of the listed forms."
-    if str(args.get("detail") or "compact").strip().lower() != "full" and not bool(args.get("diagnostic", False)):
-        data["forms"] = [_compact_public_form(form) for form in (data.get("forms") or []) if isinstance(form, dict)]
-        data["details_available"] = True
-    return data
 
 
 async def _build_simple_get_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
-    ref = str(args.get("ref") or args.get("address") or args.get("data_ref") or "").strip()
-    if ref:
-        get_args = {**args, "ref": ref}
-        data = await _resolve_mailbox_public_ref(api_base, get_args)
-        if data is None:
-            data = await build_mailbox_get_response(
-                args=get_args,
-                session_id=session_id,
-                dependencies=MailboxReadDependencies(get_session_identity_defaults=_get_session_identity_defaults),
-            )
-        data["simple_interface"] = {"tool": "get", "mode": "ref"}
-        return _compact_simple_get_packet(data, args)
-
-    query = str(args.get("query") or args.get("question") or args.get("intent") or "").strip()
-    if query:
-        project = str(args.get("project") or "mnemoforge")
-        limit = int(args.get("limit") or 10)
-        if not _simple_get_query_uses_project_expert(query):
-            memory_args = {
-                "query": query,
-                "project": project,
-                "context_project": project,
-                "limit": limit,
-            }
-            results = await _post(api_base, "/memories/search", memory_args)
-            return {
-                "state": str(args.get("state") or "planning"),
-                "project": project,
-                "receipt": {
-                    "status": "accepted",
-                    "message": "Natural read query resolved through memory search.",
-                    "resource_kind": "memory_search",
-                    "count": len(results) if isinstance(results, list) else 0,
-                    "next_safe_action": "Use get with a returned memory ref for exact details, or refine the query.",
-                },
-                "result": _compact_memory_search_results(results),
-                "simple_interface": {"tool": "get", "mode": "query", "route": "memory_search"},
-                "next_safe_action": "Use get with a returned memory ref for exact details, or refine the query.",
-                "details_available": True,
-            }
-        ask_args = {
-            "project": project,
-            "question": query,
-            "detail": str(args.get("detail") or "compact"),
-            "limit": limit,
-            "client_profile": str(args.get("client_profile") or "agent"),
-            "response_format": _simple_get_response_format(args),
-        }
-        data = await _build_ask_project_payload(api_base, ask_args, session_id=session_id)
-        return {
-            "state": str(args.get("state") or "planning"),
-            "project": ask_args["project"],
-            "receipt": {
-                "status": "accepted",
-                "message": "Natural read query resolved through the project expert.",
-                "resource_kind": "query",
-                "next_safe_action": "Use get with a returned ref for more detail, or put only after reviewing a public form.",
-            },
-            "result": _compact_ask_project_result(data, args),
-            "simple_interface": {"tool": "get", "mode": "query"},
-            "next_safe_action": "Use get with a returned ref for more detail, or put only after reviewing a public form.",
-            "details_available": True,
-        }
-
-    data = await _build_simple_state_payload(args, session_id=session_id)
-    data["receipt"] = {
-        "status": "needs_input",
-        "message": "get requires ref/address/data_ref or query/question.",
-        "next_safe_action": "Call get with a public ref or natural read-only query.",
-    }
-    return data
+    return await build_simple_get_response(
+        api_base=api_base,
+        args=args,
+        session_id=session_id,
+        dependencies=_simple_surface_dependencies(),
+    )
 
 
 async def _build_simple_submit_payload(
@@ -3479,38 +3020,13 @@ async def _build_simple_submit_payload(
     session_id: str | None = None,
     public_tool_name: str = "submit",
 ) -> dict[str, Any]:
-    payload = dict(args.get("payload")) if isinstance(args.get("payload"), dict) else {}
-    form_id = str(args.get("form_id") or args.get("action") or payload.get("form_id") or "").strip()
-    if not form_id:
-        return {
-            "state": str(args.get("state") or "planning"),
-            "project": str(args.get("project") or payload.get("project") or "mnemoforge"),
-            "receipt": {
-                "status": "needs_input",
-                "message": f"{public_tool_name} requires form_id or action plus payload.",
-                "next_safe_action": "Call state for available forms, then submit with form_id and payload.",
-            },
-            "simple_interface": {"tool": public_tool_name},
-            "next_safe_action": "Call state for available forms, then submit with form_id and payload.",
-        }
-    if args.get("detail") and "detail" not in payload:
-        payload["detail"] = args.get("detail")
-    submit_args = {
-        "form_id": form_id,
-        "state": str(args.get("state") or "planning"),
-        "project": str(args.get("project") or payload.get("project") or "mnemoforge"),
-        "payload": payload,
-        "runtime_profile_id": str(args.get("runtime_profile_id") or "unknown_cli"),
-        "diagnostic": bool(args.get("diagnostic", False)),
-    }
-    data = await _build_mailbox_submit_packet(
-        args=submit_args,
-        payload=payload,
+    return await build_simple_submit_response(
         api_base=api_base,
+        args=args,
         session_id=session_id,
+        public_tool_name=public_tool_name,
+        dependencies=_simple_surface_dependencies(),
     )
-    data["simple_interface"] = {"tool": public_tool_name, "form_id": form_id}
-    return _compact_simple_put_packet(data, args, form_id)
 
 
 
@@ -4103,128 +3619,11 @@ def _format_route_answer(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _ask_project_response_format(args: dict[str, Any]) -> str:
-    requested = str(args.get("response_format") or "").strip().lower()
-    if requested in {"answer", "diagnostic", "json"}:
-        return requested
-    client_profile = str(args.get("client_profile") or "").strip().lower()
-    if client_profile in {"local", "local_model", "small", "small_context", "slm", "weak"}:
-        return "answer"
-    return "answer"
-
-
-def _ask_project_query_text(args: dict[str, Any]) -> str:
-    return str(args.get("question") or args.get("query") or args.get("intent") or "").strip()
-
-
-def _ask_project_lexical_text(question: str) -> str:
-    # Normalize snake/kebab tool-like phrases into lexical text so small clients
-    # that send values like "list_open_tasks" are still routed semantically.
-    normalized = re.sub(r"[_\-/\.]+", " ", str(question or ""))
-    return normalized.casefold()
-
-
 def _ask_project_select_route_lexical(args: dict[str, Any]) -> dict[str, Any]:
-    question = _ask_project_query_text(args)
-    text = _ask_project_lexical_text(question)
-    project = str(args.get("project") or args.get("project_id") or "mnemoforge").strip() or "mnemoforge"
-    detail = str(args.get("detail") or "compact").strip().lower()
-    if detail not in {"compact", "full"}:
-        detail = "compact"
-    response_format = _ask_project_response_format(args)
-    read_lookup_terms = (
-        "find",
-        "search",
-        "show",
-        "list",
-        "lookup",
-        "look up",
-        "read",
-        "get",
-        "details",
-        "detail",
-        "выведи",
-        "покажи",
-        "найди",
-        "прочитай",
-        "детали",
+    return select_ask_project_lexical_route(
+        args,
+        extract_task_id_like=_extract_task_id_like_from_text,
     )
-    mutation_terms = ("save", "record", "close", "resolve", "delete", "promote", "approve", "create task", "write")
-    read_lookup = any(term in text for term in read_lookup_terms)
-
-    route = {
-        "facade": "project_context",
-        "reason": "General project question maps to project_context.",
-        "confidence": 0.7,
-        "response_format": response_format,
-        "payload": {
-            "project": project,
-            "intent": question,
-            "detail": detail,
-            "response_format": response_format,
-            "limit": int(args.get("limit") or 20),
-        },
-        "guardrail": "",
-    }
-
-    if _extract_task_id_like_from_text(question):
-        route.update(
-            facade="project_context",
-            reason="Question contains a full or partial task id; route to project_context task lookup.",
-            confidence=0.9,
-        )
-    elif any(term in text for term in ("memory", "find in memory", "search memory", "recall", "remember", "memory_store", "memory_search")):
-        route.update(
-            facade="project_context",
-            reason="Question asks to find/search/recall memory content; route to project_context for memory lookup.",
-            confidence=0.88,
-        )
-    elif any(term in text for term in ("next", "priority", "open work", "open tasks", "what should i do", "continue", "backlog")):
-        route.update(
-            facade="project_work",
-            reason="Question asks for next/open project work; route to project_work read-only planning.",
-            confidence=0.84,
-        )
-    elif any(term in text for term in ("test", "tests", "verify", "verification", "health", "restart", "smoke", "failed", "failure")):
-        route.update(
-            facade="project_verify",
-            reason="Question asks about tests, health, restart, or verification; route to project_verify.",
-            confidence=0.84,
-        )
-    elif any(term in text for term in ("rule", "rules", "law", "laws", "constraint", "constraints", "forget")):
-        route.update(
-            facade="project_context",
-            reason="Question asks about rules or constraints; route through project_context so it can delegate to project_rules safely.",
-            confidence=0.82,
-        )
-    elif any(term in text for term in ("ready", "readiness", "usable", "used yet", "bootstrap", "onboard")):
-        route.update(
-            facade="project_context",
-            reason="Question asks about readiness or usability; route to project_context readiness handling.",
-            confidence=0.82,
-        )
-
-    if any(term in text for term in mutation_terms) and not read_lookup:
-        route["guardrail"] = "Mutation-like question detected; ask_project will not set allow_mutation=true."
-        if any(term in text for term in ("save", "record", "checkpoint", "close")):
-            route.update(
-                facade="project_capture",
-                reason="Mutation-like capture request is routed to project_capture with allow_mutation=false.",
-                confidence=max(float(route["confidence"]), 0.86),
-            )
-
-    route["payload"].update(
-        {
-            "project": project,
-            "intent": question,
-            "detail": detail,
-            "response_format": response_format,
-            "allow_mutation": False,
-        }
-    )
-    if route["facade"] == "project_context":
-        route["payload"].pop("allow_mutation", None)
-    return route
 
 
 async def _ask_project_llm_route(args: dict[str, Any]) -> dict[str, Any]:

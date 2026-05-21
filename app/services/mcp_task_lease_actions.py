@@ -59,7 +59,10 @@ def task_mutation_requires_owned_claim(
                 "project": project_clean,
                 "task_id": task_clean,
                 "claim_allowed": False,
-                "next_safe_action": "Call claim_task or start_task_session before mutating task state.",
+                "next_safe_action": (
+                    "Submit start_task again with the same task_id and agent_fingerprint to reclaim free work "
+                    "after TTL/session loss, or start another task if someone else claimed it."
+                ),
             }
         return None
 

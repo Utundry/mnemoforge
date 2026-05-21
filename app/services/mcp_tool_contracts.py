@@ -21,6 +21,10 @@ _SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "query": {"type": "string", "description": "Natural read-only question when no ref is known."},
                 "question": {"type": "string", "description": "Alias for query."},
                 "project": {"type": "string", "default": "mnemoforge"},
+                "agent_id": {
+                    "type": "string",
+                    "description": "Optional reading agent identity for task or handoff-scoped packets.",
+                },
                 "state": {
                     "type": "string",
                     "default": "planning",

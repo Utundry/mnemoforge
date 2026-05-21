@@ -31,6 +31,7 @@ from app.services.project_context_service import (
     assess_project_readiness,
     build_enrich_available_layers,
     build_handoff_compact_enrich_context,
+    build_handoff_compact_enrich_layers,
     build_task_triage,
     build_project_bootstrap_checklist,
     build_project_reconstruction_bundle,
@@ -1163,24 +1164,31 @@ async def enrich_task(body: EnrichTaskRequest, qdrant: QdrantDep, ollama: Ollama
     recommended_action = str((triage_items[0] or {}).get("recommended_action") or "").strip() if triage_items else ""
     if recommended_action and f"Next action: {recommended_action}" not in context:
         context = (context + f"\n\n## Next Action\n\nNext action: {recommended_action}").strip()
+    response_layers = (
+        build_handoff_compact_enrich_layers(bundle)
+        if effective_detail == "compact"
+        else {
+            "components": bundle.components,
+            "laws": bundle.laws,
+            "improvements": bundle.improvements,
+            "runtime_hints": bundle.runtime_hints,
+            "memoirs": bundle.memoirs,
+            "tasks": bundle.tasks,
+            "task_triage": bundle.task_triage,
+            "task_capture_candidates": bundle.task_capture_candidates,
+            "docs_sections": bundle.docs_sections,
+            "promoted_canonicals": bundle.promoted_canonicals,
+            "operational_instincts": bundle.operational_instincts,
+            "recommended_mcp_calls": bundle.recommended_mcp_calls,
+        }
+    )
     response = {
         "project_id": bundle.project_id,
         "task": bundle.task,
         "detail": effective_detail,
         "context_profile": body.context_profile,
         "context": context,
-        "components": bundle.components,
-        "laws": bundle.laws,
-        "improvements": bundle.improvements,
-        "runtime_hints": bundle.runtime_hints,
-        "memoirs": bundle.memoirs,
-        "tasks": bundle.tasks,
-        "task_triage": bundle.task_triage,
-        "task_capture_candidates": bundle.task_capture_candidates,
-        "docs_sections": bundle.docs_sections,
-        "promoted_canonicals": bundle.promoted_canonicals,
-        "operational_instincts": bundle.operational_instincts,
-        "recommended_mcp_calls": bundle.recommended_mcp_calls,
+        **response_layers,
         "coverage": bundle.coverage,
         "missing_sources": bundle.missing_sources,
         "deferred_sources": bundle.deferred_sources,

@@ -58,6 +58,7 @@ async def start_task_session_action(
     claim = None
     auto_heartbeat_enabled = bool(args.get("auto_heartbeat", True))
     auto_heartbeat = None
+    work_session_resumed = False
     try:
         claim = lease_store.claim(
             project=project,
@@ -69,20 +70,28 @@ async def start_task_session_action(
             work_token=str(args.get("work_token") or ""),
             lease_ttl_seconds=int(args.get("lease_ttl_seconds") or 900),
         )
-        work = session_store.start_work_session(
+        work = session_store.get_active_work_by_task(
             project=project,
             task_id=task_id,
             agent_id=owner_agent,
             session_id=lease_session_id,
-            role=str(args.get("role") or "worker"),
-            work_id=str(args.get("work_id") or ""),
-            parent_work_id=str(args.get("parent_work_id") or ""),
-            parent_task_id=str(args.get("parent_task_id") or ""),
-            spawn_reason=str(args.get("spawn_reason") or ""),
-            return_condition=str(args.get("return_condition") or ""),
-            scope=args.get("scope") or [],
-            summary=str(args.get("summary") or ""),
         )
+        work_session_resumed = work is not None
+        if work is None:
+            work = session_store.start_work_session(
+                project=project,
+                task_id=task_id,
+                agent_id=owner_agent,
+                session_id=lease_session_id,
+                role=str(args.get("role") or "worker"),
+                work_id=str(args.get("work_id") or ""),
+                parent_work_id=str(args.get("parent_work_id") or ""),
+                parent_task_id=str(args.get("parent_task_id") or ""),
+                spawn_reason=str(args.get("spawn_reason") or ""),
+                return_condition=str(args.get("return_condition") or ""),
+                scope=args.get("scope") or [],
+                summary=str(args.get("summary") or ""),
+            )
         if auto_heartbeat_enabled:
             auto_heartbeat = start_task_lease_auto_heartbeat(
                 store=lease_store,
@@ -173,12 +182,16 @@ async def start_task_session_action(
         "owner_session_id": lease_session_id,
         "lease": claim.lease.model_dump(mode="json"),
         "lease_status": claim.status,
+        "same_fingerprint_reclaim": claim.same_fingerprint_reclaim,
+        "previous_claim_expired": claim.previous_claim_expired,
+        "previous_lease": claim.previous_lease.model_dump(mode="json") if claim.previous_lease else None,
         "work_token": claim.work_token,
         "auto_heartbeat": {
             "enabled": auto_heartbeat_enabled,
             "heartbeat_seconds": auto_heartbeat.heartbeat_seconds if auto_heartbeat is not None else None,
         },
         "work_session": work.model_dump(mode="json"),
+        "work_session_resumed": work_session_resumed,
         "checkpoint": checkpoint,
         "next_safe_action": (
             "Continue implementation; lease auto-heartbeat is active for this process and finish_task_session will stop it."
