@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "purpose": "Declarative discovery metadata for MCP tool families. Runtime family inference and tool schemas remain in code.",
+  "families": [
+    {
+      "id": "intent_routing",
+      "title": "Intent routing",
+      "description": "Canonical first-stage routing for agent intents. Use this before you guess at a tool or endpoint.",
+      "entrypoints": ["normalize_mcp_intent", "tool_recommend", "list_tool_families"],
+      "keywords": ["intent", "route", "routing", "plan", "normalize", "canonical", "surface", "mcp"],
+      "preferred_tools": ["normalize_mcp_intent", "tool_recommend", "list_tool_families", "tool_family_tools", "tool_explain"]
+    },
+    {
+      "id": "tool_discovery",
+      "title": "Tool discovery",
+      "description": "Short index for the MCP catalog. Use this family first when the toolset is too large to load in full.",
+      "entrypoints": ["list_tool_families", "tool_family_tools", "tool_recommend", "tool_explain", "tool_feedback"],
+      "keywords": ["tool", "tools", "mcp", "catalog", "catalogue", "family", "families", "discovery"],
+      "preferred_tools": ["list_tool_families", "tool_recommend", "tool_family_tools", "tool_explain", "tool_feedback"]
+    },
+    {
+      "id": "project_knowledge",
+      "title": "Project knowledge & artifact lifecycle",
+      "description": "Unified discovery for tasks, improvements, readiness, canonical knowledge, lifecycle checkpoints, reopen/resume flows, and lifecycle changes.",
+      "entrypoints": ["mailbox_state", "mailbox_submit", "mailbox_get", "ask_project", "project_work", "project_rules", "project_context", "project_verify", "project_capture", "operational_tray", "record_work_result", "clerk_draft_report", "project_workflow", "pull_task_context", "get_task_execution_context", "get_project_reconstruction_bundle", "list_open_tasks", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "reopen_task", "get_work_session_state", "start_task_session", "finish_task_session", "start_work_session", "claim_task", "heartbeat_task_claim", "release_task_claim", "force_release_task_claim", "list_task_claims", "record_stenographer_span", "draft_checkpoint_from_spans", "approve_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "list_artifacts", "enrich_task_with_context", "review_improvement", "list_project_aliases", "rename_project"],
+      "keywords": ["task", "tasks", "improvement", "artifact", "project", "project knowledge", "readiness", "bootstrap", "canonical", "law", "docs", "context", "knowledge", "resolve", "reopen", "resume", "reactivate", "snapshot", "status", "filter", "search"],
+      "preferred_tools": ["mailbox_state", "mailbox_submit", "mailbox_get", "project_work", "project_rules", "project_context", "project_verify", "project_capture", "project_workflow", "project_workflow_submit", "pull_task_context", "reopen_task", "list_open_tasks", "list_artifacts", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "enrich_task_with_context", "get_task_execution_context", "get_project_reconstruction_bundle", "operational_tray", "record_work_result", "review_improvement", "list_project_aliases", "rename_project", "get_work_session_state", "start_task_session", "finish_task_session", "start_work_session", "claim_task", "heartbeat_task_claim", "release_task_claim", "force_release_task_claim", "list_task_claims", "park_work_session", "resume_work_session", "end_work_session", "record_stenographer_span", "list_stenographer_spans", "clerk_draft_report", "draft_checkpoint_from_spans", "get_checkpoint_draft", "revise_checkpoint_draft", "approve_checkpoint_draft", "reject_checkpoint_draft", "draft_task_checkpoint", "record_task_checkpoint", "report_task_checkpoint", "get_artifact", "resolve_artifact", "reopen_artifact", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes", "search_project_knowledge", "get_task_execution_context", "operational_tray", "get_project_readiness", "get_project_bootstrap_checklist", "plan_remote_snapshot", "sync_remote_snapshot", "get_storage_trust_status", "set_canonical_status", "merge_canonicals"]
+    },
+    {
+      "id": "skills_learning",
+      "title": "Skills & learning",
+      "description": "Skill marketplace search, candidate review, and learning outcome management.",
+      "entrypoints": ["get_onboarding", "list_learning_candidates", "skill_search"],
+      "keywords": ["skill", "skills", "learning", "candidate", "onboarding", "approve", "defer", "reject"],
+      "preferred_tools": ["get_onboarding", "list_learning_candidates", "skill_search", "approve_learning_candidate", "defer_learning_candidate", "reject_learning_candidate", "skill_publish", "skill_install", "record_outcome"]
+    },
+    {
+      "id": "coordination",
+      "title": "Agent coordination",
+      "description": "Message passing and status management between agents.",
+      "entrypoints": ["pickup_coordination_messages", "list_coordination_messages", "send_coordination_message"],
+      "keywords": ["coordination", "message", "mailbox", "thread", "agent", "handoff"],
+      "preferred_tools": ["send_coordination_message", "pickup_coordination_messages", "list_coordination_messages", "update_coordination_message_status"]
+    },
+    {
+      "id": "handoff_packets",
+      "title": "Handoff packets",
+      "description": "Create, route, refresh, and resume bounded handoff packets for multi-agent work.",
+      "entrypoints": ["handoff_task", "decompose_task_packet", "list_handoffs"],
+      "keywords": ["handoff", "packet", "route", "resume", "pickup", "background", "packet", "packets", "decompose"],
+      "preferred_tools": ["handoff_task", "pickup_handoff", "list_pending_handoff_labels", "list_handoffs", "handoff_workspace_summary", "decompose_task_packet", "create_task_packets", "route_task_packet_execution", "dispatch_background_task_packet", "reconcile_background_task_packet", "expand_handoff_refs", "refresh_handoff_context", "update_handoff_status", "resume_handoff"]
+    },
+    {
+      "id": "instruction_layers",
+      "title": "Instruction layers",
+      "description": "Layered instruction access for compact defaults and deeper on-demand detail.",
+      "entrypoints": ["list_instruction_layers", "load_instruction_layer"],
+      "keywords": ["instruction", "layer", "L2", "L3", "L4", "reference", "reference", "troubleshooting"],
+      "preferred_tools": ["list_instruction_layers", "load_instruction_layer"]
+    },
+    {
+      "id": "memory_operations",
+      "title": "Memory operations",
+      "description": "Read, ingest, and inspect memories and ingestion flows.",
+      "entrypoints": ["memory_search", "memory_context", "ingest_file"],
+      "keywords": ["memory", "memories", "ingest", "search", "context", "stats", "history"],
+      "preferred_tools": ["memory_search", "memory_context", "memory_stats", "memory_health", "ingest_file", "ingest_dir"]
+    },
+    {
+      "id": "system_observability",
+      "title": "System observability",
+      "description": "Health, status, and diagnostic surfaces for the runtime.",
+      "entrypoints": ["memory_health", "system_info", "get_task_status"],
+      "keywords": ["health", "system", "status", "diagnostic", "task status", "healthcheck", "observability", "health"],
+      "preferred_tools": ["memory_health", "system_info", "get_task_status"]
+    },
+    {
+      "id": "model_routing",
+      "title": "Model routing",
+      "description": "Model availability, quota, and rate-limit handling.",
+      "entrypoints": ["model_available", "report_limit_hit"],
+      "keywords": ["model", "quota", "rate limit", "429", "route", "routing", "model"],
+      "preferred_tools": ["model_available", "report_limit_hit"]
+    },
+    {
+      "id": "onboarding",
+      "title": "Onboarding & session feedback",
+      "description": "Session bootstrap, outcome reporting, and local reinforcement.",
+      "entrypoints": ["get_onboarding", "record_outcome"],
+      "keywords": ["onboarding", "session", "outcome", "feedback", "bootstrap", "onboard"],
+      "preferred_tools": ["get_onboarding", "record_outcome"]
+    },
+    {
+      "id": "general",
+      "title": "General / uncategorized",
+      "description": "Fallback bucket for tools that do not need a dedicated family yet.",
+      "entrypoints": [],
+      "keywords": [],
+      "preferred_tools": []
+    }
+  ]
+}

@@ -23,6 +23,7 @@ from app.services.mcp_workflow_specs import (
     load_runtime_profile_spec,
     load_state_spec,
     load_task_lease_spec,
+    load_tool_family_registry,
     validate_specs,
 )
 
@@ -58,6 +59,7 @@ def test_default_workflow_specs_validate() -> None:
     ]
     assert "pull_task_context" in summary["project_work_route_intents"]
     assert "propose_law" in summary["project_rules_route_intents"]
+    assert "tool_discovery" in summary["tool_families"]
     assert {
         "claim_task",
         "close_task",
@@ -225,6 +227,15 @@ def test_context_verify_and_capture_route_catalogs_are_declarative() -> None:
     assert context_routes["task_details"].arg_bonus == ["task_id"]
     assert verify_routes["restart_validation_plan"].bonus_terms == ["restart", "live", "server"]
     assert capture_routes["record_work_result"].arg_bonus == ["summary", "verification", "changed_files"]
+
+
+def test_tool_family_discovery_metadata_is_declarative() -> None:
+    registry = load_tool_family_registry()
+    families = {family.id: family for family in registry.families}
+
+    assert families["tool_discovery"].entrypoints[:2] == ["list_tool_families", "tool_family_tools"]
+    assert "get" not in families["project_knowledge"].preferred_tools
+    assert "memory_search" in families["memory_operations"].preferred_tools
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

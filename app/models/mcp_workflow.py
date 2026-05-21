@@ -219,3 +219,18 @@ class McpRouteCatalogSpec(BaseModel):
     facade: str = Field(..., min_length=1)
     purpose: str = Field(..., min_length=1)
     routes: list[McpRouteSpec] = Field(default_factory=list)
+
+
+class McpToolFamilySpec(BaseModel):
+    id: str = Field(..., min_length=1)
+    title: str = Field(..., min_length=1)
+    description: str = Field(..., min_length=1)
+    entrypoints: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    preferred_tools: list[str] = Field(default_factory=list)
+
+
+class McpToolFamilyRegistry(BaseModel):
+    version: int = Field(default=1, ge=1)
+    purpose: str = Field(..., min_length=1)
+    families: list[McpToolFamilySpec] = Field(default_factory=list)
