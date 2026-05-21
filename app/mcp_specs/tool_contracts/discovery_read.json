@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "id": "discovery_read",
+  "purpose": "Declarative contracts for read-only MCP tool discovery helpers.",
+  "tools": [
+    {
+      "name": "list_tool_families",
+      "description": "List the compact top-level MCP tool families instead of the full flat catalog. Use this first when you need to choose a tool family without loading every tool.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "include_compatibility_note": {
+            "type": "boolean",
+            "default": true,
+            "description": "Include a note that the flat catalog remains available for compatibility/debugging"
+          }
+        }
+      }
+    },
+    {
+      "name": "tool_family_tools",
+      "description": "List the tools that belong to one tool family. Use this after list_tool_families when you need the concrete tool names and arguments for one area.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["family"],
+        "properties": {
+          "family": {"type": "string", "description": "Tool family slug"},
+          "depth": {
+            "type": "string",
+            "enum": ["brief", "full"],
+            "default": "brief",
+            "description": "brief shows compact summaries; full includes input schemas"
+          },
+          "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 12}
+        }
+      }
+    },
+    {
+      "name": "tool_explain",
+      "description": "Explain a specific tool in task context. Use this when you know the tool name but want the shortest useful explanation, required arguments, and common pitfalls.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["tool_name"],
+        "properties": {
+          "tool_name": {"type": "string", "description": "Tool name to explain"},
+          "task_context": {"type": "string", "description": "Optional task context used to tailor the explanation"}
+        }
+      }
+    },
+    {
+      "name": "tool_recommend",
+      "description": "Recommend the next MCP family and tools for a task. Use this when you want the system to narrow a large toolset to the few best next calls.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["task"],
+        "properties": {
+          "task": {"type": "string", "description": "Task or query to analyze"},
+          "project_id": {"type": "string", "description": "Optional project id for project-aware recommendations"},
+          "top_n": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3}
+        }
+      }
+    }
+  ]
+}

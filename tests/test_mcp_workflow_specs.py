@@ -64,6 +64,12 @@ def test_default_workflow_specs_validate() -> None:
     assert "tool_discovery" in summary["tool_families"]
     assert summary["tool_surface_public_entrypoints"] == ["help", "state", "get", "submit"]
     assert summary["public_tool_contracts"] == ["help", "state", "get", "submit", "put"]
+    assert summary["discovery_tool_contracts"] == [
+        "list_tool_families",
+        "tool_family_tools",
+        "tool_explain",
+        "tool_recommend",
+    ]
     assert {
         "claim_task",
         "close_task",
@@ -257,6 +263,14 @@ def test_public_tool_contracts_are_declarative() -> None:
     assert list(contracts)[:4] == ["help", "state", "get", "submit"]
     assert contracts["get"].inputSchema["properties"]["response_format"]["default"] == "auto"
     assert contracts["put"].description.startswith("Compatibility alias")
+
+
+def test_read_only_discovery_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("discovery_read")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["tool_family_tools"].inputSchema["required"] == ["family"]
+    assert contracts["tool_recommend"].inputSchema["properties"]["top_n"]["maximum"] == 5
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:
