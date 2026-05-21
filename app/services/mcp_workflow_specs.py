@@ -162,6 +162,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
     mailbox_protocol = load_mailbox_protocol_spec(spec_root=spec_root)
     mailbox_form_policy = load_mailbox_form_policy_spec(spec_root=spec_root)
     project_work_routes = load_route_catalog_spec("project_work", spec_root=spec_root)
+    project_rules_routes = load_route_catalog_spec("project_rules", spec_root=spec_root)
     mailbox_forms = list_mailbox_form_specs(spec_root=spec_root)
     known_state_ids = {spec.id for spec in state_specs}
     known_toggle_ids = {toggle.id for toggle in feature_registry.toggles}
@@ -230,8 +231,9 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         "mailbox_forms": [item.id for item in mailbox_forms],
         "mailbox_form_policy_states": list(mailbox_form_policy.state_priorities.keys()),
         "mailbox_form_visibility_profiles": [rule.packet_profile for rule in mailbox_form_policy.visibility_rules],
-        "route_catalogs": [project_work_routes.facade],
+        "route_catalogs": [project_work_routes.facade, project_rules_routes.facade],
         "project_work_route_intents": [route.intent_type for route in project_work_routes.routes],
+        "project_rules_route_intents": [route.intent_type for route in project_rules_routes.routes],
     }
 
 

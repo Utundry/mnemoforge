@@ -206,9 +206,11 @@ class MailboxFormPolicySpec(BaseModel):
 class McpRouteSpec(BaseModel):
     intent_type: str = Field(..., min_length=1)
     tool: str = Field(..., min_length=1)
-    family: str = Field(..., min_length=1)
+    family: str = ""
     mutating: bool = False
     examples: list[str] = Field(default_factory=list)
+    arg_bonus: list[str] = Field(default_factory=list)
+    bonus_terms: list[str] = Field(default_factory=list)
     reason: str = Field(..., min_length=1)
 
 

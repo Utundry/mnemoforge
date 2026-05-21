@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from app.services.mcp_workflow_specs import load_route_catalog_spec
+
 
 CatalogSelector = Callable[
     [str, tuple[dict[str, Any], ...], dict[str, Any] | None],
@@ -11,122 +13,9 @@ CatalogIntentLookup = Callable[[tuple[dict[str, Any], ...], str], dict[str, Any]
 BackendRequested = Callable[[dict[str, Any]], str]
 
 
-PROJECT_RULES_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
-    {
-        "intent_type": "propose_law",
-        "tool": "create_rule_candidate",
-        "mutating": True,
-        "examples": (
-            "propose new law",
-            "create proposed project law",
-            "this is a rule",
-            "save this as a project rule",
-            "add architecture rule",
-        ),
-        "arg_bonus": ("title", "statement"),
-        "reason": "New law proposal intent maps to creating a trial rule candidate through project_rules.",
-    },
-    {
-        "intent_type": "list_laws",
-        "tool": "list_project_laws",
-        "mutating": False,
-        "examples": (
-            "list active rules",
-            "show project laws",
-            "check project laws",
-            "find active rules",
-            "return rule ids",
-            "find laws by topic",
-        ),
-        "bonus_terms": ("law", "laws", "rule", "rules"),
-        "reason": "Law listing/checking intent maps to list_project_laws.",
-    },
-    {
-        "intent_type": "inspect_law",
-        "tool": "get_project_law",
-        "mutating": False,
-        "examples": ("get law", "show rule by id", "inspect project law", "retrieve law details"),
-        "arg_bonus": ("law_id",),
-        "reason": "A law_id plus inspection intent maps to get_project_law.",
-    },
-    {
-        "intent_type": "list_candidates",
-        "tool": "list_rule_candidates",
-        "mutating": False,
-        "examples": ("list rule candidates", "show pending rules", "candidate list", "show candidate rules"),
-        "reason": "Candidate listing intent maps to list_rule_candidates.",
-    },
-    {
-        "intent_type": "review_candidates",
-        "tool": "get_rule_candidate_review_packet",
-        "mutating": False,
-        "examples": (
-            "review rule candidates",
-            "review trial rules",
-            "show due trial rules",
-            "review packet",
-            "why did you forget this rule",
-            "why did the agent miss a rule",
-        ),
-        "reason": "Rule review/forgetfulness intent maps to a read-only review packet before governance mutation.",
-    },
-    {
-        "intent_type": "promote_candidate",
-        "tool": "promote_rule_candidate",
-        "mutating": True,
-        "examples": (
-            "promote rule candidate",
-            "activate this rule candidate",
-            "confirm candidate as law",
-            "make candidate active",
-        ),
-        "arg_bonus": ("candidate_id",),
-        "reason": "Candidate promotion intent is mutating and must be explicitly confirmed.",
-    },
-    {
-        "intent_type": "revise_law",
-        "tool": "revise_law_from_rule_candidate",
-        "mutating": True,
-        "examples": ("revise law from candidate", "update law from rule candidate", "create law revision"),
-        "arg_bonus": ("candidate_id", "law_id"),
-        "reason": "Law revision intent is mutating and must be explicitly confirmed.",
-    },
-    {
-        "intent_type": "review_candidate",
-        "tool": "review_rule_candidate",
-        "mutating": True,
-        "examples": (
-            "reject rule candidate",
-            "suppress candidate",
-            "mark candidate needs clarification",
-            "reopen rule candidate",
-        ),
-        "arg_bonus": ("candidate_id", "action"),
-        "reason": "Candidate review changes candidate state and must be explicitly confirmed.",
-    },
-    {
-        "intent_type": "expire_trial_candidates",
-        "tool": "expire_trial_rule_candidates",
-        "mutating": True,
-        "examples": (
-            "expire stale trial rules",
-            "suppress expired trial rule candidates",
-            "clean up old trial candidates",
-        ),
-        "reason": "Expiring stale trial candidates suppresses candidates and must be explicitly confirmed.",
-    },
-    {
-        "intent_type": "project_candidates_from_stenography",
-        "tool": "project_rule_candidates_from_stenography",
-        "mutating": True,
-        "examples": (
-            "extract rule markers",
-            "make candidates from stenography",
-            "create rule candidates from spans",
-            "project rule markers",
-        ),
-        "reason": "Projecting stenographer markers creates review candidates and is guarded as a mutation.",
-    },
+PROJECT_RULES_ROUTE_CATALOG: tuple[dict[str, Any], ...] = tuple(
+    route.model_dump()
+    for route in load_route_catalog_spec("project_rules").routes
 )
 
 

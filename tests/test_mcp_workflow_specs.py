@@ -49,8 +49,9 @@ def test_default_workflow_specs_validate() -> None:
     assert {"mailbox_state", "mailbox_submit", "mailbox_get"} <= set(summary["mailbox_actions"])
     assert "planning" in summary["mailbox_form_policy_states"]
     assert "minimal" in summary["mailbox_form_visibility_profiles"]
-    assert summary["route_catalogs"] == ["project_work"]
+    assert summary["route_catalogs"] == ["project_work", "project_rules"]
     assert "pull_task_context" in summary["project_work_route_intents"]
+    assert "propose_law" in summary["project_rules_route_intents"]
     assert {
         "claim_task",
         "close_task",
@@ -200,6 +201,14 @@ def test_project_work_route_catalog_keeps_route_examples_out_of_service_code() -
     assert routes["next_priority"].tool == "list_open_tasks"
     assert "what should i do next" in routes["next_priority"].examples
     assert routes["reject_checkpoint_draft"].mutating is True
+
+
+def test_project_rules_route_catalog_keeps_scoring_hints_in_spec_data() -> None:
+    catalog = load_route_catalog_spec("project_rules")
+    routes = {route.intent_type: route for route in catalog.routes}
+
+    assert routes["propose_law"].arg_bonus == ["title", "statement"]
+    assert routes["list_laws"].bonus_terms == ["law", "laws", "rule", "rules"]
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:
