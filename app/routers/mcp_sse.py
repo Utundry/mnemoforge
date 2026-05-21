@@ -148,9 +148,9 @@ from app.services.mcp_runtime_utility_actions import (
     RuntimeUtilityActionDependencies,
     execute_runtime_utility_action,
 )
-from app.services.mcp_memory_actions import (
-    MemoryActionDependencies,
-    execute_memory_action,
+from app.services.mcp_grouped_tool_dispatch_actions import (
+    GroupedToolDispatchDependencies,
+    execute_grouped_memory_or_runtime_action,
 )
 from app.services.mcp_handoff_actions import (
     HANDOFF_ACTIONS,
@@ -7448,61 +7448,16 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             return json.dumps(data, indent=2, ensure_ascii=False)
         return str(data.get("result_text") or "")
 
-    if name in {
-        "memory_store",
-        "memory_search",
-        "memory_tree_slice",
-        "memory_context",
-        "record_memory_outcome",
-        "memory_recent",
-        "memory_get",
-        "memory_delete",
-        "memory_batch_store",
-        "memory_cleanup",
-    }:
-        return await execute_memory_action(
-            name=name,
-            args=args,
-            api_base=api_base,
-            dependencies=MemoryActionDependencies(get=_get, post=_post, delete=_delete),
-        )
+    grouped_result = await execute_grouped_memory_or_runtime_action(
+        name=name,
+        args=args,
+        api_base=api_base,
+        dependencies=GroupedToolDispatchDependencies(get=_get, post=_post, delete=_delete),
+    )
+    if grouped_result is not None:
+        return grouped_result
 
-    elif name == "system_info":
-        return await execute_runtime_utility_action(
-            name=name,
-            args=args,
-            api_base=api_base,
-            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
-        )
-    elif name == "memory_stats":
-        return await execute_runtime_utility_action(
-            name=name,
-            args=args,
-            api_base=api_base,
-            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
-        )
-    elif name == "registry_best":
-        return await execute_runtime_utility_action(
-            name=name,
-            args=args,
-            api_base=api_base,
-            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
-        )
-    elif name == "registry_update":
-        return await execute_runtime_utility_action(
-            name=name,
-            args=args,
-            api_base=api_base,
-            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
-        )
-    elif name == "registry_components":
-        return await execute_runtime_utility_action(
-            name=name,
-            args=args,
-            api_base=api_base,
-            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
-        )
-    elif name == "report_issue":
+    if name == "report_issue":
         data = await _post(api_base, "/improvements", args)
         return f"Improvement reported: {data['id']}\nTitle: {data['title']}\nStatus: {data['status']}"
 
@@ -7715,14 +7670,6 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             f"--- SKILL.md draft ---\n{data['skill_content']}\n--- end draft ---\n\n"
             f"Call skill_publish(name='{data['skill_name']}', content=<above or edited>, "
             f"platform='{data.get('platform', 'claude')}') to publish."
-        )
-
-    elif name in {"model_available", "report_limit_hit"}:
-        return await execute_runtime_utility_action(
-            name=name,
-            args=args,
-            api_base=api_base,
-            dependencies=RuntimeUtilityActionDependencies(get=_get, post=_post),
         )
 
     elif name in HANDOFF_ACTIONS:

@@ -2075,6 +2075,32 @@ class TestMcpToolExecution:
         assert posted[0][1]["project"] == "alpha"
         assert posted[0][1]["context_project"] == "alpha"
 
+    async def test_simple_get_query_explicit_memory_search_beats_project_term_overlap(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            assert path == "/memories/search"
+            return []
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("explicit memory lookup should not route through the project expert")
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "search memories for TTL reclaim receipt"},
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["resource_kind"] == "memory_search"
+        assert result["simple_interface"]["route"] == "memory_search"
+        assert posted[0][1]["query"] == "search memories for TTL reclaim receipt"
+
     async def test_simple_get_query_keeps_project_questions_on_project_expert(self, monkeypatch):
         async def fake_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
             return {

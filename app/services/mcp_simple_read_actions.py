@@ -234,7 +234,28 @@ def query_uses_project_expert(query: str, *, extract_task_id_like: TaskIdDetecto
     text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
     if extract_task_id_like(query):
         return True
+    if explicit_memory_lookup(text):
+        return False
     return any(term in text for term in _PROJECT_QUERY_TERMS)
+
+
+def explicit_memory_lookup(text: str) -> bool:
+    return any(
+        marker in str(text or "")
+        for marker in (
+            "find memory",
+            "find memories",
+            "search memory",
+            "search memories",
+            "look up memory",
+            "look up memories",
+            "read memory",
+            "read memories",
+            "\u043d\u0430\u0439\u0434\u0438 \u043f\u0430\u043c\u044f\u0442",
+            "\u043f\u043e\u0438\u0449\u0438 \u043f\u0430\u043c\u044f\u0442",
+            "\u043f\u043e\u0438\u0441\u043a \u0432 \u043f\u0430\u043c\u044f\u0442",
+        )
+    )
 
 
 def compact_memory_search_results(results: Any) -> list[dict[str, Any]]:
