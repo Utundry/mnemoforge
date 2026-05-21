@@ -10,6 +10,7 @@ from app.models.mcp_workflow import (
     MailboxFormPolicySpec,
     MailboxFormSpec,
     MailboxProtocolSpec,
+    McpRouteCatalogSpec,
     RuntimeProfileSpec,
     ResponseEnvelopeSpec,
     TaskLeaseWorkflowSpec,
@@ -107,6 +108,19 @@ def load_mailbox_form_policy_spec(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> Mai
     return MailboxFormPolicySpec.model_validate(_load_json(path))
 
 
+def load_route_catalog_spec(facade: str, *, spec_root: Path = DEFAULT_SPEC_ROOT) -> McpRouteCatalogSpec:
+    facade_name = str(facade or "").strip()
+    path = spec_root / "routes" / f"{facade_name}.json"
+    spec = McpRouteCatalogSpec.model_validate(_load_json(path))
+    if spec.facade != facade_name:
+        raise WorkflowSpecError(f"Route catalog facade mismatch: expected {facade_name}, got {spec.facade}")
+    intent_types = [route.intent_type for route in spec.routes]
+    duplicates = {intent_type for intent_type in intent_types if intent_types.count(intent_type) > 1}
+    if duplicates:
+        raise WorkflowSpecError(f"Duplicate route intent types for {facade_name}: {', '.join(sorted(duplicates))}")
+    return spec
+
+
 def list_mailbox_form_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> list[MailboxFormSpec]:
     forms_dir = spec_root / "forms"
     if not forms_dir.exists():
@@ -147,6 +161,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
     response_envelope = load_response_envelope_spec(spec_root=spec_root)
     mailbox_protocol = load_mailbox_protocol_spec(spec_root=spec_root)
     mailbox_form_policy = load_mailbox_form_policy_spec(spec_root=spec_root)
+    project_work_routes = load_route_catalog_spec("project_work", spec_root=spec_root)
     mailbox_forms = list_mailbox_form_specs(spec_root=spec_root)
     known_state_ids = {spec.id for spec in state_specs}
     known_toggle_ids = {toggle.id for toggle in feature_registry.toggles}
@@ -215,6 +230,8 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         "mailbox_forms": [item.id for item in mailbox_forms],
         "mailbox_form_policy_states": list(mailbox_form_policy.state_priorities.keys()),
         "mailbox_form_visibility_profiles": [rule.packet_profile for rule in mailbox_form_policy.visibility_rules],
+        "route_catalogs": [project_work_routes.facade],
+        "project_work_route_intents": [route.intent_type for route in project_work_routes.routes],
     }
 
 

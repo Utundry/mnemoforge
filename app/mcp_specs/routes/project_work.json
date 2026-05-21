@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "facade": "project_work",
+  "purpose": "Declarative project_work route examples and route metadata. Scoring and payload assembly stay in service code.",
+  "routes": [
+    {
+      "intent_type": "next_priority",
+      "tool": "list_open_tasks",
+      "family": "project_knowledge",
+      "mutating": false,
+      "examples": [
+        "what is the next priority",
+        "what should i do next",
+        "what is the current task",
+        "find the next task",
+        "current priority task",
+        "give another agent an independent task",
+        "find independent parallel work",
+        "delegate a safe task to another agent"
+      ],
+      "reason": "Priority/open-work intent maps to the unified open-task surface."
+    },
+    {
+      "intent_type": "list_all_tasks",
+      "tool": "list_open_tasks",
+      "family": "project_knowledge",
+      "mutating": false,
+      "examples": [
+        "list open tasks",
+        "list all open tasks",
+        "show all tasks",
+        "show open work",
+        "what tasks are available",
+        "show me every task",
+        "list every open task",
+        "full list of tasks",
+        "list all tasks",
+        "show all open work"
+      ],
+      "reason": "Explicit list-all intent maps to list_open_tasks with claim_filter=all."
+    },
+    {
+      "intent_type": "pull_task_context",
+      "tool": "pull_task_context",
+      "family": "project_knowledge",
+      "mutating": false,
+      "examples": [
+        "continue task",
+        "resume current task",
+        "pick up this task",
+        "go on with the priority task",
+        "continue the active task",
+        "resume from checkpoint"
+      ],
+      "reason": "Continuation intent maps to pull_task_context with compact handoff-aware replay."
+    },
+    {
+      "intent_type": "start_task_session",
+      "tool": "start_task_session",
+      "family": "project_knowledge",
+      "mutating": true,
+      "examples": [
+        "take task",
+        "start working on this task",
+        "begin implementation",
+        "claim this task and start",
+        "start task session"
+      ],
+      "reason": "Explicit start-work intent maps to start_task_session (claim + work session + checkpoint)."
+    },
+    {
+      "intent_type": "finish_task_session",
+      "tool": "finish_task_session",
+      "family": "project_knowledge",
+      "mutating": true,
+      "examples": [
+        "finish task",
+        "complete this task session",
+        "end work and release claim",
+        "finalize and close session",
+        "finish task session"
+      ],
+      "reason": "Explicit finish-work intent maps to finish_task_session (checkpoint + end session + release)."
+    },
+    {
+      "intent_type": "capture_or_closeout",
+      "tool": "record_work_result",
+      "family": "project_knowledge",
+      "mutating": true,
+      "examples": [
+        "close the tail",
+        "close tail",
+        "close remaining lifecycle gap",
+        "save checkpoint",
+        "record checkpoint",
+        "record result",
+        "save work result",
+        "wrap up the task",
+        "finish up",
+        "create handoff",
+        "record progress"
+      ],
+      "reason": "Capture/closeout intent maps to record_work_result, but mutation is guarded by allow_mutation."
+    },
+    {
+      "intent_type": "create_task",
+      "tool": "record_work_result",
+      "family": "project_knowledge",
+      "mutating": true,
+      "examples": [
+        "create a task",
+        "create improvement task",
+        "save this as an improvement",
+        "add this to backlog",
+        "record new issue",
+        "formulate this task",
+        "capture this as future work"
+      ],
+      "reason": "Explicit new-task/improvement creation intent maps to record_work_result with auto task matching disabled so the new backlog item is not silently attached to current work."
+    },
+    {
+      "intent_type": "verify_or_live_validate",
+      "tool": "get_task_execution_context",
+      "family": "project_knowledge",
+      "mutating": false,
+      "examples": [
+        "restart and validate",
+        "restart server and check health",
+        "run verification",
+        "run tests",
+        "pytest verification",
+        "live validation",
+        "check mcp after restart",
+        "validate server change"
+      ],
+      "reason": "Verification/restart intent first needs state-scoped project rules and risk controls."
+    },
+    {
+      "intent_type": "review_task_capture",
+      "tool": "task_capture_review",
+      "family": "project_knowledge",
+      "mutating": false,
+      "examples": [
+        "review pending capture drafts",
+        "review task capture drafts",
+        "show capture candidates",
+        "list pending task capture",
+        "review missing task framing",
+        "show definition of done candidates",
+        "inspect task capture review"
+      ],
+      "reason": "Task-framing review intent maps to the task capture candidate review surface before promotion or rejection."
+    },
+    {
+      "intent_type": "approve_checkpoint_draft",
+      "tool": "approve_checkpoint_draft",
+      "family": "project_knowledge",
+      "mutating": true,
+      "examples": [
+        "approve checkpoint draft",
+        "approve draft checkpoint",
+        "accept checkpoint draft",
+        "save approved checkpoint draft",
+        "persist checkpoint draft"
+      ],
+      "reason": "Checkpoint draft approval maps directly to approve_checkpoint_draft."
+    },
+    {
+      "intent_type": "reject_checkpoint_draft",
+      "tool": "reject_checkpoint_draft",
+      "family": "project_knowledge",
+      "mutating": true,
+      "examples": [
+        "reject checkpoint draft",
+        "reject draft checkpoint",
+        "decline checkpoint draft",
+        "discard checkpoint draft",
+        "mark checkpoint draft rejected"
+      ],
+      "reason": "Checkpoint draft rejection maps directly to reject_checkpoint_draft."
+    },
+    {
+      "intent_type": "rule_work",
+      "tool": "project_rules",
+      "family": "project_knowledge",
+      "mutating": true,
+      "examples": [
+        "record this as a project rule",
+        "make this a project policy",
+        "make a rule candidate",
+        "promote rule",
+        "review project law",
+        "capture canonical rule",
+        "why did the agent miss a project rule"
+      ],
+      "reason": "Rule/governance intent belongs to the future project_rules thematic facade; do not guess a mutating review route here."
+    }
+  ]
+}

@@ -19,6 +19,7 @@ from app.services.mcp_workflow_specs import (
     load_mailbox_form_policy_spec,
     load_packet_template,
     load_response_envelope_spec,
+    load_route_catalog_spec,
     load_runtime_profile_spec,
     load_state_spec,
     load_task_lease_spec,
@@ -48,6 +49,8 @@ def test_default_workflow_specs_validate() -> None:
     assert {"mailbox_state", "mailbox_submit", "mailbox_get"} <= set(summary["mailbox_actions"])
     assert "planning" in summary["mailbox_form_policy_states"]
     assert "minimal" in summary["mailbox_form_visibility_profiles"]
+    assert summary["route_catalogs"] == ["project_work"]
+    assert "pull_task_context" in summary["project_work_route_intents"]
     assert {
         "claim_task",
         "close_task",
@@ -187,6 +190,16 @@ def test_mailbox_form_policy_is_declarative_priority_and_visibility_source() -> 
     assert policy.state_priorities["planning"].index("claim_task") > policy.state_priorities["planning"].index("start_task")
     assert minimal_rule.hidden_form_ids == ["claim_task"]
     assert minimal_rule.hide_only_when_form_ids_available == ["start_task"]
+
+
+def test_project_work_route_catalog_keeps_route_examples_out_of_service_code() -> None:
+    catalog = load_route_catalog_spec("project_work")
+    routes = {route.intent_type: route for route in catalog.routes}
+
+    assert catalog.facade == "project_work"
+    assert routes["next_priority"].tool == "list_open_tasks"
+    assert "what should i do next" in routes["next_priority"].examples
+    assert routes["reject_checkpoint_draft"].mutating is True
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

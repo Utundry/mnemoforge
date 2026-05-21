@@ -201,3 +201,19 @@ class MailboxFormPolicySpec(BaseModel):
     purpose: str = Field(..., min_length=1)
     state_priorities: dict[WorkflowStateName, list[str]] = Field(default_factory=dict)
     visibility_rules: list[MailboxFormVisibilityRule] = Field(default_factory=list)
+
+
+class McpRouteSpec(BaseModel):
+    intent_type: str = Field(..., min_length=1)
+    tool: str = Field(..., min_length=1)
+    family: str = Field(..., min_length=1)
+    mutating: bool = False
+    examples: list[str] = Field(default_factory=list)
+    reason: str = Field(..., min_length=1)
+
+
+class McpRouteCatalogSpec(BaseModel):
+    version: int = Field(default=1, ge=1)
+    facade: str = Field(..., min_length=1)
+    purpose: str = Field(..., min_length=1)
+    routes: list[McpRouteSpec] = Field(default_factory=list)
