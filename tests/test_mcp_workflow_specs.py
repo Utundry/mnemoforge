@@ -24,6 +24,7 @@ from app.services.mcp_workflow_specs import (
     load_state_spec,
     load_task_lease_spec,
     load_tool_family_registry,
+    load_tool_surface_spec,
     validate_specs,
 )
 
@@ -60,6 +61,7 @@ def test_default_workflow_specs_validate() -> None:
     assert "pull_task_context" in summary["project_work_route_intents"]
     assert "propose_law" in summary["project_rules_route_intents"]
     assert "tool_discovery" in summary["tool_families"]
+    assert summary["tool_surface_public_entrypoints"] == ["help", "state", "get", "submit"]
     assert {
         "claim_task",
         "close_task",
@@ -236,6 +238,14 @@ def test_tool_family_discovery_metadata_is_declarative() -> None:
     assert families["tool_discovery"].entrypoints[:2] == ["list_tool_families", "tool_family_tools"]
     assert "get" not in families["project_knowledge"].preferred_tools
     assert "memory_search" in families["memory_operations"].preferred_tools
+
+
+def test_tool_surface_priority_is_declarative() -> None:
+    spec = load_tool_surface_spec()
+
+    assert spec.public_entrypoints == ["help", "state", "get", "submit"]
+    assert "mailbox_get" in spec.compatibility_tools
+    assert spec.compact_tool_names[:4] == spec.public_entrypoints
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

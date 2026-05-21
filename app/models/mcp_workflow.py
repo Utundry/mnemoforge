@@ -234,3 +234,12 @@ class McpToolFamilyRegistry(BaseModel):
     version: int = Field(default=1, ge=1)
     purpose: str = Field(..., min_length=1)
     families: list[McpToolFamilySpec] = Field(default_factory=list)
+
+
+class McpToolSurfaceSpec(BaseModel):
+    version: int = Field(default=1, ge=1)
+    purpose: str = Field(..., min_length=1)
+    public_entrypoints: list[str] = Field(default_factory=list)
+    compatibility_tools: list[str] = Field(default_factory=list)
+    compact_tool_names: list[str] = Field(default_factory=list)
+    compact_fill_tools: list[str] = Field(default_factory=list)

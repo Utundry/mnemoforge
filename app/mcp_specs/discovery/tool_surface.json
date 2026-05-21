@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "purpose": "Declarative MCP tool surface exposure metadata for recommended public entrypoints, compatibility names, and compact catalog priority.",
+  "public_entrypoints": ["help", "state", "get", "submit"],
+  "compatibility_tools": ["put", "mailbox_state", "mailbox_submit", "mailbox_get"],
+  "compact_tool_names": [
+    "help",
+    "state",
+    "get",
+    "submit",
+    "mailbox_state",
+    "mailbox_submit",
+    "mailbox_get",
+    "ask_project",
+    "project_work",
+    "project_rules",
+    "project_context",
+    "project_verify",
+    "project_capture",
+    "operational_tray",
+    "list_tool_families",
+    "tool_recommend",
+    "tool_family_tools",
+    "memory_search",
+    "memory_store",
+    "memory_health"
+  ],
+  "compact_fill_tools": ["get_task_execution_context", "record_task_checkpoint", "draft_task_checkpoint"]
+}

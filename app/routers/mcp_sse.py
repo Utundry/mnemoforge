@@ -152,7 +152,7 @@ from app.services.mcp_grouped_tool_dispatch_actions import (
     GroupedToolDispatchDependencies,
     execute_grouped_memory_or_runtime_action,
 )
-from app.services.mcp_workflow_specs import load_route_catalog_spec, load_tool_family_registry
+from app.services.mcp_workflow_specs import load_route_catalog_spec, load_tool_family_registry, load_tool_surface_spec
 from app.services.mcp_handoff_actions import (
     HANDOFF_ACTIONS,
     HandoffActionDependencies,
@@ -470,8 +470,9 @@ def _tool_catalog() -> list[dict[str, Any]]:
     return [tool for tool in TOOLS if isinstance(tool, dict) and tool.get("name")]
 
 
-_PUBLIC_SURFACE_TOOLS = ("help", "state", "get", "submit")
-_COMPATIBILITY_SURFACE_TOOLS = {"put", "mailbox_state", "mailbox_submit", "mailbox_get"}
+_TOOL_SURFACE_SPEC = load_tool_surface_spec()
+_PUBLIC_SURFACE_TOOLS = tuple(_TOOL_SURFACE_SPEC.public_entrypoints)
+_COMPATIBILITY_SURFACE_TOOLS = set(_TOOL_SURFACE_SPEC.compatibility_tools)
 
 
 def _tool_surface_role(tool_name: str) -> str:
@@ -528,28 +529,7 @@ def _annotated_tool_catalog() -> list[dict[str, Any]]:
     return [_annotate_tool_surface(tool) for tool in _tool_catalog()]
 
 
-_COMPACT_TOOL_NAMES = (
-    "help",
-    "state",
-    "get",
-    "submit",
-    "mailbox_state",
-    "mailbox_submit",
-    "mailbox_get",
-    "ask_project",
-    "project_work",
-    "project_rules",
-    "project_context",
-    "project_verify",
-    "project_capture",
-    "operational_tray",
-    "list_tool_families",
-    "tool_recommend",
-    "tool_family_tools",
-    "memory_search",
-    "memory_store",
-    "memory_health",
-)
+_COMPACT_TOOL_NAMES = tuple(_TOOL_SURFACE_SPEC.compact_tool_names)
 
 
 def _summarize_input_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -584,7 +564,7 @@ def _compact_tool_catalog(*, limit: int = 12, schema_mode: str = "summary") -> l
     for name in _COMPACT_TOOL_NAMES:
         if name in by_name and name not in names:
             names.append(name)
-    for name in ("get_task_execution_context", "record_task_checkpoint", "draft_task_checkpoint"):
+    for name in _TOOL_SURFACE_SPEC.compact_fill_tools:
         if name in by_name and name not in names and len(names) < limit:
             names.append(name)
     tools = [deepcopy(by_name[name]) for name in names[: max(1, limit)]]
