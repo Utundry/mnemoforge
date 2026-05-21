@@ -9,7 +9,7 @@ from app.services.mcp_workflow_specs import load_tool_contract_catalog_spec
 
 _DECLARATIVE_TOOL_DEFINITIONS = {
     tool.name: tool.model_dump()
-    for catalog in ("public_surface", "discovery_read")
+    for catalog in ("public_surface", "discovery_read", "mailbox_protocol")
     for tool in load_tool_contract_catalog_spec(catalog).tools
 }
 
@@ -1217,134 +1217,6 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 },
                 "acted_by": {"type": "string", "default": "user"},
                 "source": {"type": "string", "default": "mcp"},
-            },
-        },
-    },
-    "mailbox_state": {
-        "name": "mailbox_state",
-        "description": (
-            "Read-only Mailbox/MCP FSM entrypoint. Returns a public state packet with allowed forms for the current "
-            "workflow state; internal routes, tools, postconditions, and diagnostics are hidden unless diagnostic=true "
-            "and the runtime profile permits internal diagnostics."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["state"],
-            "properties": {
-                "project": {"type": "string", "default": "mnemoforge"},
-                "state": {
-                    "type": "string",
-                    "enum": [
-                        "planning",
-                        "implementation",
-                        "verification",
-                        "live_validation",
-                        "checkpointing",
-                        "handoff",
-                        "operator_review",
-                    ],
-                    "description": "Current workflow state for the mailbox packet.",
-                },
-                "runtime_profile_id": {
-                    "type": "string",
-                    "default": "unknown_cli",
-                    "description": "Runtime profile preset such as weak_mcp_operator, unknown_cli, strong_mcp_operator, or diagnostic_operator.",
-                },
-                "diagnostic": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Request internal metadata. Honored only for diagnostic-capable runtime profiles.",
-                },
-            },
-        },
-    },
-    "mailbox_submit": {
-        "name": "mailbox_submit",
-        "description": (
-            "Submit one public Mailbox/MCP FSM form and receive a public receipt. "
-            "The server validates state, required fields, and safe next actions; mutating forms are guarded during "
-            "the architecture migration and return review receipts instead of calling internal routes directly."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["form_id", "payload"],
-            "properties": {
-                "project": {"type": "string", "default": "mnemoforge"},
-                "state": {
-                    "type": "string",
-                    "default": "planning",
-                    "enum": [
-                        "planning",
-                        "implementation",
-                        "verification",
-                        "live_validation",
-                        "checkpointing",
-                        "handoff",
-                        "operator_review",
-                    ],
-                    "description": "Current workflow state that made the submitted form available.",
-                },
-                "form_id": {
-                    "type": "string",
-                    "description": "Form identifier from the latest mailbox_state packet.",
-                },
-                "payload": {
-                    "type": "object",
-                    "additionalProperties": True,
-                    "description": "Filled public form payload. Required fields depend on form_id.",
-                },
-                "runtime_profile_id": {
-                    "type": "string",
-                    "default": "unknown_cli",
-                    "description": "Runtime profile preset such as weak_mcp_operator, unknown_cli, strong_mcp_operator, or diagnostic_operator.",
-                },
-                "diagnostic": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Request internal metadata. Honored only for diagnostic-capable runtime profiles.",
-                },
-            },
-        },
-    },
-    "mailbox_get": {
-        "name": "mailbox_get",
-        "description": (
-            "Fetch a public mailbox packet by reference. This is the read-only receive side of the "
-            "Mailbox/MCP FSM protocol; unknown or internal references return public not_found receipts."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["ref"],
-            "properties": {
-                "ref": {
-                    "type": "string",
-                    "description": "Public reference such as mailbox_state:mnemoforge:planning.",
-                },
-                "project": {"type": "string", "default": "mnemoforge"},
-                "state": {
-                    "type": "string",
-                    "default": "planning",
-                    "enum": [
-                        "planning",
-                        "implementation",
-                        "verification",
-                        "live_validation",
-                        "checkpointing",
-                        "handoff",
-                        "operator_review",
-                    ],
-                    "description": "Fallback workflow state when the reference does not include one.",
-                },
-                "runtime_profile_id": {
-                    "type": "string",
-                    "default": "unknown_cli",
-                    "description": "Runtime profile preset such as weak_mcp_operator, unknown_cli, strong_mcp_operator, or diagnostic_operator.",
-                },
-                "diagnostic": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Request internal metadata. Honored only for diagnostic-capable runtime profiles.",
-                },
             },
         },
     },

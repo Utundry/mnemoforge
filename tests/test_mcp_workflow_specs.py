@@ -70,6 +70,7 @@ def test_default_workflow_specs_validate() -> None:
         "tool_explain",
         "tool_recommend",
     ]
+    assert summary["mailbox_tool_contracts"] == ["mailbox_state", "mailbox_submit", "mailbox_get"]
     assert {
         "claim_task",
         "close_task",
@@ -271,6 +272,15 @@ def test_read_only_discovery_tool_contracts_are_declarative() -> None:
 
     assert contracts["tool_family_tools"].inputSchema["required"] == ["family"]
     assert contracts["tool_recommend"].inputSchema["properties"]["top_n"]["maximum"] == 5
+
+
+def test_mailbox_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("mailbox_protocol")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["mailbox_state"].inputSchema["required"] == ["state"]
+    assert contracts["mailbox_submit"].inputSchema["required"] == ["form_id", "payload"]
+    assert contracts["mailbox_get"].inputSchema["properties"]["ref"]["type"] == "string"
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

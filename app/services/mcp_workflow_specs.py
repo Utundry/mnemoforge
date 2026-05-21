@@ -205,6 +205,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
     tool_surface = load_tool_surface_spec(spec_root=spec_root)
     public_tool_contracts = load_tool_contract_catalog_spec("public_surface", spec_root=spec_root)
     discovery_tool_contracts = load_tool_contract_catalog_spec("discovery_read", spec_root=spec_root)
+    mailbox_tool_contracts = load_tool_contract_catalog_spec("mailbox_protocol", spec_root=spec_root)
     mailbox_forms = list_mailbox_form_specs(spec_root=spec_root)
     known_state_ids = {spec.id for spec in state_specs}
     known_toggle_ids = {toggle.id for toggle in feature_registry.toggles}
@@ -284,6 +285,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         "tool_surface_public_entrypoints": tool_surface.public_entrypoints,
         "public_tool_contracts": [tool.name for tool in public_tool_contracts.tools],
         "discovery_tool_contracts": [tool.name for tool in discovery_tool_contracts.tools],
+        "mailbox_tool_contracts": [tool.name for tool in mailbox_tool_contracts.tools],
     }
 
 
