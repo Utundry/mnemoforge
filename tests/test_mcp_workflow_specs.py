@@ -49,7 +49,13 @@ def test_default_workflow_specs_validate() -> None:
     assert {"mailbox_state", "mailbox_submit", "mailbox_get"} <= set(summary["mailbox_actions"])
     assert "planning" in summary["mailbox_form_policy_states"]
     assert "minimal" in summary["mailbox_form_visibility_profiles"]
-    assert summary["route_catalogs"] == ["project_work", "project_rules"]
+    assert summary["route_catalogs"] == [
+        "project_work",
+        "project_rules",
+        "project_context",
+        "project_verify",
+        "project_capture",
+    ]
     assert "pull_task_context" in summary["project_work_route_intents"]
     assert "propose_law" in summary["project_rules_route_intents"]
     assert {
@@ -209,6 +215,16 @@ def test_project_rules_route_catalog_keeps_scoring_hints_in_spec_data() -> None:
 
     assert routes["propose_law"].arg_bonus == ["title", "statement"]
     assert routes["list_laws"].bonus_terms == ["law", "laws", "rule", "rules"]
+
+
+def test_context_verify_and_capture_route_catalogs_are_declarative() -> None:
+    context_routes = {route.intent_type: route for route in load_route_catalog_spec("project_context").routes}
+    verify_routes = {route.intent_type: route for route in load_route_catalog_spec("project_verify").routes}
+    capture_routes = {route.intent_type: route for route in load_route_catalog_spec("project_capture").routes}
+
+    assert context_routes["task_details"].arg_bonus == ["task_id"]
+    assert verify_routes["restart_validation_plan"].bonus_terms == ["restart", "live", "server"]
+    assert capture_routes["record_work_result"].arg_bonus == ["summary", "verification", "changed_files"]
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

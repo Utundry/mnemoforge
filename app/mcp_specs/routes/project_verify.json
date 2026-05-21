@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "facade": "project_verify",
+  "purpose": "Declarative project_verify route examples and scoring hints.",
+  "routes": [
+    {
+      "intent_type": "verification_context",
+      "tool": "get_task_execution_context",
+      "mutating": false,
+      "examples": [
+        "run tests for this change",
+        "verify current work",
+        "docker pytest verification",
+        "what verification should i run",
+        "test this task"
+      ],
+      "arg_bonus": ["changed_files"],
+      "reason": "Verification/test intent first needs state-scoped project rules, Docker contour hints, and risk controls."
+    },
+    {
+      "intent_type": "restart_validation_plan",
+      "tool": "get_task_execution_context",
+      "mutating": false,
+      "examples": [
+        "restart and validate",
+        "restart server and check MCP",
+        "live smoke after restart",
+        "validate memory-server-dev after restart",
+        "wait 120 seconds then smoke test"
+      ],
+      "bonus_terms": ["restart", "live", "server"],
+      "reason": "Restart/live validation maps to execution context; external restart remains outside MCP and must observe the 120-second post-restart window."
+    },
+    {
+      "intent_type": "health_check",
+      "tool": "memory_health",
+      "mutating": false,
+      "examples": [
+        "healthcheck",
+        "check server health",
+        "memory health summary",
+        "is qdrant reachable",
+        "server status"
+      ],
+      "bonus_terms": ["health", "healthcheck"],
+      "reason": "Pure server health intent maps to the read-only health endpoint."
+    }
+  ]
+}

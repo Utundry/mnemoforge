@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "facade": "project_context",
+  "purpose": "Declarative project_context route examples and scoring hints.",
+  "routes": [
+    {
+      "intent_type": "task_details",
+      "tool": "pull_task_context",
+      "mutating": false,
+      "examples": [
+        "details for task",
+        "show task details",
+        "get task by id",
+        "what is task",
+        "continue this task",
+        "resume task"
+      ],
+      "arg_bonus": ["task_id"],
+      "bonus_terms": ["task", "details", "detail", "continue", "resume"],
+      "reason": "A concrete task-id context request maps to pull_task_context so the agent receives the task replay bundle directly."
+    },
+    {
+      "intent_type": "enrich_context",
+      "tool": "enrich_task_with_context",
+      "mutating": false,
+      "examples": [
+        "give project context",
+        "what matters for this task",
+        "what constraints and context should i know",
+        "enrich this task with project context",
+        "what is important to know"
+      ],
+      "reason": "General project-context intent maps to enrich_task_with_context."
+    },
+    {
+      "intent_type": "rules_context",
+      "tool": "project_rules",
+      "mutating": false,
+      "examples": [
+        "what project rules apply",
+        "check active project laws",
+        "what constraints matter here",
+        "show relevant project rules",
+        "which laws should guide this task"
+      ],
+      "bonus_terms": ["law", "laws", "rule", "rules", "constraint", "constraints"],
+      "reason": "Rule/constraint context belongs to the project_rules facade."
+    },
+    {
+      "intent_type": "reconstruction_bundle",
+      "tool": "get_project_reconstruction_bundle",
+      "mutating": false,
+      "examples": [
+        "give source loss reconstruction context",
+        "reconstruct project from memory",
+        "build reconstruction bundle",
+        "what would a fresh agent need to rebuild this project"
+      ],
+      "bonus_terms": ["reconstruct", "reconstruction", "source loss", "lost source"],
+      "reason": "Source-loss or recovery context maps to the reconstruction bundle."
+    },
+    {
+      "intent_type": "project_readiness",
+      "tool": "get_project_readiness",
+      "mutating": false,
+      "examples": [
+        "check project readiness",
+        "is this project ready",
+        "bootstrap readiness",
+        "onboard this project",
+        "assess readiness before bootstrap"
+      ],
+      "bonus_terms": ["readiness", "ready", "bootstrap", "onboard"],
+      "reason": "Readiness/bootstrap context maps to get_project_readiness."
+    }
+  ]
+}

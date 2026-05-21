@@ -152,6 +152,7 @@ from app.services.mcp_grouped_tool_dispatch_actions import (
     GroupedToolDispatchDependencies,
     execute_grouped_memory_or_runtime_action,
 )
+from app.services.mcp_workflow_specs import load_route_catalog_spec
 from app.services.mcp_handoff_actions import (
     HANDOFF_ACTIONS,
     HandoffActionDependencies,
@@ -3056,180 +3057,21 @@ async def _run_facade_route(
     }
 
 
-_PROJECT_CONTEXT_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
-    {
-        "intent_type": "task_details",
-        "tool": "pull_task_context",
-        "mutating": False,
-        "examples": (
-            "details for task",
-            "show task details",
-            "get task by id",
-            "what is task",
-            "continue this task",
-            "resume task",
-        ),
-        "arg_bonus": ("task_id",),
-        "bonus_terms": ("task", "details", "detail", "continue", "resume"),
-        "reason": "A concrete task-id context request maps to pull_task_context so the agent receives the task replay bundle directly.",
-    },
-    {
-        "intent_type": "enrich_context",
-        "tool": "enrich_task_with_context",
-        "mutating": False,
-        "examples": (
-            "give project context",
-            "what matters for this task",
-            "what constraints and context should i know",
-            "enrich this task with project context",
-            "what is important to know",
-        ),
-        "reason": "General project-context intent maps to enrich_task_with_context.",
-    },
-    {
-        "intent_type": "rules_context",
-        "tool": "project_rules",
-        "mutating": False,
-        "examples": (
-            "what project rules apply",
-            "check active project laws",
-            "what constraints matter here",
-            "show relevant project rules",
-            "which laws should guide this task",
-        ),
-        "bonus_terms": ("law", "laws", "rule", "rules", "constraint", "constraints"),
-        "reason": "Rule/constraint context belongs to the project_rules facade.",
-    },
-    {
-        "intent_type": "reconstruction_bundle",
-        "tool": "get_project_reconstruction_bundle",
-        "mutating": False,
-        "examples": (
-            "give source loss reconstruction context",
-            "reconstruct project from memory",
-            "build reconstruction bundle",
-            "what would a fresh agent need to rebuild this project",
-        ),
-        "bonus_terms": ("reconstruct", "reconstruction", "source loss", "lost source"),
-        "reason": "Source-loss or recovery context maps to the reconstruction bundle.",
-    },
-    {
-        "intent_type": "project_readiness",
-        "tool": "get_project_readiness",
-        "mutating": False,
-        "examples": (
-            "check project readiness",
-            "is this project ready",
-            "bootstrap readiness",
-            "onboard this project",
-            "assess readiness before bootstrap",
-        ),
-        "bonus_terms": ("readiness", "ready", "bootstrap", "onboard"),
-        "reason": "Readiness/bootstrap context maps to get_project_readiness.",
-    },
+_PROJECT_CONTEXT_ROUTE_CATALOG: tuple[dict[str, Any], ...] = tuple(
+    route.model_dump()
+    for route in load_route_catalog_spec("project_context").routes
 )
 
 
-_PROJECT_VERIFY_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
-    {
-        "intent_type": "verification_context",
-        "tool": "get_task_execution_context",
-        "mutating": False,
-        "examples": (
-            "run tests for this change",
-            "verify current work",
-            "docker pytest verification",
-            "what verification should i run",
-            "test this task",
-        ),
-        "arg_bonus": ("changed_files",),
-        "reason": "Verification/test intent first needs state-scoped project rules, Docker contour hints, and risk controls.",
-    },
-    {
-        "intent_type": "restart_validation_plan",
-        "tool": "get_task_execution_context",
-        "mutating": False,
-        "examples": (
-            "restart and validate",
-            "restart server and check MCP",
-            "live smoke after restart",
-            "validate memory-server-dev after restart",
-            "wait 120 seconds then smoke test",
-        ),
-        "bonus_terms": ("restart", "live", "server"),
-        "reason": "Restart/live validation maps to execution context; external restart remains outside MCP and must observe the 120-second post-restart window.",
-    },
-    {
-        "intent_type": "health_check",
-        "tool": "memory_health",
-        "mutating": False,
-        "examples": (
-            "healthcheck",
-            "check server health",
-            "memory health summary",
-            "is qdrant reachable",
-            "server status",
-        ),
-        "bonus_terms": ("health", "healthcheck"),
-        "reason": "Pure server health intent maps to the read-only health endpoint.",
-    },
+_PROJECT_VERIFY_ROUTE_CATALOG: tuple[dict[str, Any], ...] = tuple(
+    route.model_dump()
+    for route in load_route_catalog_spec("project_verify").routes
 )
 
 
-_PROJECT_CAPTURE_ROUTE_CATALOG: tuple[dict[str, Any], ...] = (
-    {
-        "intent_type": "draft_capture",
-        "tool": "clerk_draft_report",
-        "mutating": False,
-        "examples": (
-            "draft checkpoint from notes",
-            "make a clerk draft",
-            "prepare reviewable closeout draft",
-            "turn these notes into a checkpoint draft",
-            "draft capture report",
-        ),
-        "reason": "Draft/capture intent maps to a reviewable clerk draft before governed memory mutation.",
-    },
-    {
-        "intent_type": "list_stenographer_spans",
-        "tool": "list_stenographer_spans",
-        "mutating": False,
-        "examples": (
-            "list spans",
-            "show stenographer spans",
-            "show transcript spans",
-            "inspect captured spans",
-        ),
-        "reason": "Span inspection intent maps to list_stenographer_spans.",
-    },
-    {
-        "intent_type": "record_stenographer_span",
-        "tool": "record_stenographer_span",
-        "mutating": True,
-        "examples": (
-            "record span",
-            "capture stenographer span",
-            "save transcript span",
-            "record rule marker span",
-        ),
-        "arg_bonus": ("span_type",),
-        "reason": "Recording a stenographer span mutates session capture state and is guarded.",
-    },
-    {
-        "intent_type": "record_work_result",
-        "tool": "record_work_result",
-        "mutating": True,
-        "examples": (
-            "save checkpoint",
-            "record result",
-            "record work result",
-            "close this task",
-            "save handoff",
-            "persist this outcome",
-        ),
-        "arg_bonus": ("summary", "verification", "changed_files"),
-        "reason": "Persisting work result/checkpoint mutates governed project memory and is guarded.",
-    },
+_PROJECT_CAPTURE_ROUTE_CATALOG: tuple[dict[str, Any], ...] = tuple(
+    route.model_dump()
+    for route in load_route_catalog_spec("project_capture").routes
 )
 
 

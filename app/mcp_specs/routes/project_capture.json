@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "facade": "project_capture",
+  "purpose": "Declarative project_capture route examples and scoring hints.",
+  "routes": [
+    {
+      "intent_type": "draft_capture",
+      "tool": "clerk_draft_report",
+      "mutating": false,
+      "examples": [
+        "draft checkpoint from notes",
+        "make a clerk draft",
+        "prepare reviewable closeout draft",
+        "turn these notes into a checkpoint draft",
+        "draft capture report"
+      ],
+      "reason": "Draft/capture intent maps to a reviewable clerk draft before governed memory mutation."
+    },
+    {
+      "intent_type": "list_stenographer_spans",
+      "tool": "list_stenographer_spans",
+      "mutating": false,
+      "examples": [
+        "list spans",
+        "show stenographer spans",
+        "show transcript spans",
+        "inspect captured spans"
+      ],
+      "reason": "Span inspection intent maps to list_stenographer_spans."
+    },
+    {
+      "intent_type": "record_stenographer_span",
+      "tool": "record_stenographer_span",
+      "mutating": true,
+      "examples": [
+        "record span",
+        "capture stenographer span",
+        "save transcript span",
+        "record rule marker span"
+      ],
+      "arg_bonus": ["span_type"],
+      "reason": "Recording a stenographer span mutates session capture state and is guarded."
+    },
+    {
+      "intent_type": "record_work_result",
+      "tool": "record_work_result",
+      "mutating": true,
+      "examples": [
+        "save checkpoint",
+        "record result",
+        "record work result",
+        "close this task",
+        "save handoff",
+        "persist this outcome"
+      ],
+      "arg_bonus": ["summary", "verification", "changed_files"],
+      "reason": "Persisting work result/checkpoint mutates governed project memory and is guarded."
+    }
+  ]
+}
