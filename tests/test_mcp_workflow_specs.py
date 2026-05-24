@@ -78,6 +78,7 @@ def test_default_workflow_specs_validate() -> None:
         "defer_learning_candidate",
         "reject_learning_candidate",
     ]
+    assert summary["improvement_review_tool_contracts"] == ["review_improvement"]
     assert {
         "claim_task",
         "close_task",
@@ -307,6 +308,24 @@ def test_learning_review_tool_contracts_are_declarative() -> None:
     assert contracts["approve_learning_candidate"].inputSchema["required"] == ["artifact_id"]
     assert contracts["defer_learning_candidate"].inputSchema["properties"]["defer_days"]["maximum"] == 90
     assert contracts["reject_learning_candidate"].inputSchema["properties"]["rejection_source"]["type"] == "string"
+
+
+def test_improvement_review_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("improvement_review")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["review_improvement"].inputSchema["required"] == ["improvement_id"]
+    assert contracts["review_improvement"].inputSchema["properties"]["stage"]["enum"] == [
+        "proposal",
+        "beta_test",
+        "experimental",
+        "stable",
+        "deprecated",
+    ]
+    assert contracts["review_improvement"].inputSchema["properties"]["verdict"]["enum"] == [
+        "effective",
+        "ineffective",
+    ]
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

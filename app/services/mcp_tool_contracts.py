@@ -15,39 +15,13 @@ _DECLARATIVE_TOOL_DEFINITIONS = {
         "mailbox_protocol",
         "instruction_layers",
         "learning_review",
+        "improvement_review",
     )
     for tool in load_tool_contract_catalog_spec(catalog).tools
 }
 
 
 _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "review_improvement": {
-        "name": "review_improvement",
-        "description": (
-            "Set stage/verdict for an improvement without changing lifecycle status. "
-            "Use this when you want to mark an improvement as beta_test/stable or effective/ineffective."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["improvement_id"],
-            "properties": {
-                "improvement_id": {"type": "string", "description": "UUID of the improvement"},
-                "stage": {
-                    "type": "string",
-                    "enum": ["proposal", "beta_test", "experimental", "stable", "deprecated"],
-                    "description": "Stage of the improvement",
-                },
-                "verdict": {
-                    "type": "string",
-                    "enum": ["effective", "ineffective"],
-                    "description": "Quality verdict for the improvement",
-                },
-                "reviewed_by": {"type": "string", "default": "user"},
-                "review_source": {"type": "string", "default": "manual_review"},
-                "reason": {"type": "string", "default": ""},
-            },
-        },
-    },
     "list_project_aliases": {
         "name": "list_project_aliases",
         "description": (
