@@ -97,6 +97,7 @@ def test_default_workflow_specs_validate() -> None:
         "get_project_bootstrap_checklist",
         "get_project_reconstruction_bundle",
     ]
+    assert summary["remote_snapshot_tool_contracts"] == ["plan_remote_snapshot", "sync_remote_snapshot"]
     assert {
         "claim_task",
         "close_task",
@@ -392,6 +393,23 @@ def test_project_knowledge_core_tool_contracts_are_declarative() -> None:
     assert contracts["get_project_readiness"].inputSchema["required"] == ["project_id"]
     assert contracts["get_project_bootstrap_checklist"].inputSchema["required"] == ["project_id"]
     assert contracts["get_project_reconstruction_bundle"].inputSchema["properties"]["max_items_per_layer"]["maximum"] == 50
+
+
+def test_remote_snapshot_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("remote_snapshot")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["plan_remote_snapshot"].inputSchema["required"] == ["project_id", "snapshot"]
+    assert contracts["sync_remote_snapshot"].inputSchema["required"] == ["project_id", "snapshot"]
+    plan_props = contracts["plan_remote_snapshot"].inputSchema["properties"]
+    assert plan_props["storage_mode"]["enum"] == ["knowledge_only", "selective_source_cache", "full_mirror"]
+    assert plan_props["snapshot"]["properties"]["source_mode"]["enum"] == [
+        "workspace",
+        "git_snapshot",
+        "github_pr",
+        "archive_bundle",
+    ]
+    assert plan_props["files"]["items"]["required"] == ["path", "status"]
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

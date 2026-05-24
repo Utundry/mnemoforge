@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "id": "remote_snapshot",
+  "purpose": "Declarative contracts for helper-facing remote project snapshot planning and synchronization.",
+  "tools": [
+    {
+      "name": "plan_remote_snapshot",
+      "description": "Validate and normalize a remote helper snapshot payload before ingest or refresh. Returns how the server will interpret the snapshot, storage mode, and rebuild policy without mutating project knowledge.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["project_id", "snapshot"],
+        "properties": {
+          "project_id": {"type": "string"},
+          "storage_mode": {
+            "type": "string",
+            "enum": ["knowledge_only", "selective_source_cache", "full_mirror"],
+            "default": "knowledge_only"
+          },
+          "snapshot": {
+            "type": "object",
+            "required": ["source_mode"],
+            "properties": {
+              "source_mode": {
+                "type": "string",
+                "enum": ["workspace", "git_snapshot", "github_pr", "archive_bundle"]
+              },
+              "repo": {"type": "string"},
+              "branch": {"type": "string"},
+              "commit_sha": {"type": "string"},
+              "base_commit_sha": {"type": "string"},
+              "dirty_workspace": {"type": "boolean"},
+              "snapshot_ts": {"type": "string"},
+              "diff_summary": {"type": "string"},
+              "pr_ref": {"type": "string"}
+            }
+          },
+          "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
+          "deleted_files": {"type": "array", "items": {"type": "string"}, "default": []},
+          "renamed_files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["from_path", "to_path"],
+              "properties": {
+                "from_path": {"type": "string"},
+                "to_path": {"type": "string"}
+              }
+            },
+            "default": []
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "status"],
+              "properties": {
+                "path": {"type": "string"},
+                "status": {
+                  "type": "string",
+                  "enum": ["added", "modified", "deleted", "renamed"]
+                },
+                "content": {"type": "string"},
+                "content_hash": {"type": "string"},
+                "language": {"type": "string"},
+                "component_hint": {"type": "string"}
+              }
+            },
+            "default": []
+          },
+          "force": {"type": "boolean", "default": false}
+        }
+      }
+    },
+    {
+      "name": "sync_remote_snapshot",
+      "description": "Run the helper-facing remote snapshot workflow for git-first autodocs. Returns one normalized action for the helper such as skipped, needs_source_payload, refreshed, bootstrap_needed, or no_changes.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["project_id", "snapshot"],
+        "properties": {
+          "project_id": {"type": "string"},
+          "storage_mode": {
+            "type": "string",
+            "enum": ["knowledge_only", "selective_source_cache", "full_mirror"],
+            "default": "knowledge_only"
+          },
+          "snapshot": {
+            "type": "object",
+            "required": ["source_mode"],
+            "properties": {
+              "source_mode": {
+                "type": "string",
+                "enum": ["workspace", "git_snapshot", "github_pr", "archive_bundle"]
+              },
+              "repo": {"type": "string"},
+              "branch": {"type": "string"},
+              "commit_sha": {"type": "string"},
+              "base_commit_sha": {"type": "string"},
+              "dirty_workspace": {"type": "boolean"},
+              "snapshot_ts": {"type": "string"},
+              "diff_summary": {"type": "string"},
+              "pr_ref": {"type": "string"}
+            }
+          },
+          "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
+          "deleted_files": {"type": "array", "items": {"type": "string"}, "default": []},
+          "renamed_files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["from_path", "to_path"],
+              "properties": {
+                "from_path": {"type": "string"},
+                "to_path": {"type": "string"}
+              }
+            },
+            "default": []
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "status"],
+              "properties": {
+                "path": {"type": "string"},
+                "status": {
+                  "type": "string",
+                  "enum": ["added", "modified", "deleted", "renamed"]
+                },
+                "content": {"type": "string"},
+                "content_hash": {"type": "string"},
+                "language": {"type": "string"},
+                "component_hint": {"type": "string"}
+              }
+            },
+            "default": []
+          },
+          "force": {"type": "boolean", "default": false}
+        }
+      }
+    }
+  ]
+}
