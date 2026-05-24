@@ -215,6 +215,10 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         "project_context_execution",
         spec_root=spec_root,
     )
+    project_knowledge_core_tool_contracts = load_tool_contract_catalog_spec(
+        "project_knowledge_core",
+        spec_root=spec_root,
+    )
     mailbox_forms = list_mailbox_form_specs(spec_root=spec_root)
     known_state_ids = {spec.id for spec in state_specs}
     known_toggle_ids = {toggle.id for toggle in feature_registry.toggles}
@@ -302,6 +306,9 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         "workflow_helper_tool_contracts": [tool.name for tool in workflow_helper_tool_contracts.tools],
         "project_context_execution_tool_contracts": [
             tool.name for tool in project_context_execution_tool_contracts.tools
+        ],
+        "project_knowledge_core_tool_contracts": [
+            tool.name for tool in project_knowledge_core_tool_contracts.tools
         ],
     }
 

@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "id": "project_knowledge_core",
+  "purpose": "Declarative contracts for project knowledge-tree mutation and project readiness/reconstruction reads.",
+  "tools": [
+    {
+      "name": "upsert_knowledge_tree_node",
+      "description": "Create or update a structured project knowledge-tree node by topic_path. Use this for architecture/documentation knowledge before editing Markdown projections.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["topic_path", "title"],
+        "properties": {
+          "topic_path": {"type": "string"},
+          "title": {"type": "string"},
+          "type": {"type": "string", "enum": ["idea", "project", "area", "task", "leaf"], "default": "area"},
+          "status": {
+            "type": "string",
+            "enum": ["inbox", "planning", "active", "in-progress", "done", "paused", "archived"],
+            "default": "active"
+          },
+          "parent_topic_path": {"type": "string"},
+          "description": {"type": "string"},
+          "goal": {"type": "string"},
+          "tags": {"type": "array", "items": {"type": "string"}, "default": []},
+          "doc": {
+            "type": "string",
+            "description": "Optional human-facing projection text; structured fields remain primary."
+          },
+          "responsibility": {"type": "string"},
+          "source_of_truth": {"type": "string"},
+          "runtime_entrypoints": {"type": "array", "items": {"type": "string"}, "default": []},
+          "tests": {"type": "array", "items": {"type": "string"}, "default": []},
+          "current_debt": {"type": "array", "items": {"type": "string"}, "default": []},
+          "target_state": {"type": "string"},
+          "projection_targets": {"type": "array", "items": {"type": "string"}, "default": []},
+          "structured_fields": {"type": "object", "default": {}},
+          "evidence_refs": {"type": "array", "items": {"type": "string"}, "default": []},
+          "acted_by": {"type": "string", "default": "codex"},
+          "source": {"type": "string", "default": "mcp_upsert_knowledge_tree_node"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    {
+      "name": "get_project_readiness",
+      "description": "Assess whether a project is ready for an external pilot workflow. Reports knowledge coverage, blockers, and next actions for bootstrap.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+          "project_id": {"type": "string"}
+        }
+      }
+    },
+    {
+      "name": "get_project_bootstrap_checklist",
+      "description": "Return an ordered bootstrap checklist for a project. Turns readiness findings into concrete operator steps for external-project setup.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+          "project_id": {"type": "string"}
+        }
+      }
+    },
+    {
+      "name": "get_project_reconstruction_bundle",
+      "description": "Assemble a read-only source-loss reconstruction bundle for any SuperMemory-backed project. Uses governed project memory layers such as components, tasks, improvements, laws, docs, memoirs, and runtime hints; does not require source code and does not mutate project state.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["project_id"],
+        "properties": {
+          "project_id": {"type": "string"},
+          "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
+          "max_items_per_layer": {"type": "integer", "default": 5, "minimum": 1, "maximum": 50}
+        }
+      }
+    }
+  ]
+}

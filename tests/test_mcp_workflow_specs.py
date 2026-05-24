@@ -91,6 +91,12 @@ def test_default_workflow_specs_validate() -> None:
         "get_task_execution_context",
         "operational_tray",
     ]
+    assert summary["project_knowledge_core_tool_contracts"] == [
+        "upsert_knowledge_tree_node",
+        "get_project_readiness",
+        "get_project_bootstrap_checklist",
+        "get_project_reconstruction_bundle",
+    ]
     assert {
         "claim_task",
         "close_task",
@@ -375,6 +381,17 @@ def test_project_context_execution_tool_contracts_are_declarative() -> None:
     assert contracts["get_task_execution_context"].inputSchema["properties"]["include_rules"]["default"] is True
     assert contracts["operational_tray"].inputSchema["properties"]["action"]["enum"] == ["inspect", "execute"]
     assert "record_checkpoint" in contracts["operational_tray"].inputSchema["properties"]["tray_action"]["enum"]
+
+
+def test_project_knowledge_core_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("project_knowledge_core")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["upsert_knowledge_tree_node"].inputSchema["required"] == ["topic_path", "title"]
+    assert contracts["upsert_knowledge_tree_node"].inputSchema["properties"]["type"]["default"] == "area"
+    assert contracts["get_project_readiness"].inputSchema["required"] == ["project_id"]
+    assert contracts["get_project_bootstrap_checklist"].inputSchema["required"] == ["project_id"]
+    assert contracts["get_project_reconstruction_bundle"].inputSchema["properties"]["max_items_per_layer"]["maximum"] == 50
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:
