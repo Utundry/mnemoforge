@@ -1105,7 +1105,8 @@ class TestMcpToolExecution:
         assert props["response_format"]["enum"] == ["json", "diagnostic", "answer"]
         assert props["scorer_backend"]["enum"] == ["lexical", "auto", "llm"]
         assert props["scorer_backend"]["default"] == "auto"
-        assert "120-second post-restart window" in tool["description"]
+        assert "project-defined verification contour refs" in tool["description"]
+        assert "120-second post-restart window" not in tool["description"]
 
     def test_project_capture_tool_is_thematic_capture_facade(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "project_capture")
@@ -3113,7 +3114,7 @@ class TestMcpToolExecution:
                     "session_id": "sess-1",
                     "intent": "finish task session",
                     "summary": "Completed lifecycle work.",
-                    "verification": ["scripts/run_pytest_docker.ps1 focused tests passed"],
+                    "verification": ["verification_contour:alpha:focused-tests passed"],
                     "changed_files": ["app/routers/mcp_sse.py"],
                     "next_step": "none",
                     "allow_mutation": True,
@@ -3574,7 +3575,7 @@ class TestMcpToolExecution:
                     "scope": "project",
                     "project": args["project"],
                     "topic_path": "mnemoforge/testing/docker-test-contour",
-                    "rationale": "Use scripts/run_pytest_docker.ps1; do not run host pytest.",
+                    "rationale": "Use the declared project verification contour; do not run host pytest.",
                     "is_project_local": True,
                     "source": "project_context",
                 }
@@ -4489,8 +4490,12 @@ class TestMcpToolExecution:
         assert result["selected_route"]["intent_type"] == "verification_context"
         assert called[0][1]["state"] == "verification"
         assert called[0][1]["changed_files"] == ["app/routers/mcp_sse.py"]
-        assert result["project_verify_guidance"]["restart_window_seconds"] == 120
-        assert "run_pytest_docker.ps1" in result["project_verify_guidance"]["docker_test_contour"]
+        guidance = result["project_verify_guidance"]
+        assert guidance["verification_contour_ref"] == "verification_contour:alpha:verification"
+        assert guidance["restart_window_ref"] == "restart_window:alpha:live_validation"
+        assert guidance["live_boundary_ref"] == "live_boundary:alpha:verification"
+        assert "restart_window_seconds" not in guidance
+        assert "docker_test_contour" not in guidance
         assert result["selected_route"]["scorer"]["backend_used"] == "lexical"
         assert result["route_telemetry"]["scorer_backend"] == "lexical"
         assert result["semantic_rules"]["context_type"] in {"post_implementation", "post_validation"}
@@ -4516,7 +4521,7 @@ class TestMcpToolExecution:
 
         assert result["status"] == "executed"
         assert result["result"]["status"] == "conflict"
-        assert result["result"]["error"] == "rule_precondition_failed:docker_test_contour"
+        assert result["result"]["error"] == "rule_precondition_failed:declared_verification_contour"
         assert called == []
 
     async def test_project_verify_auto_backend_falls_back_to_lexical_when_llm_fails(self, monkeypatch):
@@ -6455,7 +6460,7 @@ class TestMcpToolExecution:
                     "agent_id": "codex",
                     "session_id": "sess-codex",
                     "summary": "Completed implementation",
-                    "verification": ["scripts/run_pytest_docker.ps1 focused tests passed"],
+                    "verification": ["verification_contour:alpha:focused-tests passed"],
                     "changed_files": ["app/routers/mcp_sse.py"],
                     "next_step": "none",
                 },

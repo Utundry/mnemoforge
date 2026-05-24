@@ -3170,7 +3170,7 @@ def _project_verify_route(
         "intent_type": "verification_context",
         "mutating": False,
         "confidence": 0.82,
-        "reason": "Verification/test intent first needs state-scoped project rules, Docker contour hints, and risk controls.",
+        "reason": "Verification/test intent first needs state-scoped project rules, approved verification contour refs, and risk controls.",
         "matched_example": "",
         "route_candidates": [],
         "scorer": scorer_meta or {"backend_requested": _facade_backend_requested(args), "backend_used": "lexical", "llm_attempted": False, "fallback_reason": ""},
@@ -3228,7 +3228,7 @@ def _project_verify_route(
         route.update(
             intent_type="restart_validation_plan",
             confidence=0.88,
-            reason="Restart/live validation maps to execution context; external restart remains outside MCP and must observe the 120-second post-restart window.",
+            reason="Restart/live validation maps to execution context; external restart remains outside MCP and must observe the project-defined restart validation window.",
         )
 
     route["payload"] = {key: value for key, value in route["payload"].items() if value not in (None, "", [])}
@@ -3244,10 +3244,14 @@ async def _build_project_verify_payload(api_base: str, args: dict[str, Any], *, 
     )
     data = await _run_facade_route(facade="project_verify", route=route, args=args, api_base=api_base, session_id=session_id)
     if route["intent_type"] in {"verification_context", "restart_validation_plan"}:
+        project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
+        state = str(route.get("payload", {}).get("state") or args.get("state") or "verification").strip() or "verification"
         data["project_verify_guidance"] = {
-            "docker_test_contour": "Use scripts/run_pytest_docker.ps1 for pytest so tests run in mcp-e2e-test-runner against memory-server-test/qdrant-test.",
-            "restart_window_seconds": 120,
-            "live_boundary": "Do not treat Docker test-contour success as live-dev validation; restart memory-server-dev and wait 120 seconds before live MCP/API checks.",
+            "verification_contour_ref": f"verification_contour:{project}:{state}",
+            "restart_window_ref": f"restart_window:{project}:live_validation",
+            "live_boundary_ref": f"live_boundary:{project}:verification",
+            "source": "project_context",
+            "next_safe_action": "Resolve these refs through project context/rules before executing checks or declaring restart health.",
         }
     return data
 
@@ -5286,8 +5290,8 @@ TOOLS = [
         "name": "project_verify",
         "description": (
             "Thematic verification facade. Use for tests, live validation, restarts, health checks, "
-            "and validation planning. It surfaces the project Docker test contour, live/test boundary, "
-            "and 120-second post-restart window instead of making agents hunt through verification tools."
+            "and validation planning. It surfaces project-defined verification contour refs, live/test boundary refs, "
+            "and restart validation window refs instead of making agents hunt through verification tools."
         ),
         "inputSchema": {
             "type": "object",
@@ -6718,18 +6722,19 @@ def _build_semantic_rule_packet(
         wants_test
         and docker_rule_active
         and "pytest" in command_text
-        and "run_pytest_docker" not in command_text
         and "docker" not in command_text
+        and "verification_contour" not in command_text
+        and "approved contour" not in command_text
     )
 
     preconditions: list[dict[str, Any]] = []
     if wants_test and docker_rule_active:
         preconditions.append(
             {
-                "id": "docker_test_contour",
+                "id": "declared_verification_contour",
                 "required": True,
                 "satisfied": not blocked,
-                "message": "Run tests through the declared Docker test contour (for example scripts/run_pytest_docker.ps1).",
+                "message": "Run tests through the declared project verification contour before reporting verification success.",
             }
         )
 
@@ -6752,7 +6757,7 @@ def _build_semantic_rule_packet(
         "applied_rule_count": len(top),
         "blocked": blocked,
         "preconditions": preconditions,
-        "block_error": "rule_precondition_failed:docker_test_contour" if blocked else "",
+        "block_error": "rule_precondition_failed:declared_verification_contour" if blocked else "",
     }
 
 

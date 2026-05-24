@@ -17,7 +17,7 @@
     {
       "id": "skip_stale_window",
       "match": ["immediate restart validation", "ignore stale window"],
-      "message": "Respect the runtime owner stale window after Docker restart when project rules require it."
+      "message": "Respect the runtime owner stale window after runtime restart when project rules require it."
     }
   ],
   "feature_toggles": [],
