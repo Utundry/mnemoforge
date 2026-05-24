@@ -22,92 +22,13 @@ _DECLARATIVE_TOOL_DEFINITIONS = {
         "project_knowledge_core",
         "remote_snapshot",
         "storage_trust",
+        "coordination_messages",
     )
     for tool in load_tool_contract_catalog_spec(catalog).tools
 }
 
 
 _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "send_coordination_message": {
-        "name": "send_coordination_message",
-        "description": (
-            "Send a project-scoped coordination message from one agent to another. "
-            "Use for questions, action requests, replies, and status updates without turning them into project truth."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["project", "from_agent", "to_agent", "content"],
-            "properties": {
-                "project": {"type": "string"},
-                "from_agent": {"type": "string"},
-                "to_agent": {"type": "string"},
-                "content": {"type": "string"},
-                "message_type": {
-                    "type": "string",
-                    "enum": ["question", "request_action", "response", "status_update", "handoff", "note"],
-                    "default": "question",
-                },
-                "thread_id": {"type": "string"},
-                "response_to_message_id": {"type": "string"},
-                "requested_action": {"type": "string"},
-                "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal"},
-                "source": {"type": "string"},
-                "tags": {"type": "array", "items": {"type": "string"}},
-            },
-        },
-    },
-    "pickup_coordination_messages": {
-        "name": "pickup_coordination_messages",
-        "description": (
-            "Pick up new project-scoped coordination messages addressed to an agent. "
-            "New messages become acknowledged when picked up."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["agent_id"],
-            "properties": {
-                "agent_id": {"type": "string"},
-                "project": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
-            },
-        },
-    },
-    "list_coordination_messages": {
-        "name": "list_coordination_messages",
-        "description": (
-            "List project-scoped coordination messages for an inbox, outbox, or thread. "
-            "Use this to inspect a conversation thread or check whether an answer has arrived."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "agent_id": {"type": "string"},
-                "project": {"type": "string"},
-                "mailbox": {"type": "string", "enum": ["inbox", "outbox", "thread"], "default": "inbox"},
-                "thread_id": {"type": "string"},
-                "status": {"type": "string", "enum": ["new", "acknowledged", "in_progress", "answered", "closed"]},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
-            },
-        },
-    },
-    "update_coordination_message_status": {
-        "name": "update_coordination_message_status",
-        "description": (
-            "Update the lifecycle status of a coordination message. "
-            "Typical flow: new -> acknowledged -> in_progress -> answered/closed."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["message_id", "status", "acted_by"],
-            "properties": {
-                "message_id": {"type": "string"},
-                "status": {"type": "string", "enum": ["new", "acknowledged", "in_progress", "answered", "closed"]},
-                "acted_by": {"type": "string"},
-                "action_source": {"type": "string"},
-                "reason": {"type": "string"},
-            },
-        },
-    },
     "set_canonical_status": {
         "name": "set_canonical_status",
         "description": "Suppress or reactivate a canonical memory for governance purposes.",

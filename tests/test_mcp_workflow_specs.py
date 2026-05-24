@@ -99,6 +99,12 @@ def test_default_workflow_specs_validate() -> None:
     ]
     assert summary["remote_snapshot_tool_contracts"] == ["plan_remote_snapshot", "sync_remote_snapshot"]
     assert summary["storage_trust_tool_contracts"] == ["get_storage_trust_status"]
+    assert summary["coordination_message_tool_contracts"] == [
+        "send_coordination_message",
+        "pickup_coordination_messages",
+        "list_coordination_messages",
+        "update_coordination_message_status",
+    ]
     assert {
         "claim_task",
         "close_task",
@@ -419,6 +425,30 @@ def test_storage_trust_tool_contracts_are_declarative() -> None:
 
     assert contracts["get_storage_trust_status"].inputSchema["type"] == "object"
     assert contracts["get_storage_trust_status"].inputSchema["properties"] == {}
+
+
+def test_coordination_message_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("coordination_messages")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["send_coordination_message"].inputSchema["required"] == [
+        "project",
+        "from_agent",
+        "to_agent",
+        "content",
+    ]
+    assert contracts["send_coordination_message"].inputSchema["properties"]["message_type"]["default"] == "question"
+    assert contracts["pickup_coordination_messages"].inputSchema["required"] == ["agent_id"]
+    assert contracts["list_coordination_messages"].inputSchema["properties"]["mailbox"]["enum"] == [
+        "inbox",
+        "outbox",
+        "thread",
+    ]
+    assert contracts["update_coordination_message_status"].inputSchema["required"] == [
+        "message_id",
+        "status",
+        "acted_by",
+    ]
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:
