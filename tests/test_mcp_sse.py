@@ -2252,6 +2252,67 @@ class TestMcpToolExecution:
         assert result["simple_interface"]["mode"] == "query"
         assert result["result"]["selected_facade"] == "project_work"
 
+    async def test_simple_get_project_query_requires_project_scope(self, monkeypatch):
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("project-scoped query without project must not fall back to mnemoforge")
+
+        async def forbidden_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("project-scoped query without project must not become a memory search")
+
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+        monkeypatch.setattr(mcp_sse, "_post", forbidden_post)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"query": "list active tasks", "limit": 5},
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "needs_project"
+        assert result["receipt"]["missing_fields"] == ["project"]
+        assert result["project"] == ""
+        assert "mnemoforge" not in json.dumps(result)
+
+    async def test_simple_get_project_query_uses_session_project_scope(self, monkeypatch):
+        seen: list[dict] = []
+
+        async def fake_identity(session_id: str | None):
+            assert session_id == "session-alpha"
+            return {"project_id": "alpha", "runtime_profile_id": "weak_mcp_operator"}
+
+        async def fake_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            seen.append(dict(args))
+            return {
+                "facade": "ask_project",
+                "question": args["question"],
+                "selected_expert_route": {"facade": "project_verify"},
+                "result_text": json.dumps(
+                    {
+                        "status": "executed",
+                        "selected_route": {"tool": "get_task_execution_context", "intent_type": "verification_context"},
+                        "result": {"project": args["project"], "status": "ok"},
+                    }
+                ),
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get_session_identity_defaults", fake_identity)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", fake_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"query": "verify server functionality", "limit": 5},
+                "http://test",
+                session_id="session-alpha",
+            )
+        )
+
+        assert result["project"] == "alpha"
+        assert seen[0]["project"] == "alpha"
+        assert result["result"]["selected_facade"] == "project_verify"
+
     async def test_simple_get_query_compacts_project_expert_json_text_for_weak_models(self, monkeypatch):
         async def fake_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
             return {

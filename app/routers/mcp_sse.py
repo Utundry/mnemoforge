@@ -870,6 +870,47 @@ def _extract_model_name(params: dict[str, Any]) -> str:
     return "unknown-model"
 
 
+def _extract_project_id(params: dict[str, Any]) -> str:
+    mnemoforge = _mnemoforge_params(params)
+    context = mnemoforge.get("context") if isinstance(mnemoforge.get("context"), dict) else {}
+    workspace = mnemoforge.get("workspace") if isinstance(mnemoforge.get("workspace"), dict) else {}
+    capabilities = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
+    experimental = capabilities.get("experimental") if isinstance(capabilities.get("experimental"), dict) else {}
+    capability_mnemoforge = (
+        capabilities.get("mnemoforge")
+        if isinstance(capabilities.get("mnemoforge"), dict)
+        else capabilities.get("supermemory")
+        if isinstance(capabilities.get("supermemory"), dict)
+        else {}
+    )
+    experimental_mnemoforge = (
+        experimental.get("mnemoforge")
+        if isinstance(experimental.get("mnemoforge"), dict)
+        else experimental.get("supermemory")
+        if isinstance(experimental.get("supermemory"), dict)
+        else {}
+    )
+    candidates = [
+        mnemoforge.get("project"),
+        mnemoforge.get("project_id"),
+        context.get("project"),
+        context.get("project_id"),
+        workspace.get("project"),
+        workspace.get("project_id"),
+        params.get("project"),
+        params.get("project_id"),
+        capability_mnemoforge.get("project"),
+        capability_mnemoforge.get("project_id"),
+        experimental_mnemoforge.get("project"),
+        experimental_mnemoforge.get("project_id"),
+    ]
+    for candidate in candidates:
+        project = str(candidate or "").strip()
+        if project:
+            return project
+    return ""
+
+
 async def _get_session_identity_defaults(session_id: str | None) -> dict[str, str]:
     if not session_id:
         return {}
@@ -884,6 +925,7 @@ async def _get_session_identity_defaults(session_id: str | None) -> dict[str, st
     return {
         "agent_fingerprint": str(ctx.get("agent_fingerprint") or "").strip(),
         "runtime_profile_id": str(ctx.get("runtime_profile_id") or "").strip(),
+        "project_id": str(ctx.get("project_id") or ctx.get("project") or "").strip(),
     }
 
 
@@ -8769,6 +8811,7 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
         negotiated_context_hygiene_mode = requested_context_hygiene_mode or str(inferred_modes.get("context_hygiene_mode") or "")
         runtime_profile_id = _extract_runtime_profile_id(init_params, inferred_modes)
         model_name = _extract_model_name(init_params)
+        project_id = _extract_project_id(init_params)
         agent_fingerprint = ""
         try:
             from app.services.mcp_agent_identity import build_fingerprint_from_identity, load_or_create_agent_identity
@@ -8808,6 +8851,7 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
                 "runtime_profile_id": runtime_profile_id,
                 "agent_fingerprint": agent_fingerprint,
                 "model_name": model_name,
+                "project_id": project_id,
             })
 
         result: dict = {

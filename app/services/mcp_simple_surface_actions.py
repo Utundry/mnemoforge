@@ -80,13 +80,15 @@ async def build_simple_state_response(
     dependencies: SimpleSurfaceDependencies,
     session_id: str | None = None,
 ) -> dict[str, Any]:
+    identity_defaults = await dependencies.get_session_identity_defaults(session_id)
+    scoped_args = args_with_session_project(args, identity_defaults)
     data = await build_mailbox_state_response(
         args={
-            "project": str(args.get("project") or "mnemoforge"),
-            "state": str(args.get("state") or "planning"),
-            "runtime_profile_id": str(args.get("runtime_profile_id") or "unknown_cli"),
-            "diagnostic": bool(args.get("diagnostic", False)),
-            "detail": str(args.get("detail") or "compact"),
+            "project": str(scoped_args.get("project") or "mnemoforge"),
+            "state": str(scoped_args.get("state") or "planning"),
+            "runtime_profile_id": str(scoped_args.get("runtime_profile_id") or "unknown_cli"),
+            "diagnostic": bool(scoped_args.get("diagnostic", False)),
+            "detail": str(scoped_args.get("detail") or "compact"),
         },
         session_id=session_id,
         dependencies=MailboxReadDependencies(
@@ -113,9 +115,11 @@ async def build_simple_get_response(
     dependencies: SimpleSurfaceDependencies,
     session_id: str | None = None,
 ) -> dict[str, Any]:
-    ref = str(args.get("ref") or args.get("address") or args.get("data_ref") or "").strip()
+    identity_defaults = await dependencies.get_session_identity_defaults(session_id)
+    scoped_args = args_with_session_project(args, identity_defaults)
+    ref = str(scoped_args.get("ref") or scoped_args.get("address") or scoped_args.get("data_ref") or "").strip()
     if ref:
-        get_args = {**args, "ref": ref}
+        get_args = {**scoped_args, "ref": ref}
         data = await dependencies.resolve_public_ref(api_base, get_args)
         if data is None:
             data = await build_mailbox_get_response(
@@ -126,15 +130,15 @@ async def build_simple_get_response(
                 ),
             )
         data["simple_interface"] = {"tool": "get", "mode": "ref"}
-        return compact_simple_get_packet(data, args, tool_surface_role=dependencies.tool_surface_role)
+        return compact_simple_get_packet(data, scoped_args, tool_surface_role=dependencies.tool_surface_role)
 
-    query = str(args.get("query") or args.get("question") or args.get("intent") or "").strip()
+    query = str(scoped_args.get("query") or scoped_args.get("question") or scoped_args.get("intent") or "").strip()
     if query:
-        data = await dependencies.resolve_query(api_base, args, session_id)
+        data = await dependencies.resolve_query(api_base, scoped_args, session_id)
         if data is not None:
             return data
 
-    data = await build_simple_state_response(args=args, dependencies=dependencies, session_id=session_id)
+    data = await build_simple_state_response(args=scoped_args, dependencies=dependencies, session_id=session_id)
     data["receipt"] = {
         "status": "needs_input",
         "message": "get requires ref/address/data_ref or query/question.",
@@ -151,6 +155,8 @@ async def build_simple_submit_response(
     session_id: str | None = None,
     public_tool_name: str = "submit",
 ) -> dict[str, Any]:
+    identity_defaults = await dependencies.get_session_identity_defaults(session_id)
+    args = args_with_session_project(args, identity_defaults)
     payload = dict(args.get("payload")) if isinstance(args.get("payload"), dict) else {}
     form_id = str(args.get("form_id") or args.get("action") or payload.get("form_id") or "").strip()
     if not form_id:
@@ -182,6 +188,22 @@ async def build_simple_submit_response(
         args,
         tool_surface_role=dependencies.tool_surface_role,
     )
+
+
+def args_with_session_project(args: dict[str, Any], identity_defaults: dict[str, str]) -> dict[str, Any]:
+    if str(args.get("project") or args.get("project_id") or "").strip():
+        return args
+    project = str(
+        identity_defaults.get("project")
+        or identity_defaults.get("project_id")
+        or identity_defaults.get("default_project")
+        or ""
+    ).strip()
+    if not project:
+        return args
+    scoped = dict(args)
+    scoped["project"] = project
+    return scoped
 
 
 def compact_public_form(form: dict[str, Any]) -> dict[str, Any]:

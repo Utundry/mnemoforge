@@ -21,9 +21,16 @@ async def build_mailbox_state_response(
     session_id: str | None = None,
 ) -> dict[str, Any]:
     identity_defaults = await dependencies.get_session_identity_defaults(session_id)
+    project = str(
+        args.get("project")
+        or args.get("project_id")
+        or identity_defaults.get("project")
+        or identity_defaults.get("project_id")
+        or "mnemoforge"
+    )
     return build_mailbox_state_packet(
         state=str(args.get("state") or "planning"),
-        project=str(args.get("project") or "mnemoforge"),
+        project=project,
         runtime_profile_id=_runtime_profile_id(args, identity_defaults),
         diagnostic=bool(args.get("diagnostic", False)),
         detail=str(args.get("detail") or "compact"),
@@ -37,10 +44,17 @@ async def build_mailbox_get_response(
     session_id: str | None = None,
 ) -> dict[str, Any]:
     identity_defaults = await dependencies.get_session_identity_defaults(session_id)
+    project = str(
+        args.get("project")
+        or args.get("project_id")
+        or identity_defaults.get("project")
+        or identity_defaults.get("project_id")
+        or "mnemoforge"
+    )
     return build_mailbox_get_packet(
         ref=str(args.get("ref") or ""),
         state=str(args.get("state") or "planning"),
-        project=str(args.get("project") or "mnemoforge"),
+        project=project,
         runtime_profile_id=_runtime_profile_id(args, identity_defaults),
         diagnostic=bool(args.get("diagnostic", False)),
         detail=str(args.get("detail") or "compact"),

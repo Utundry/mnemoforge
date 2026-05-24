@@ -176,10 +176,28 @@ async def build_simple_get_query_response(
     if not query:
         return None
 
-    project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    project = str(args.get("project") or args.get("project_id") or "").strip()
     limit = int(args.get("limit") or 10)
     state = str(args.get("state") or "planning")
-    if not query_uses_project_expert(query, extract_task_id_like=dependencies.extract_task_id_like):
+    uses_project_expert = query_uses_project_expert(query, extract_task_id_like=dependencies.extract_task_id_like)
+    if uses_project_expert and not project:
+        return {
+            "state": state,
+            "project": "",
+            "receipt": {
+                "status": "needs_project",
+                "message": "Project-scoped read query requires an explicit project or session project.",
+                "resource_kind": "query",
+                "missing_fields": ["project"],
+                "next_safe_action": "Call get again with project set to the target project, or reconnect with a session project.",
+            },
+            "simple_interface": {"tool": "get", "mode": "query"},
+            "next_safe_action": "Call get again with project set to the target project, or reconnect with a session project.",
+            "details_available": True,
+        }
+    if not project:
+        project = "mnemoforge"
+    if not uses_project_expert:
         results = await dependencies.post(
             api_base,
             "/memories/search",
