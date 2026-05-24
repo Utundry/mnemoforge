@@ -229,6 +229,10 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         "governance_feedback",
         spec_root=spec_root,
     )
+    artifact_navigation_tool_contracts = load_tool_contract_catalog_spec(
+        "artifact_navigation",
+        spec_root=spec_root,
+    )
     mailbox_forms = list_mailbox_form_specs(spec_root=spec_root)
     known_state_ids = {spec.id for spec in state_specs}
     known_toggle_ids = {toggle.id for toggle in feature_registry.toggles}
@@ -327,6 +331,9 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         ],
         "governance_feedback_tool_contracts": [
             tool.name for tool in governance_feedback_tool_contracts.tools
+        ],
+        "artifact_navigation_tool_contracts": [
+            tool.name for tool in artifact_navigation_tool_contracts.tools
         ],
     }
 

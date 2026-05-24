@@ -24,72 +24,13 @@ _DECLARATIVE_TOOL_DEFINITIONS = {
         "storage_trust",
         "coordination_messages",
         "governance_feedback",
+        "artifact_navigation",
     )
     for tool in load_tool_contract_catalog_spec(catalog).tools
 }
 
 
 _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "get_artifact": {
-        "name": "get_artifact",
-        "description": (
-            "Get a unified artifact (improvement or task) by artifact_key. "
-            "Artifact key format: {type}:{project}:{local_id} "
-            "Example: improvement:mnemoforge:2e8fdc03-fc0b-4f77-bbaa-99f570e8894c "
-            "Example: task:mnemoforge:6174ad7b-1fd9-4b6b-bb59-4f932b8cfc8c"
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["artifact_key"],
-            "properties": {
-                "artifact_key": {
-                    "type": "string",
-                    "description": "Artifact key in format: {type}:{project}:{local_id}",
-                },
-            },
-        },
-    },
-    "list_artifacts": {
-        "name": "list_artifacts",
-        "description": (
-            "List unified artifacts with optional filtering. "
-            "Use this as the primary search surface for improvements and tasks together, "
-            "because callers often do not know which entity type they need. "
-            "Filter by status (open, done, paused, archived), type (improvement, task, or null for both), "
-            "and created/updated time interval."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project": {"type": "string", "default": "mnemoforge"},
-                "status": {
-                    "type": "string",
-                    "description": "Filter by status (open, done, paused, archived)",
-                },
-                "type": {
-                    "type": "string",
-                    "description": "Filter by type (improvement, task, or null for both)",
-                },
-                "created_after": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp; include artifacts with created_at >= this value",
-                },
-                "created_before": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp; include artifacts with created_at <= this value",
-                },
-                "updated_after": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp; include artifacts with updated_at >= this value",
-                },
-                "updated_before": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp; include artifacts with updated_at <= this value",
-                },
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
-            },
-        },
-    },
     "reconcile_completed_checkpoints": {
         "name": "reconcile_completed_checkpoints",
         "description": (
@@ -180,67 +121,6 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "default_reason": {"type": "string", "default": "Batch review completed checkpoint next_step scopes."},
                 "acted_by": {"type": "string", "default": "codex"},
                 "source": {"type": "string", "default": "mcp_checkpoint_scope_review_batch"},
-            },
-        },
-    },
-    "list_open_tasks": {
-        "name": "list_open_tasks",
-        "description": (
-            "List open project work items through the unified artifact surface. "
-            "By default this includes both canonical tasks and orphan improvements so captured improvements remain visible. "
-            "Use this when you want open work items and do not want to remember status/type filters. "
-            "This is the preferred MCP surface for open-work inspection."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project": {"type": "string", "default": "mnemoforge"},
-                "artifact_type": {
-                    "type": "string",
-                    "enum": ["all", "task", "improvement"],
-                    "default": "all",
-                    "description": "Filter open work by unified artifact type. all returns tasks and orphan/open improvements.",
-                },
-                "created_after": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp; include tasks with created_at >= this value",
-                },
-                "created_before": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp; include tasks with created_at <= this value",
-                },
-                "updated_after": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp; include tasks with updated_at >= this value",
-                },
-                "updated_before": {
-                    "type": "string",
-                    "description": "ISO 8601 timestamp; include tasks with updated_at <= this value",
-                },
-                "claim_filter": {
-                    "type": "string",
-                    "enum": ["available", "claimed", "all"],
-                    "default": "available",
-                    "description": (
-                        "Filter by task lease state. available hides active claims, claimed returns occupied tasks, "
-                        "all returns both with task_claim annotations."
-                    ),
-                },
-                "include_claims": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": "Annotate returned tasks with task_claim, claim_status, and claim_available.",
-                },
-                "assignment_filter": {
-                    "type": "string",
-                    "enum": ["all", "independent", "needs_review"],
-                    "default": "all",
-                    "description": (
-                        "Filter by multi-agent assignment safety. independent returns only tasks explicitly marked "
-                        "parallel-safe/independent; needs_review returns available tasks that need dependency review."
-                    ),
-                },
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
             },
         },
     },
@@ -1128,48 +1008,6 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "resume_budget_ratio": {"type": "number", "minimum": 0.001, "maximum": 0.5, "description": "Optional override for resume budget as a ratio of model_context_window."},
                 "resume_budget_profile": {"type": "string", "enum": ["normal", "complex", "handoff", "emergency"], "default": "normal", "description": "Budget profile used when resume_budget_ratio is omitted."},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10, "description": "Maximum tasks/handoffs to inspect when task_id is omitted"},
-            },
-        },
-    },
-    "resolve_artifact": {
-        "name": "resolve_artifact",
-        "description": (
-            "Resolve a unified artifact (improvement→resolved, task→done). "
-            "Automatically syncs status with linked artifact if exists."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["artifact_key"],
-            "properties": {
-                "artifact_key": {
-                    "type": "string",
-                    "description": "Artifact key in format: {type}:{project}:{local_id}",
-                },
-                "acted_by": {"type": "string", "default": "user"},
-                "action_source": {"type": "string", "default": "inline_user_approval"},
-                "reason": {"type": "string", "default": ""},
-            },
-        },
-    },
-    "reopen_artifact": {
-        "name": "reopen_artifact",
-        "description": (
-            "Reopen a unified artifact (improvement→open, task→active). "
-            "Automatically syncs status with linked artifact if exists."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["artifact_key", "project"],
-            "properties": {
-                "artifact_key": {
-                    "type": "string",
-                    "description": "Artifact key in format: {type}:{project}:{local_id}",
-                },
-                "project": {"type": "string", "description": "Project name"},
-                "status": {"type": "string", "default": "active"},
-                "reason": {"type": "string", "default": "reopen_artifact"},
-                "acted_by": {"type": "string", "default": "user"},
-                "source": {"type": "string", "default": "unified-artifact"},
             },
         },
     },

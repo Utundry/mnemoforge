@@ -110,6 +110,13 @@ def test_default_workflow_specs_validate() -> None:
         "merge_canonicals",
         "fix_layout_feedback",
     ]
+    assert summary["artifact_navigation_tool_contracts"] == [
+        "get_artifact",
+        "list_artifacts",
+        "list_open_tasks",
+        "resolve_artifact",
+        "reopen_artifact",
+    ]
     assert {
         "claim_task",
         "close_task",
@@ -464,6 +471,22 @@ def test_governance_feedback_tool_contracts_are_declarative() -> None:
     assert contracts["merge_canonicals"].inputSchema["required"] == ["source_id", "target_id"]
     assert contracts["fix_layout_feedback"].inputSchema["required"] == ["correction_id", "confirmed"]
     assert contracts["fix_layout_feedback"].inputSchema["properties"]["confirmed"]["type"] == "boolean"
+
+
+def test_artifact_navigation_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("artifact_navigation")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["get_artifact"].inputSchema["required"] == ["artifact_key"]
+    assert contracts["list_artifacts"].inputSchema["properties"]["limit"]["maximum"] == 100
+    assert contracts["list_open_tasks"].inputSchema["properties"]["claim_filter"]["default"] == "available"
+    assert contracts["list_open_tasks"].inputSchema["properties"]["assignment_filter"]["enum"] == [
+        "all",
+        "independent",
+        "needs_review",
+    ]
+    assert contracts["resolve_artifact"].inputSchema["required"] == ["artifact_key"]
+    assert contracts["reopen_artifact"].inputSchema["required"] == ["artifact_key", "project"]
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

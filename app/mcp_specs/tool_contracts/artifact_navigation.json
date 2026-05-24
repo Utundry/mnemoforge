@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "id": "artifact_navigation",
+  "purpose": "Declarative contracts for unified artifact lookup, open-work listing, and artifact lifecycle navigation.",
+  "tools": [
+    {
+      "name": "get_artifact",
+      "description": "Get a unified artifact (improvement or task) by artifact_key. Artifact key format: {type}:{project}:{local_id}.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["artifact_key"],
+        "properties": {
+          "artifact_key": {
+            "type": "string",
+            "description": "Artifact key in format: {type}:{project}:{local_id}"
+          }
+        }
+      }
+    },
+    {
+      "name": "list_artifacts",
+      "description": "List unified artifacts with optional filtering. Use this as the primary search surface for improvements and tasks together.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "default": "mnemoforge"},
+          "status": {"type": "string", "description": "Filter by status (open, done, paused, archived)"},
+          "type": {"type": "string", "description": "Filter by type (improvement, task, or null for both)"},
+          "created_after": {"type": "string", "description": "ISO 8601 timestamp; include artifacts with created_at >= this value"},
+          "created_before": {"type": "string", "description": "ISO 8601 timestamp; include artifacts with created_at <= this value"},
+          "updated_after": {"type": "string", "description": "ISO 8601 timestamp; include artifacts with updated_at >= this value"},
+          "updated_before": {"type": "string", "description": "ISO 8601 timestamp; include artifacts with updated_at <= this value"},
+          "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
+        }
+      }
+    },
+    {
+      "name": "list_open_tasks",
+      "description": "List open project work items through the unified artifact surface. This is the preferred MCP surface for open-work inspection.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "default": "mnemoforge"},
+          "artifact_type": {
+            "type": "string",
+            "enum": ["all", "task", "improvement"],
+            "default": "all",
+            "description": "Filter open work by unified artifact type. all returns tasks and orphan/open improvements."
+          },
+          "created_after": {"type": "string", "description": "ISO 8601 timestamp; include tasks with created_at >= this value"},
+          "created_before": {"type": "string", "description": "ISO 8601 timestamp; include tasks with created_at <= this value"},
+          "updated_after": {"type": "string", "description": "ISO 8601 timestamp; include tasks with updated_at >= this value"},
+          "updated_before": {"type": "string", "description": "ISO 8601 timestamp; include tasks with updated_at <= this value"},
+          "claim_filter": {
+            "type": "string",
+            "enum": ["available", "claimed", "all"],
+            "default": "available",
+            "description": "Filter by task lease state. available hides active claims, claimed returns occupied tasks, all returns both with task_claim annotations."
+          },
+          "include_claims": {
+            "type": "boolean",
+            "default": true,
+            "description": "Annotate returned tasks with task_claim, claim_status, and claim_available."
+          },
+          "assignment_filter": {
+            "type": "string",
+            "enum": ["all", "independent", "needs_review"],
+            "default": "all",
+            "description": "Filter by multi-agent assignment safety."
+          },
+          "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}
+        }
+      }
+    },
+    {
+      "name": "resolve_artifact",
+      "description": "Resolve a unified artifact and automatically sync status with linked artifact if exists.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["artifact_key"],
+        "properties": {
+          "artifact_key": {"type": "string", "description": "Artifact key in format: {type}:{project}:{local_id}"},
+          "acted_by": {"type": "string", "default": "user"},
+          "action_source": {"type": "string", "default": "inline_user_approval"},
+          "reason": {"type": "string", "default": ""}
+        }
+      }
+    },
+    {
+      "name": "reopen_artifact",
+      "description": "Reopen a unified artifact and automatically sync status with linked artifact if exists.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["artifact_key", "project"],
+        "properties": {
+          "artifact_key": {"type": "string", "description": "Artifact key in format: {type}:{project}:{local_id}"},
+          "project": {"type": "string", "description": "Project name"},
+          "status": {"type": "string", "default": "active"},
+          "reason": {"type": "string", "default": "reopen_artifact"},
+          "acted_by": {"type": "string", "default": "user"},
+          "source": {"type": "string", "default": "unified-artifact"}
+        }
+      }
+    }
+  ]
+}
