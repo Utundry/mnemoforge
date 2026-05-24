@@ -71,6 +71,7 @@ def test_default_workflow_specs_validate() -> None:
         "tool_recommend",
     ]
     assert summary["mailbox_tool_contracts"] == ["mailbox_state", "mailbox_submit", "mailbox_get"]
+    assert summary["instruction_tool_contracts"] == ["load_instruction_layer", "list_instruction_layers"]
     assert {
         "claim_task",
         "close_task",
@@ -281,6 +282,15 @@ def test_mailbox_tool_contracts_are_declarative() -> None:
     assert contracts["mailbox_state"].inputSchema["required"] == ["state"]
     assert contracts["mailbox_submit"].inputSchema["required"] == ["form_id", "payload"]
     assert contracts["mailbox_get"].inputSchema["properties"]["ref"]["type"] == "string"
+
+
+def test_instruction_layer_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("instruction_layers")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["load_instruction_layer"].inputSchema["required"] == ["layer"]
+    assert contracts["load_instruction_layer"].inputSchema["properties"]["layer"]["enum"] == ["L3", "L4"]
+    assert contracts["list_instruction_layers"].inputSchema["properties"]["layer"]["enum"] == ["L2", "L3", "L4"]
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

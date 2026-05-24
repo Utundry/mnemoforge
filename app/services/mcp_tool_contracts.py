@@ -9,55 +9,12 @@ from app.services.mcp_workflow_specs import load_tool_contract_catalog_spec
 
 _DECLARATIVE_TOOL_DEFINITIONS = {
     tool.name: tool.model_dump()
-    for catalog in ("public_surface", "discovery_read", "mailbox_protocol")
+    for catalog in ("public_surface", "discovery_read", "mailbox_protocol", "instruction_layers")
     for tool in load_tool_contract_catalog_spec(catalog).tools
 }
 
 
 _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "load_instruction_layer": {
-        "name": "load_instruction_layer",
-        "description": (
-            "Load a specific instruction layer on demand. "
-            "Use L3 for detailed API reference, L4 for advanced/experimental features."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["layer"],
-            "properties": {
-                "layer": {
-                    "type": "string",
-                    "enum": ["L3", "L4"],
-                    "description": "Layer to load (L3 for detailed reference, L4 for advanced)",
-                },
-                "category": {
-                    "type": "string",
-                    "description": "Category for L3 layer (e.g., 'memory_operations', 'skills')",
-                },
-                "section": {
-                    "type": "string",
-                    "description": "Section to load for L3 (api_reference, examples, troubleshooting)",
-                },
-            },
-        },
-    },
-    "list_instruction_layers": {
-        "name": "list_instruction_layers",
-        "description": (
-            "List available instruction layers. "
-            "Use this to discover what layers and categories are available."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "layer": {
-                    "type": "string",
-                    "enum": ["L2", "L3", "L4"],
-                    "description": "Filter by layer (optional)",
-                },
-            },
-        },
-    },
     "list_learning_candidates": {
         "name": "list_learning_candidates",
         "description": (
