@@ -98,6 +98,7 @@ def test_default_workflow_specs_validate() -> None:
         "get_project_reconstruction_bundle",
     ]
     assert summary["remote_snapshot_tool_contracts"] == ["plan_remote_snapshot", "sync_remote_snapshot"]
+    assert summary["storage_trust_tool_contracts"] == ["get_storage_trust_status"]
     assert {
         "claim_task",
         "close_task",
@@ -410,6 +411,14 @@ def test_remote_snapshot_tool_contracts_are_declarative() -> None:
         "archive_bundle",
     ]
     assert plan_props["files"]["items"]["required"] == ["path", "status"]
+
+
+def test_storage_trust_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("storage_trust")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["get_storage_trust_status"].inputSchema["type"] == "object"
+    assert contracts["get_storage_trust_status"].inputSchema["properties"] == {}
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

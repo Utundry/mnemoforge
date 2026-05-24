@@ -21,23 +21,13 @@ _DECLARATIVE_TOOL_DEFINITIONS = {
         "project_context_execution",
         "project_knowledge_core",
         "remote_snapshot",
+        "storage_trust",
     )
     for tool in load_tool_contract_catalog_spec(catalog).tools
 }
 
 
 _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "get_storage_trust_status": {
-        "name": "get_storage_trust_status",
-        "description": (
-            "Return a unified storage trust report that combines data integrity and data hygiene. "
-            "Use this when you need one operator-facing view of storage health, cleanup pressure, and next actions."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-        },
-    },
     "send_coordination_message": {
         "name": "send_coordination_message",
         "description": (

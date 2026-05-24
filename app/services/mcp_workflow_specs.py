@@ -220,6 +220,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         spec_root=spec_root,
     )
     remote_snapshot_tool_contracts = load_tool_contract_catalog_spec("remote_snapshot", spec_root=spec_root)
+    storage_trust_tool_contracts = load_tool_contract_catalog_spec("storage_trust", spec_root=spec_root)
     mailbox_forms = list_mailbox_form_specs(spec_root=spec_root)
     known_state_ids = {spec.id for spec in state_specs}
     known_toggle_ids = {toggle.id for toggle in feature_registry.toggles}
@@ -312,6 +313,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
             tool.name for tool in project_knowledge_core_tool_contracts.tools
         ],
         "remote_snapshot_tool_contracts": [tool.name for tool in remote_snapshot_tool_contracts.tools],
+        "storage_trust_tool_contracts": [tool.name for tool in storage_trust_tool_contracts.tools],
     }
 
 

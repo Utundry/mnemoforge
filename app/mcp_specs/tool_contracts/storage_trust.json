@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "id": "storage_trust",
+  "purpose": "Declarative contract for unified storage trust reporting.",
+  "tools": [
+    {
+      "name": "get_storage_trust_status",
+      "description": "Return a unified storage trust report that combines data integrity and data hygiene. Use this when you need one operator-facing view of storage health, cleanup pressure, and next actions.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ]
+}
