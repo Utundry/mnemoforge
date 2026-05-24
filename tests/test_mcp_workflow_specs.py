@@ -105,6 +105,11 @@ def test_default_workflow_specs_validate() -> None:
         "list_coordination_messages",
         "update_coordination_message_status",
     ]
+    assert summary["governance_feedback_tool_contracts"] == [
+        "set_canonical_status",
+        "merge_canonicals",
+        "fix_layout_feedback",
+    ]
     assert {
         "claim_task",
         "close_task",
@@ -449,6 +454,16 @@ def test_coordination_message_tool_contracts_are_declarative() -> None:
         "status",
         "acted_by",
     ]
+
+
+def test_governance_feedback_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("governance_feedback")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["set_canonical_status"].inputSchema["required"] == ["canonical_id", "suppressed"]
+    assert contracts["merge_canonicals"].inputSchema["required"] == ["source_id", "target_id"]
+    assert contracts["fix_layout_feedback"].inputSchema["required"] == ["correction_id", "confirmed"]
+    assert contracts["fix_layout_feedback"].inputSchema["properties"]["confirmed"]["type"] == "boolean"
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

@@ -23,65 +23,13 @@ _DECLARATIVE_TOOL_DEFINITIONS = {
         "remote_snapshot",
         "storage_trust",
         "coordination_messages",
+        "governance_feedback",
     )
     for tool in load_tool_contract_catalog_spec(catalog).tools
 }
 
 
 _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "set_canonical_status": {
-        "name": "set_canonical_status",
-        "description": "Suppress or reactivate a canonical memory for governance purposes.",
-        "inputSchema": {
-            "type": "object",
-            "required": ["canonical_id", "suppressed"],
-            "properties": {
-                "canonical_id": {"type": "string"},
-                "suppressed": {"type": "boolean"},
-                "reason": {"type": "string"},
-                "reviewed_by": {"type": "string"},
-                "review_source": {"type": "string"},
-            },
-        },
-    },
-    "merge_canonicals": {
-        "name": "merge_canonicals",
-        "description": "Merge one canonical into another canonical of the same scope.",
-        "inputSchema": {
-            "type": "object",
-            "required": ["source_id", "target_id"],
-            "properties": {
-                "source_id": {"type": "string"},
-                "target_id": {"type": "string"},
-                "reviewed_by": {"type": "string"},
-                "review_source": {"type": "string"},
-                "reason": {"type": "string"},
-            },
-        },
-    },
-    "fix_layout_feedback": {
-        "name": "fix_layout_feedback",
-        "description": (
-            "Confirm or reject a previous layout fix. "
-            "Teaches the system - confirmed fixes become few-shot examples for future corrections. "
-            "Use correction_id from fix_layout response."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["correction_id", "confirmed"],
-            "properties": {
-                "correction_id": {"type": "string", "description": "ID from fix_layout response"},
-                "confirmed": {"type": "boolean", "description": "True if fix was correct, False if wrong"},
-                "correct_text": {
-                    "type": "string",
-                    "description": "The actual correct text (if confirmed=False)",
-                },
-                "reviewed_by": {"type": "string"},
-                "review_source": {"type": "string"},
-                "reason": {"type": "string"},
-            },
-        },
-    },
     "get_artifact": {
         "name": "get_artifact",
         "description": (
