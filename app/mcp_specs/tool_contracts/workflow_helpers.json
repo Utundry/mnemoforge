@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "id": "workflow_helpers",
+  "purpose": "Declarative contracts for high-level workflow helper tools that normalize intent and guide task lifecycle actions.",
+  "tools": [
+    {
+      "name": "normalize_mcp_intent",
+      "description": "Normalize an agent intent into a canonical MCP request form. Use this as the first stage when the agent is unsure which tool family or endpoint to use.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["intent"],
+        "properties": {
+          "intent": {
+            "type": "string",
+            "description": "Natural-language intent, task, or request"
+          },
+          "project_id": {
+            "type": "string",
+            "description": "Optional project identifier for project-aware routing"
+          },
+          "top_n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "default": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "project_workflow",
+      "description": "Start a thematic project lifecycle workflow from a natural-language intent. Returns step-by-step guidance and a structured form for the agent to fill, instead of requiring the agent to choose several narrow lifecycle tools.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["intent"],
+        "properties": {
+          "intent": {
+            "type": "string",
+            "description": "Natural-language project lifecycle intent"
+          },
+          "workflow": {
+            "type": "string",
+            "enum": ["task_completion"],
+            "default": "task_completion",
+            "description": "Optional explicit workflow id. Defaults to the first supported project lifecycle workflow."
+          },
+          "project": {"type": "string", "default": "mnemoforge"},
+          "task_id": {
+            "type": "string",
+            "description": "Optional task id when already known"
+          },
+          "artifact_key": {
+            "type": "string",
+            "description": "Optional artifact key when already known"
+          }
+        }
+      }
+    },
+    {
+      "name": "project_workflow_submit",
+      "description": "Submit a filled project workflow form. The system routes the structured report to task changes, artifact lifecycle, linked improvements, and evidence records as appropriate.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["workflow", "form"],
+        "properties": {
+          "workflow": {
+            "type": "string",
+            "enum": ["task_completion"],
+            "description": "Workflow identifier returned by project_workflow"
+          },
+          "form": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Filled form returned by project_workflow"
+          },
+          "acted_by": {"type": "string", "default": "user"},
+          "source": {"type": "string", "default": "project_workflow"}
+        }
+      }
+    },
+    {
+      "name": "reopen_task",
+      "description": "Reopen an existing project task. Project is optional when task_id is globally unique; the server resolves it automatically when possible.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["task_id"],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "Task identifier"
+          },
+          "project": {
+            "type": "string",
+            "description": "Optional project name; omit to auto-resolve by task_id when possible"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["planning", "active"],
+            "default": "active",
+            "description": "Target status for the task"
+          },
+          "reason": {"type": "string", "default": "reopen_task"},
+          "acted_by": {"type": "string", "default": "user"},
+          "source": {"type": "string", "default": "mcp"}
+        }
+      }
+    }
+  ]
+}
