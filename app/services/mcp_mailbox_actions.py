@@ -716,6 +716,9 @@ async def mailbox_create_improvement(
     next_step = str(payload["next_step"]).strip()
     risk = str(payload.get("risk") or "").strip()
     description_parts = [summary, f"Next step: {next_step}"]
+    source_project = str(payload.get("source_project") or "").strip()
+    if source_project and source_project != project:
+        description_parts.append(f"Source project: {source_project}")
     if risk:
         description_parts.append(f"Risk: {risk}")
     evidence_refs = _string_list_arg(payload.get("evidence_refs"))
@@ -743,6 +746,8 @@ async def mailbox_create_improvement(
         "tags": ["mailbox", "mcp-fsm", "mcp-improvement", "entity:task", f"task_id:{task_id}", "task_status:planning"],
         "linked_improvement_id": task_id,
     }
+    if source_project and source_project != project:
+        task_payload["tags"].append(f"source_project:{source_project}")
     task_result = await dependencies.post(api_base, "/project/tasks", task_payload)
     await dependencies.post(
         api_base,
@@ -754,7 +759,12 @@ async def mailbox_create_improvement(
             "why": "Public create_improvement must return a directly usable task_id for weak-model workflows.",
             "agent_id": mailbox_actor(payload),
             "source": "mailbox_submit.create_improvement",
-            "tags": ["mailbox", "mcp-fsm", "mcp-improvement"],
+            "tags": [
+                "mailbox",
+                "mcp-fsm",
+                "mcp-improvement",
+                *([f"source_project:{source_project}"] if source_project and source_project != project else []),
+            ],
         },
     )
     result = {

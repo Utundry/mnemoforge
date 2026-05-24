@@ -1364,6 +1364,45 @@ class TestMcpToolExecution:
         assert posted[0][0] == "/project/tasks"
         assert posted[1][0].startswith("/project/tasks/")
 
+    async def test_simple_submit_create_improvement_allows_explicit_cross_project_target(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_identity(session_id: str | None):
+            return {"project_id": "frontend", "runtime_profile_id": "weak_mcp_operator"}
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "task-memory-id", **payload}
+
+        monkeypatch.setattr(mcp_sse, "_get_session_identity_defaults", fake_identity)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "mnemoforge",
+                "state": "planning",
+                "form_id": "create_improvement",
+                "payload": {
+                    "project": "mnemoforge",
+                    "source_project": "frontend",
+                    "title": "Frontend found backend MCP issue",
+                    "summary": "A frontend agent found a backend-facing MCP usability gap.",
+                    "next_step": "Review in the backend project backlog.",
+                },
+            },
+            "http://test",
+            session_id="session-frontend",
+        )
+
+        data = json.loads(result)
+        assert data["project"] == "mnemoforge"
+        assert data["receipt"]["artifact_key"].startswith("improvement:mnemoforge:")
+        assert posted[0][0] == "/project/tasks"
+        assert posted[0][1]["project"] == "mnemoforge"
+        assert "source_project:frontend" in posted[0][1]["tags"]
+        assert posted[1][0].startswith("/project/tasks/")
+        assert "source_project:frontend" in posted[1][1]["tags"]
+
     async def test_mailbox_submit_create_improvement_diagnostic_includes_health_metadata(self, monkeypatch):
         async def fake_post(api_base: str, path: str, payload: dict):
             return {"id": "task-memory-id", **payload}
@@ -2312,6 +2351,43 @@ class TestMcpToolExecution:
         assert result["project"] == "alpha"
         assert seen[0]["project"] == "alpha"
         assert result["result"]["selected_facade"] == "project_verify"
+
+    async def test_simple_get_explicit_project_can_cross_session_project_scope(self, monkeypatch):
+        seen: list[dict] = []
+
+        async def fake_identity(session_id: str | None):
+            return {"project_id": "frontend", "runtime_profile_id": "weak_mcp_operator"}
+
+        async def fake_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            seen.append(dict(args))
+            return {
+                "facade": "ask_project",
+                "question": args["question"],
+                "selected_expert_route": {"facade": "project_work"},
+                "result_text": json.dumps(
+                    {
+                        "status": "executed",
+                        "selected_route": {"tool": "list_open_tasks", "intent_type": "next_priority"},
+                        "compact_result": [{"task_id": "backend-task", "title": "Backend issue", "status": "open"}],
+                    }
+                ),
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get_session_identity_defaults", fake_identity)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", fake_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "backend", "query": "list active tasks", "limit": 5},
+                "http://test",
+                session_id="session-frontend",
+            )
+        )
+
+        assert result["project"] == "backend"
+        assert seen[0]["project"] == "backend"
+        assert result["result"]["items"][0]["task_id"] == "backend-task"
 
     async def test_simple_get_query_compacts_project_expert_json_text_for_weak_models(self, monkeypatch):
         async def fake_ask_project(api_base: str, args: dict, *, session_id: str | None = None):

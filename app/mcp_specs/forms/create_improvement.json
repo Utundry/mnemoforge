@@ -5,7 +5,7 @@
   "states": ["planning", "implementation", "checkpointing"],
   "mode": "write",
   "required_fields": ["project", "title", "summary", "next_step"],
-  "optional_fields": ["risk", "evidence_refs", "importance_score"],
+  "optional_fields": ["risk", "evidence_refs", "importance_score", "source_project"],
   "input_schema": {
     "type": "object",
     "properties": {
@@ -15,7 +15,8 @@
       "next_step": {"type": "string"},
       "risk": {"type": "string"},
       "evidence_refs": {"type": "array", "items": {"type": "string"}},
-      "importance_score": {"type": "number", "default": 0.7}
+      "importance_score": {"type": "number", "default": 0.7},
+      "source_project": {"type": "string"}
     },
     "required": ["project", "title", "summary", "next_step"]
   },
