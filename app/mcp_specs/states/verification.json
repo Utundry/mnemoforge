@@ -19,9 +19,9 @@
   ],
   "forbidden_patterns": [
     {
-      "id": "host_pytest",
-      "match": ["python -m pytest", "pytest"],
-      "message": "Do not run host pytest when project rules require the Docker test contour."
+      "id": "unresolved_host_execution",
+      "match": ["host execution_context"],
+      "message": "Resolve the project-approved verification contour before executing checks."
     }
   ],
   "packet": {

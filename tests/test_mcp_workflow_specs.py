@@ -151,12 +151,12 @@ def test_default_workflow_specs_validate() -> None:
     } <= set(summary["mailbox_forms"])
 
 
-def test_verification_state_blocks_host_pytest() -> None:
+def test_verification_state_blocks_unresolved_host_execution() -> None:
     spec = load_state_spec("verification")
 
-    host_pytest = next(pattern for pattern in spec.forbidden_patterns if pattern.id == "host_pytest")
-    assert "pytest" in host_pytest.match
-    assert "Docker test contour" in host_pytest.message
+    host_execution = next(pattern for pattern in spec.forbidden_patterns if pattern.id == "unresolved_host_execution")
+    assert "host execution_context" in host_execution.match
+    assert "project-approved verification contour" in host_execution.message
 
 
 def test_state_packet_template_is_llm_facing_and_compact() -> None:
@@ -262,7 +262,8 @@ def test_mailbox_forms_include_postconditions_for_health_detection() -> None:
     assert create_improvement.postconditions.expected_metadata["artifact_type"] == "improvement"
     assert "clerk_draft_report" in create_improvement.postconditions.forbidden_metadata["internal_tool"]
     assert run_verification.postconditions.expected_metadata["result_kind"] == "verification_contour"
-    assert "pytest" in run_verification.postconditions.forbidden_metadata["command"]
+    assert "command" not in run_verification.postconditions.forbidden_metadata
+    assert "data_ref" in run_verification.postconditions.required_receipt_fields
 
 
 def test_mailbox_form_policy_is_declarative_priority_and_visibility_source() -> None:
@@ -662,7 +663,7 @@ def test_mailbox_submit_reports_missing_required_fields() -> None:
     assert packet["receipt"]["missing_fields"] == ["summary", "next_step"]
 
 
-def test_mailbox_submit_verification_returns_docker_contour_not_host_pytest() -> None:
+def test_mailbox_submit_verification_returns_project_contour_ref_not_command() -> None:
     packet = build_mailbox_submit_receipt(
         form_id="run_verification",
         state="verification",
@@ -672,9 +673,10 @@ def test_mailbox_submit_verification_returns_docker_contour_not_host_pytest() ->
 
     receipt = packet["receipt"]
     assert receipt["status"] == "ready"
-    assert receipt["approved_command"].startswith("./scripts/run_pytest_docker.ps1 -NoBuild")
-    assert "python -m pytest" in receipt["forbidden_patterns"]
-    assert "Host pytest is forbidden" in receipt["message"]
+    assert receipt["data_ref"] == "verification_contour:mnemoforge:verification"
+    assert "approved_command" not in receipt
+    assert "host execution_context" in receipt["forbidden_patterns"]
+    assert "project-approved verification contour" in receipt["message"]
 
 
 def test_mailbox_submit_write_form_is_guarded_until_server_mutation_exists() -> None:

@@ -457,15 +457,12 @@ def _default_submit_outcome(
     project: str,
 ) -> tuple[str, str, str, str, list[str]]:
     if form.id == "run_verification":
-        requested = payload.get("requested_checks")
-        checks = " ".join(str(item) for item in requested) if isinstance(requested, list) and requested else ""
-        pytest_args = checks.strip() or "tests\\test_mcp_workflow_specs.py tests\\test_mcp_sse.py -k mailbox -q"
         return (
             "ready",
-            "Use the project-approved Docker verification contour. Host pytest is forbidden for this project.",
+            "Resolve the project-approved verification contour before executing checks.",
+            f"verification_contour:{project}:{state}",
             "",
-            f"./scripts/run_pytest_docker.ps1 -NoBuild {pytest_args}",
-            ["python -m pytest", "pytest", "host execution_context"],
+            ["host execution_context"],
         )
 
     if form.id == "get_task_context":

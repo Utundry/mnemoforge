@@ -224,7 +224,8 @@ def compact_simple_submit_packet(
     if receipt:
         receipt_keys = (
             "status", "form_id", "mode", "message", "id", "artifact_key", "task_id",
-            "linked_artifact_key", "stage", "work_token", "lease", "work_session",
+            "linked_artifact_key", "stage", "data_ref", "approved_command",
+            "forbidden_patterns", "work_token", "lease", "work_session",
             "work_session_resumed", "reclaim", "recommended_reclaim_call",
             "same_fingerprint", "recovery_options",
             "release", "next_state", "next_forms", "close_status", "task_status",

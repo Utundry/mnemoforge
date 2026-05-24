@@ -29,10 +29,9 @@
       "mutation": false
     },
     "forbidden_metadata": {
-      "command": ["python -m pytest", "pytest"],
       "execution_context": ["host"]
     },
-    "required_receipt_fields": ["status", "approved_command", "forbidden_patterns"]
+    "required_receipt_fields": ["status", "data_ref", "forbidden_patterns"]
   },
-  "public_hint": "Use the returned approved command; do not run host pytest for MnemoForge."
+  "public_hint": "Use the returned verification reference to resolve the project-approved contour before executing checks."
 }

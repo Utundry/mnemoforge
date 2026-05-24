@@ -1305,8 +1305,28 @@ class TestMcpToolExecution:
         assert data["project"] == "alpha"
         assert "_internal" not in data
         assert data["receipt"]["status"] == "ready"
-        assert data["receipt"]["approved_command"].startswith("./scripts/run_pytest_docker.ps1 -NoBuild")
-        assert "pytest" in data["receipt"]["forbidden_patterns"]
+        assert data["receipt"]["data_ref"] == "verification_contour:alpha:verification"
+        assert "approved_command" not in data["receipt"]
+        assert data["receipt"]["forbidden_patterns"] == ["host execution_context"]
+
+    async def test_simple_submit_run_verification_keeps_contour_ref_in_compact_receipt(self):
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "verification",
+                "form_id": "run_verification",
+                "payload": {"project": "alpha", "changed_files": ["app/services/mcp_mailbox.py"]},
+                "runtime_profile_id": "weak_mcp_operator",
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "ready"
+        assert data["receipt"]["data_ref"] == "verification_contour:alpha:verification"
+        assert data["receipt"]["forbidden_patterns"] == ["host execution_context"]
+        assert "approved_command" not in data["receipt"]
 
     async def test_mailbox_submit_create_improvement_executes_governed_write(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
