@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.services.mcp_mailbox import (
     build_mailbox_get_packet,
     build_mailbox_state_packet,
@@ -28,6 +30,21 @@ from app.services.mcp_workflow_specs import (
     load_tool_surface_spec,
     validate_specs,
 )
+
+
+MCP_SPEC_ROOT = Path(__file__).resolve().parents[1] / "app" / "mcp_specs"
+
+
+def test_mcp_specs_use_ascii_internal_language() -> None:
+    non_ascii_files = []
+    for path in sorted(MCP_SPEC_ROOT.rglob("*")):
+        if not path.is_file():
+            continue
+        content = path.read_text(encoding="utf-8")
+        if any(ord(char) > 127 for char in content):
+            non_ascii_files.append(str(path.relative_to(MCP_SPEC_ROOT)))
+
+    assert non_ascii_files == []
 
 
 def test_default_workflow_specs_validate() -> None:
