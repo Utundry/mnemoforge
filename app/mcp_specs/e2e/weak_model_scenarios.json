@@ -64,7 +64,7 @@
             "runtime_profile_id": "weak_mcp_operator",
             "payload": {
               "project": "alpha",
-              "task_id": "weak-e2e-task",
+              "task_id": "fixture-public-mcp-lifecycle",
               "owner_agent": "codex",
               "session_id": "weak-e2e-session",
               "agent_fingerprint": "agentfp:weak-e2e",
@@ -86,13 +86,18 @@
             "runtime_profile_id": "weak_mcp_operator",
             "payload": {
               "project": "alpha",
-              "task_id": "weak-e2e-task",
+              "task_id": "fixture-public-mcp-lifecycle",
               "owner_agent": "codex",
               "session_id": "weak-e2e-session",
               "work_token": "$work_token",
               "summary": "Weak model public task lifecycle recorded progress.",
-              "changed_files": ["app/example.py"],
-              "verification": ["docker test contour placeholder"],
+              "changed_files": [
+                "app/mcp_specs/e2e/weak_model_scenarios.json",
+                "tests/test_mcp_weak_model_e2e.py"
+              ],
+              "verification": [
+                "./scripts/run_pytest_docker.ps1 -NoBuild tests/test_mcp_weak_model_e2e.py -q"
+              ],
               "next_step": "Finish the public lifecycle smoke.",
               "stage": "in_progress"
             }
@@ -110,13 +115,18 @@
             "runtime_profile_id": "weak_mcp_operator",
             "payload": {
               "project": "alpha",
-              "task_id": "weak-e2e-task",
+              "task_id": "fixture-public-mcp-lifecycle",
               "owner_agent": "codex",
               "session_id": "weak-e2e-session",
               "work_token": "$work_token",
               "summary": "Weak model public task lifecycle finished.",
-              "changed_files": ["app/example.py"],
-              "verification": ["docker test contour placeholder"],
+              "changed_files": [
+                "app/mcp_specs/e2e/weak_model_scenarios.json",
+                "tests/test_mcp_weak_model_e2e.py"
+              ],
+              "verification": [
+                "./scripts/run_pytest_docker.ps1 -NoBuild tests/test_mcp_weak_model_e2e.py -q"
+              ],
               "next_step": "No next step.",
               "next_step_scope": "none"
             }

@@ -166,7 +166,7 @@ async def test_weak_model_public_submit_task_lifecycle(monkeypatch) -> None:
                 tokens["work_token"] = receipt["work_token"]
             if "release_status" in expect:
                 assert receipt["release"]["status"] == expect["release_status"]
-        assert lease_store.get_active_claim(project="alpha", task_id="weak-e2e-task") is None
+        assert lease_store.get_active_claim(project="alpha", task_id="fixture-public-mcp-lifecycle") is None
     finally:
         lease_store.close()
         stenographer_store.close()
