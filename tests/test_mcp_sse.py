@@ -2129,6 +2129,60 @@ class TestMcpToolExecution:
         assert result["simple_interface"]["mode"] == "query"
         assert result["result"]["selected_facade"] == "project_work"
 
+    async def test_simple_get_query_compacts_project_expert_json_text_for_weak_models(self, monkeypatch):
+        async def fake_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            return {
+                "facade": "ask_project",
+                "question": args["question"],
+                "selected_expert_route": {"facade": "project_work"},
+                "result_text": json.dumps(
+                    {
+                        "status": "executed",
+                        "action_status": "executed",
+                        "selected_route": {
+                            "tool": "list_open_tasks",
+                            "family": "project_knowledge",
+                            "intent_type": "next_priority",
+                            "confidence": 0.88,
+                            "route_candidates": [{"tool": "verbose_internal_candidate"}],
+                        },
+                        "agent_action": {
+                            "one_sentence_summary": "project_work selected list_open_tasks."
+                        },
+                        "compact_result": [
+                            {"task_id": "task-1", "title": "First task", "status": "open"},
+                            {"task_id": "task-2", "title": "Second task", "status": "open"},
+                        ],
+                        "route_telemetry": {"debug": "hidden in compact public get"},
+                        "result": {"items": [{"task_id": "task-1"}, {"task_id": "task-2"}]},
+                        "next_safe_action": "Choose a returned task ref for details.",
+                    }
+                ),
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", fake_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "list active tasks", "limit": 5},
+                "http://test",
+            )
+        )
+
+        payload = result["result"]
+        assert payload["selected_facade"] == "project_work"
+        assert payload["items"][0]["task_id"] == "task-1"
+        assert payload["selected_route"] == {
+            "tool": "list_open_tasks",
+            "family": "project_knowledge",
+            "intent_type": "next_priority",
+            "confidence": 0.88,
+        }
+        assert "answer" not in payload
+        assert "route_telemetry" not in payload
+        assert "route_candidates" not in payload["selected_route"]
+
     async def test_simple_state_compacts_forms_by_default_and_full_keeps_schemas(self):
         compact = json.loads(
             await mcp_sse._execute_tool(

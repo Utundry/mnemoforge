@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -284,12 +285,79 @@ def compact_project_expert_result(data: dict[str, Any], args: dict[str, Any]) ->
         return data
     route = data.get("selected_expert_route") if isinstance(data.get("selected_expert_route"), dict) else {}
     text = str(data.get("result_text") or "").strip()
-    return {
+    compact: dict[str, Any] = {
         "status": data.get("status"),
         "question": data.get("question"),
         "selected_facade": route.get("facade"),
-        "answer": text[:1200],
     }
+    parsed = parse_json_object(text)
+    if parsed is not None:
+        compact.update(compact_project_expert_payload(parsed, args))
+    elif text:
+        compact["answer"] = text[:1200]
+    return {key: value for key, value in compact.items() if value not in (None, "", [])}
+
+
+def parse_json_object(text: str) -> dict[str, Any] | None:
+    try:
+        value = json.loads(str(text or "").strip())
+    except Exception:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def compact_project_expert_payload(payload: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    limit = int(args.get("limit") or 10)
+    selected_route = payload.get("selected_route") if isinstance(payload.get("selected_route"), dict) else {}
+    agent_action = payload.get("agent_action") if isinstance(payload.get("agent_action"), dict) else {}
+    compact: dict[str, Any] = {
+        "facade_status": payload.get("status"),
+        "action_status": payload.get("action_status"),
+        "executed": payload.get("executed"),
+        "selected_route": compact_selected_route(selected_route),
+        "summary": agent_action.get("one_sentence_summary"),
+        "next_safe_action": payload.get("next_safe_action"),
+    }
+    items = project_expert_items(payload, limit=limit)
+    if items is not None:
+        compact["items"] = items
+        compact["count"] = len(items)
+    elif isinstance(payload.get("result"), dict):
+        compact["data"] = compact_project_expert_data(payload["result"], limit=limit)
+    elif isinstance(payload.get("result"), str):
+        compact["answer"] = str(payload["result"])[:1200]
+    return {key: value for key, value in compact.items() if value not in (None, "", [])}
+
+
+def compact_selected_route(route: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: route.get(key)
+        for key in ("tool", "family", "intent_type", "confidence", "reason")
+        if route.get(key) not in (None, "", [])
+    }
+
+
+def project_expert_items(payload: dict[str, Any], *, limit: int) -> list[Any] | None:
+    compact_result = payload.get("compact_result")
+    if isinstance(compact_result, list):
+        return compact_result[:limit]
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    items = result.get("items") if isinstance(result.get("items"), list) else None
+    if items is not None:
+        return items[:limit]
+    return None
+
+
+def compact_project_expert_data(result: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in ("status", "project", "task_id", "title", "task_status", "next_safe_action"):
+        if result.get(key) not in (None, "", []):
+            compact[key] = result.get(key)
+    for key in ("matched_rules", "rules", "laws", "forms"):
+        value = result.get(key)
+        if isinstance(value, list):
+            compact[key] = value[:limit]
+    return compact or {key: result.get(key) for key in list(result.keys())[:8]}
 
 
 def _response_format(args: dict[str, Any]) -> str:
