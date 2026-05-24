@@ -9,79 +9,18 @@ from app.services.mcp_workflow_specs import load_tool_contract_catalog_spec
 
 _DECLARATIVE_TOOL_DEFINITIONS = {
     tool.name: tool.model_dump()
-    for catalog in ("public_surface", "discovery_read", "mailbox_protocol", "instruction_layers")
+    for catalog in (
+        "public_surface",
+        "discovery_read",
+        "mailbox_protocol",
+        "instruction_layers",
+        "learning_review",
+    )
     for tool in load_tool_contract_catalog_spec(catalog).tools
 }
 
 
 _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "list_learning_candidates": {
-        "name": "list_learning_candidates",
-        "description": (
-            "List learning candidates awaiting user review. "
-            "Use this before approving, deferring, or rejecting a candidate."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
-                "artifact_type": {"type": "string"},
-                "agent_id": {"type": "string"},
-            },
-        },
-    },
-    "approve_learning_candidate": {
-        "name": "approve_learning_candidate",
-        "description": (
-            "Explicitly approve a pending learning candidate. "
-            "Promotes it from candidate to active runtime_hint and records user approval metadata."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["artifact_id"],
-            "properties": {
-                "artifact_id": {"type": "string"},
-                "approved_by": {"type": "string"},
-                "approval_source": {"type": "string"},
-                "reason": {"type": "string"},
-            },
-        },
-    },
-    "defer_learning_candidate": {
-        "name": "defer_learning_candidate",
-        "description": (
-            "Defer review of a pending learning candidate. "
-            "Raises the resurface threshold and records explicit user deferral metadata."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["artifact_id"],
-            "properties": {
-                "artifact_id": {"type": "string"},
-                "defer_days": {"type": "integer", "minimum": 1, "maximum": 90},
-                "deferred_by": {"type": "string"},
-                "defer_source": {"type": "string"},
-                "reason": {"type": "string"},
-            },
-        },
-    },
-    "reject_learning_candidate": {
-        "name": "reject_learning_candidate",
-        "description": (
-            "Reject a pending learning candidate. "
-            "Archives it and records explicit user rejection metadata."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["artifact_id"],
-            "properties": {
-                "artifact_id": {"type": "string"},
-                "rejected_by": {"type": "string"},
-                "rejection_source": {"type": "string"},
-                "reason": {"type": "string"},
-            },
-        },
-    },
     "review_improvement": {
         "name": "review_improvement",
         "description": (

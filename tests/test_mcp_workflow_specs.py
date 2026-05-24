@@ -72,6 +72,12 @@ def test_default_workflow_specs_validate() -> None:
     ]
     assert summary["mailbox_tool_contracts"] == ["mailbox_state", "mailbox_submit", "mailbox_get"]
     assert summary["instruction_tool_contracts"] == ["load_instruction_layer", "list_instruction_layers"]
+    assert summary["learning_review_tool_contracts"] == [
+        "list_learning_candidates",
+        "approve_learning_candidate",
+        "defer_learning_candidate",
+        "reject_learning_candidate",
+    ]
     assert {
         "claim_task",
         "close_task",
@@ -291,6 +297,16 @@ def test_instruction_layer_tool_contracts_are_declarative() -> None:
     assert contracts["load_instruction_layer"].inputSchema["required"] == ["layer"]
     assert contracts["load_instruction_layer"].inputSchema["properties"]["layer"]["enum"] == ["L3", "L4"]
     assert contracts["list_instruction_layers"].inputSchema["properties"]["layer"]["enum"] == ["L2", "L3", "L4"]
+
+
+def test_learning_review_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("learning_review")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["list_learning_candidates"].inputSchema["properties"]["limit"]["maximum"] == 100
+    assert contracts["approve_learning_candidate"].inputSchema["required"] == ["artifact_id"]
+    assert contracts["defer_learning_candidate"].inputSchema["properties"]["defer_days"]["maximum"] == 90
+    assert contracts["reject_learning_candidate"].inputSchema["properties"]["rejection_source"]["type"] == "string"
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

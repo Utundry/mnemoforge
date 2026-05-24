@@ -207,6 +207,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
     discovery_tool_contracts = load_tool_contract_catalog_spec("discovery_read", spec_root=spec_root)
     mailbox_tool_contracts = load_tool_contract_catalog_spec("mailbox_protocol", spec_root=spec_root)
     instruction_tool_contracts = load_tool_contract_catalog_spec("instruction_layers", spec_root=spec_root)
+    learning_review_tool_contracts = load_tool_contract_catalog_spec("learning_review", spec_root=spec_root)
     mailbox_forms = list_mailbox_form_specs(spec_root=spec_root)
     known_state_ids = {spec.id for spec in state_specs}
     known_toggle_ids = {toggle.id for toggle in feature_registry.toggles}
@@ -288,6 +289,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         "discovery_tool_contracts": [tool.name for tool in discovery_tool_contracts.tools],
         "mailbox_tool_contracts": [tool.name for tool in mailbox_tool_contracts.tools],
         "instruction_tool_contracts": [tool.name for tool in instruction_tool_contracts.tools],
+        "learning_review_tool_contracts": [tool.name for tool in learning_review_tool_contracts.tools],
     }
 
 
