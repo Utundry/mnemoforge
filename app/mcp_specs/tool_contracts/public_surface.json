@@ -25,6 +25,7 @@
         "properties": {
           "project": {"type": "string", "default": "mnemoforge"},
           "state": {"type": "string", "default": "planning", "enum": ["planning", "implementation", "verification", "live_validation", "checkpointing", "handoff", "operator_review"]},
+          "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
           "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
           "diagnostic": {"type": "boolean", "default": false}
         }

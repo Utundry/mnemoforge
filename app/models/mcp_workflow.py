@@ -196,11 +196,18 @@ class MailboxFormVisibilityRule(BaseModel):
     reason: str = ""
 
 
+class MailboxFormPacketLimit(BaseModel):
+    packet_profile: Literal["minimal", "compact", "normal", "diagnostic"]
+    max_forms: int = Field(default=0, ge=0, le=50)
+    reason: str = ""
+
+
 class MailboxFormPolicySpec(BaseModel):
     version: int = Field(default=1, ge=1)
     purpose: str = Field(..., min_length=1)
     state_priorities: dict[WorkflowStateName, list[str]] = Field(default_factory=dict)
     visibility_rules: list[MailboxFormVisibilityRule] = Field(default_factory=list)
+    packet_limits: list[MailboxFormPacketLimit] = Field(default_factory=list)
 
 
 class McpRouteSpec(BaseModel):

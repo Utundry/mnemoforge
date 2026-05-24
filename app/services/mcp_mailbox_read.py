@@ -26,6 +26,7 @@ async def build_mailbox_state_response(
         project=str(args.get("project") or "mnemoforge"),
         runtime_profile_id=_runtime_profile_id(args, identity_defaults),
         diagnostic=bool(args.get("diagnostic", False)),
+        detail=str(args.get("detail") or "compact"),
     )
 
 
@@ -42,6 +43,7 @@ async def build_mailbox_get_response(
         project=str(args.get("project") or "mnemoforge"),
         runtime_profile_id=_runtime_profile_id(args, identity_defaults),
         diagnostic=bool(args.get("diagnostic", False)),
+        detail=str(args.get("detail") or "compact"),
     )
 
 

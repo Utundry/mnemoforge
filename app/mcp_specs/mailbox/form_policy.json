@@ -5,13 +5,13 @@
     "planning": [
       "get_task_context",
       "start_task",
-      "record_progress",
-      "finish_task",
-      "close_task",
       "create_improvement",
       "store_memory",
       "create_law",
       "confirm_law",
+      "record_progress",
+      "finish_task",
+      "close_task",
       "release_task_claim",
       "claim_task",
       "set_feature_gate"
@@ -69,6 +69,13 @@
       "hidden_form_ids": ["claim_task"],
       "hide_only_when_form_ids_available": ["start_task"],
       "reason": "Weak/minimal agents should prefer start_task, which wraps claim + work-session setup; claim_task remains available as an advanced recovery form but is not shown in the main packet."
+    }
+  ],
+  "packet_limits": [
+    {
+      "packet_profile": "minimal",
+      "max_forms": 5,
+      "reason": "Weak/minimal agents need a short action list; less relevant forms remain available through detail=full or stronger runtime profiles."
     }
   ]
 }

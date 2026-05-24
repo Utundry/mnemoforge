@@ -268,11 +268,14 @@ def test_mailbox_forms_include_postconditions_for_health_detection() -> None:
 def test_mailbox_form_policy_is_declarative_priority_and_visibility_source() -> None:
     policy = load_mailbox_form_policy_spec()
     minimal_rule = next(rule for rule in policy.visibility_rules if rule.packet_profile == "minimal")
+    minimal_limit = next(limit for limit in policy.packet_limits if limit.packet_profile == "minimal")
 
     assert policy.state_priorities["planning"][:2] == ["get_task_context", "start_task"]
     assert policy.state_priorities["planning"].index("claim_task") > policy.state_priorities["planning"].index("start_task")
+    assert policy.state_priorities["planning"].index("create_improvement") < policy.state_priorities["planning"].index("record_progress")
     assert minimal_rule.hidden_form_ids == ["claim_task"]
     assert minimal_rule.hide_only_when_form_ids_available == ["start_task"]
+    assert minimal_limit.max_forms == 5
 
 
 def test_project_work_route_catalog_keeps_route_examples_out_of_service_code() -> None:
@@ -520,9 +523,27 @@ def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:
     assert any(form["form_id"] == "start_task" for form in packet["forms"])
     assert not any(form["form_id"] == "claim_task" for form in packet["forms"])
     assert "claim_task" in packet["hidden_forms"]
+    assert "record_progress" in packet["hidden_forms"]
+    assert packet["omitted_forms"][:2] == ["confirm_law", "record_progress"]
+    assert packet["packet_limit"]["max_forms"] == 5
+    assert len(packet["forms"]) == 5
     assert [form["form_id"] for form in packet["forms"][:2]] == ["get_task_context", "start_task"]
     assert "get_task_context" in packet["next_safe_action"]
     assert "Internal diagnostics are not available" in packet["warnings"][-1]
+
+
+def test_mailbox_state_full_detail_bypasses_minimal_packet_limit() -> None:
+    packet = build_mailbox_state_packet(
+        state="planning",
+        project="mnemoforge",
+        runtime_profile_id="weak_mcp_operator",
+        detail="full",
+    )
+
+    form_ids = [form["form_id"] for form in packet["forms"]]
+    assert "record_progress" in form_ids
+    assert "finish_task" in form_ids
+    assert "omitted_forms" not in packet
 
 
 async def test_mailbox_state_response_uses_session_runtime_profile_defaults() -> None:

@@ -2306,6 +2306,34 @@ class TestMcpToolExecution:
         assert {"form_id", "title", "mode", "required_fields"} <= set(compact["forms"][0])
         assert "input_schema" in full["forms"][0]
 
+    async def test_simple_state_minimal_profile_returns_short_adaptive_packet(self):
+        compact = json.loads(
+            await mcp_sse._execute_tool(
+                "state",
+                {"project": "alpha", "state": "planning", "runtime_profile_id": "weak_mcp_operator"},
+                "http://test",
+            )
+        )
+        full = json.loads(
+            await mcp_sse._execute_tool(
+                "state",
+                {
+                    "project": "alpha",
+                    "state": "planning",
+                    "runtime_profile_id": "weak_mcp_operator",
+                    "detail": "full",
+                },
+                "http://test",
+            )
+        )
+
+        assert len(compact["forms"]) == 5
+        assert compact["packet_profile"] == "minimal"
+        assert "record_progress" in compact["hidden_forms"]
+        assert "omitted_forms" in compact
+        assert len(full["forms"]) > len(compact["forms"])
+        assert "input_schema" in full["forms"][0]
+
     async def test_simple_submit_compacts_task_shaped_result_by_default_and_full_keeps_details(self, monkeypatch):
         seen_details: list[str] = []
 

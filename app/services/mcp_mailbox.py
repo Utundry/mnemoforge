@@ -71,6 +71,7 @@ def build_mailbox_state_packet(
     project: str = "mnemoforge",
     runtime_profile_id: str = "unknown_cli",
     diagnostic: bool = False,
+    detail: str = "compact",
     spec_root: Path = DEFAULT_SPEC_ROOT,
 ) -> dict[str, Any]:
     state_spec = load_state_spec(state, spec_root=spec_root)
@@ -115,6 +116,14 @@ def build_mailbox_state_packet(
         "next_safe_action": _next_safe_action(state_spec.id, forms),
         "receipt": None,
     }
+    _apply_packet_limit(
+        public_packet,
+        forms=forms,
+        hidden_form_ids=hidden_form_ids,
+        packet_profile=runtime_profile.packet_profile,
+        detail=detail,
+        spec_root=spec_root,
+    )
 
     if diagnostic and runtime_profile.allow_internal_diagnostics:
         toggles_by_id = {toggle.id: toggle for toggle in feature_registry.toggles}
@@ -171,6 +180,32 @@ def _public_forms_for_runtime(
             visible.append(form)
         sorted_forms = visible
     return sorted_forms, hidden
+
+
+def _apply_packet_limit(
+    packet: dict[str, Any],
+    *,
+    forms: list[MailboxFormSpec],
+    hidden_form_ids: list[str],
+    packet_profile: str,
+    detail: str,
+    spec_root: Path,
+) -> None:
+    if str(detail or "compact").strip().lower() == "full":
+        return
+    form_policy = load_mailbox_form_policy_spec(spec_root=spec_root)
+    limit = next((item for item in form_policy.packet_limits if item.packet_profile == packet_profile), None)
+    if limit is None or limit.max_forms <= 0 or len(forms) <= limit.max_forms:
+        return
+    visible_forms = forms[: limit.max_forms]
+    omitted_forms = [form.id for form in forms[limit.max_forms :]]
+    packet["forms"] = [_public_form_payload(form) for form in visible_forms]
+    packet["hidden_forms"] = list(dict.fromkeys([*hidden_form_ids, *omitted_forms]))
+    packet["omitted_forms"] = omitted_forms
+    packet["details_available"] = True
+    packet["packet_profile"] = packet_profile
+    packet["packet_limit"] = {"max_forms": limit.max_forms, "reason": limit.reason}
+    packet["next_safe_action"] = _next_safe_action(str(packet.get("state") or ""), visible_forms)
 
 
 def build_mailbox_submit_receipt(
@@ -375,6 +410,7 @@ def build_mailbox_get_packet(
     project: str = "mnemoforge",
     runtime_profile_id: str = "unknown_cli",
     diagnostic: bool = False,
+    detail: str = "compact",
     spec_root: Path = DEFAULT_SPEC_ROOT,
 ) -> dict[str, Any]:
     normalized_ref = str(ref or "").strip()
@@ -398,6 +434,7 @@ def build_mailbox_get_packet(
             project=ref_project,
             runtime_profile_id=runtime_profile_id,
             diagnostic=diagnostic,
+            detail=detail,
             spec_root=spec_root,
         )
 

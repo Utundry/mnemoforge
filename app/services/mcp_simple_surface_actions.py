@@ -86,6 +86,7 @@ async def build_simple_state_response(
             "state": str(args.get("state") or "planning"),
             "runtime_profile_id": str(args.get("runtime_profile_id") or "unknown_cli"),
             "diagnostic": bool(args.get("diagnostic", False)),
+            "detail": str(args.get("detail") or "compact"),
         },
         session_id=session_id,
         dependencies=MailboxReadDependencies(
