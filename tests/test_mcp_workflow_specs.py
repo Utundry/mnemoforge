@@ -86,6 +86,11 @@ def test_default_workflow_specs_validate() -> None:
         "project_workflow_submit",
         "reopen_task",
     ]
+    assert summary["project_context_execution_tool_contracts"] == [
+        "enrich_task_with_context",
+        "get_task_execution_context",
+        "operational_tray",
+    ]
     assert {
         "claim_task",
         "close_task",
@@ -354,6 +359,22 @@ def test_workflow_helper_tool_contracts_are_declarative() -> None:
     assert contracts["project_workflow"].inputSchema["properties"]["workflow"]["enum"] == ["task_completion"]
     assert contracts["project_workflow_submit"].inputSchema["required"] == ["workflow", "form"]
     assert contracts["reopen_task"].inputSchema["properties"]["status"]["default"] == "active"
+
+
+def test_project_context_execution_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("project_context_execution")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["enrich_task_with_context"].inputSchema["required"] == ["project_id", "task"]
+    assert contracts["enrich_task_with_context"].inputSchema["properties"]["context_profile"]["enum"] == [
+        "default",
+        "handoff_compact",
+        "hot_path",
+    ]
+    assert contracts["get_task_execution_context"].inputSchema["required"] == ["task", "state"]
+    assert contracts["get_task_execution_context"].inputSchema["properties"]["include_rules"]["default"] is True
+    assert contracts["operational_tray"].inputSchema["properties"]["action"]["enum"] == ["inspect", "execute"]
+    assert "record_checkpoint" in contracts["operational_tray"].inputSchema["properties"]["tray_action"]["enum"]
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:
