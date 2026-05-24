@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "purpose": "Executable weak-model usability scenarios for the public help/state/get/submit MCP surface.",
+  "runtime_profile_id": "weak_mcp_operator",
+  "scenarios": [
+    {
+      "id": "planning_state_is_short",
+      "description": "Weak models receive a short planning state packet with the highest-priority public forms.",
+      "tool": "state",
+      "arguments": {
+        "project": "alpha",
+        "state": "planning",
+        "runtime_profile_id": "weak_mcp_operator"
+      },
+      "expect": {
+        "max_forms": 5,
+        "required_forms": ["get_task_context", "start_task", "create_improvement"],
+        "omitted_forms": ["record_progress", "finish_task"],
+        "forbidden_form_fields": ["input_schema"]
+      }
+    },
+    {
+      "id": "project_query_returns_items_not_json_blob",
+      "description": "Project read questions return compact items instead of a JSON string embedded in answer.",
+      "tool": "get",
+      "arguments": {
+        "project": "alpha",
+        "query": "list active tasks",
+        "limit": 2,
+        "response_format": "auto"
+      },
+      "expect": {
+        "selected_facade": "project_work",
+        "selected_tool": "list_open_tasks",
+        "min_items": 1,
+        "forbidden_result_fields": ["answer", "route_telemetry"]
+      }
+    },
+    {
+      "id": "memory_query_uses_memory_search",
+      "description": "Explicit memory lookup queries route to memory search without project expert disambiguation.",
+      "tool": "get",
+      "arguments": {
+        "project": "alpha",
+        "query": "search memories for weak model usability",
+        "limit": 3
+      },
+      "expect": {
+        "resource_kind": "memory_search",
+        "route": "memory_search",
+        "min_items": 1
+      }
+    },
+    {
+      "id": "task_lifecycle_public_submit",
+      "description": "A weak model can start a task, record progress, and finish through public submit forms.",
+      "steps": [
+        {
+          "tool": "submit",
+          "arguments": {
+            "form_id": "start_task",
+            "state": "planning",
+            "project": "alpha",
+            "runtime_profile_id": "weak_mcp_operator",
+            "payload": {
+              "project": "alpha",
+              "task_id": "weak-e2e-task",
+              "owner_agent": "codex",
+              "session_id": "weak-e2e-session",
+              "agent_fingerprint": "agentfp:weak-e2e",
+              "auto_heartbeat": false,
+              "summary": "Weak model public task lifecycle started."
+            }
+          },
+          "expect": {
+            "receipt_status": "started",
+            "receipt_fields": ["work_token", "lease", "work_session", "next_forms"]
+          }
+        },
+        {
+          "tool": "submit",
+          "arguments": {
+            "form_id": "record_progress",
+            "state": "implementation",
+            "project": "alpha",
+            "runtime_profile_id": "weak_mcp_operator",
+            "payload": {
+              "project": "alpha",
+              "task_id": "weak-e2e-task",
+              "owner_agent": "codex",
+              "session_id": "weak-e2e-session",
+              "work_token": "$work_token",
+              "summary": "Weak model public task lifecycle recorded progress.",
+              "changed_files": ["app/example.py"],
+              "verification": ["docker test contour placeholder"],
+              "next_step": "Finish the public lifecycle smoke.",
+              "stage": "in_progress"
+            }
+          },
+          "expect": {
+            "receipt_status": "accepted"
+          }
+        },
+        {
+          "tool": "submit",
+          "arguments": {
+            "form_id": "finish_task",
+            "state": "handoff",
+            "project": "alpha",
+            "runtime_profile_id": "weak_mcp_operator",
+            "payload": {
+              "project": "alpha",
+              "task_id": "weak-e2e-task",
+              "owner_agent": "codex",
+              "session_id": "weak-e2e-session",
+              "work_token": "$work_token",
+              "summary": "Weak model public task lifecycle finished.",
+              "changed_files": ["app/example.py"],
+              "verification": ["docker test contour placeholder"],
+              "next_step": "No next step.",
+              "next_step_scope": "none"
+            }
+          },
+          "expect": {
+            "receipt_status": "finished",
+            "release_status": "released"
+          }
+        }
+      ]
+    }
+  ]
+}
