@@ -38,6 +38,8 @@ def _fill_tokens(value, tokens: dict[str, str]):
 def test_weak_model_scenario_spec_is_ascii_and_public_surface_only() -> None:
     raw = SPEC_PATH.read_text(encoding="utf-8")
     assert raw.isascii()
+    forbidden_shell_fragments = ("./", ".\\", "pytest", "docker", "powershell", "cmd.exe")
+    assert not any(fragment in raw.casefold() for fragment in forbidden_shell_fragments)
     spec = _load_spec()
     assert spec["runtime_profile_id"] == "weak_mcp_operator"
     for scenario in spec["scenarios"]:

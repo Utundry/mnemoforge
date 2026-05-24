@@ -96,7 +96,7 @@
                 "tests/test_mcp_weak_model_e2e.py"
               ],
               "verification": [
-                "./scripts/run_pytest_docker.ps1 -NoBuild tests/test_mcp_weak_model_e2e.py -q"
+                "verification:e2e-public-mcp-lifecycle"
               ],
               "next_step": "Finish the public lifecycle smoke.",
               "stage": "in_progress"
@@ -125,7 +125,7 @@
                 "tests/test_mcp_weak_model_e2e.py"
               ],
               "verification": [
-                "./scripts/run_pytest_docker.ps1 -NoBuild tests/test_mcp_weak_model_e2e.py -q"
+                "verification:e2e-public-mcp-lifecycle"
               ],
               "next_step": "No next step.",
               "next_step_scope": "none"
