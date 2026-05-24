@@ -225,6 +225,7 @@ def compact_simple_submit_packet(
             "status", "form_id", "mode", "message", "id", "artifact_key", "task_id",
             "linked_artifact_key", "stage", "work_token", "lease", "work_session",
             "work_session_resumed", "reclaim", "recommended_reclaim_call",
+            "same_fingerprint", "recovery_options",
             "release", "next_state", "next_forms", "close_status", "task_status",
             "superseded_by", "submitted_fields", "next_safe_action",
         )

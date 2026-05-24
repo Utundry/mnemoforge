@@ -391,16 +391,13 @@ async def mailbox_start_task(
     except Exception:
         result = {"status": "error", "message": raw}
     if result.get("status") != "started":
-        return {
-            "state": state,
-            "project": project,
-            "receipt": {
-                "status": result.get("status") or "conflict",
-                "form_id": form.id,
-                "message": result.get("message") or result.get("error") or "start_task_session did not start.",
-                "next_safe_action": result.get("next_safe_action") or "Review the receipt, fix missing ownership data, and submit start_task again.",
-            },
-        }
+        return _start_task_conflict_packet(
+            state=state,
+            project=project,
+            form_id=form.id,
+            payload=payload,
+            result=result,
+        )
     actual_metadata = {"result_kind": "task_started", "mutation": True}
     health = evaluate_mailbox_postconditions(form, actual_metadata)
     previous_lease = public_lease_payload(result.get("previous_lease"))
@@ -1130,6 +1127,165 @@ def _start_task_reclaim_payload(*, result: dict[str, Any], previous_lease: dict[
             "previous_status": previous_status,
         }
     )
+
+
+def _start_task_conflict_packet(
+    *,
+    state: str,
+    project: str,
+    form_id: str,
+    payload: dict[str, Any],
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    receipt = _start_task_conflict_receipt(
+        form_id=form_id,
+        payload=payload,
+        project=project,
+        result=result,
+    )
+    return {
+        "state": state,
+        "project": project,
+        "receipt": _compact(receipt),
+        "next_safe_action": receipt["next_safe_action"],
+    }
+
+
+def _start_task_conflict_receipt(
+    *,
+    form_id: str,
+    payload: dict[str, Any],
+    project: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    error = result.get("error") if isinstance(result.get("error"), dict) else {}
+    active_lease = public_lease_payload(error.get("active_lease") if isinstance(error.get("active_lease"), dict) else None)
+    payload_fingerprint = str(payload.get("agent_fingerprint") or "").strip()
+    active_fingerprint = str(active_lease.get("agent_fingerprint") or "").strip()
+    same_fingerprint = bool(payload_fingerprint and active_fingerprint and payload_fingerprint == active_fingerprint)
+    message = _start_task_conflict_message(result=result, same_fingerprint=same_fingerprint)
+    receipt: dict[str, Any] = {
+        "status": result.get("status") or "conflict",
+        "form_id": form_id,
+        "message": message,
+        "lease": active_lease,
+        "same_fingerprint": same_fingerprint,
+        "expires_at": active_lease.get("expires_at") or result.get("expires_at"),
+        "next_safe_action": _start_task_conflict_next_action(
+            result=result,
+            same_fingerprint=same_fingerprint,
+            has_work_token=bool(str(payload.get("work_token") or "").strip()),
+        ),
+    }
+    recovery = _start_task_recovery_options(
+        project=project,
+        payload=payload,
+        active_lease=active_lease,
+        same_fingerprint=same_fingerprint,
+    )
+    if recovery:
+        receipt["recovery_options"] = recovery
+    reclaim_call = _start_task_recommended_reclaim_call(
+        project=project,
+        payload=payload,
+        same_fingerprint=same_fingerprint,
+    )
+    if reclaim_call:
+        receipt["recommended_reclaim_call"] = reclaim_call
+    return receipt
+
+
+def _start_task_conflict_message(*, result: dict[str, Any], same_fingerprint: bool) -> str:
+    if result.get("error") == "work_token_invalid":
+        return "work_token did not match the active same-fingerprint claim."
+    if same_fingerprint:
+        return "Task is already claimed by this same agent fingerprint."
+    if isinstance(result.get("error"), dict):
+        return "Task is already claimed by another active session."
+    return str(result.get("message") or result.get("error") or "start_task_session did not start.")
+
+
+def _start_task_conflict_next_action(
+    *,
+    result: dict[str, Any],
+    same_fingerprint: bool,
+    has_work_token: bool,
+) -> str:
+    if result.get("error") == "work_token_invalid":
+        return "Do not reclaim this task; recover the correct work_token from the previous start_task receipt or wait for lease expiry."
+    if same_fingerprint and has_work_token:
+        return "Submit recommended_reclaim_call to recover the same active work session."
+    if same_fingerprint:
+        return "Recover work_token from the previous start_task receipt and submit start_task with the same task_id, agent_fingerprint, and work_token; otherwise wait for lease expiry."
+    return result.get("next_safe_action") or "Do not start this task; coordinate with the current owner or wait for lease expiry."
+
+
+def _start_task_recovery_options(
+    *,
+    project: str,
+    payload: dict[str, Any],
+    active_lease: dict[str, Any],
+    same_fingerprint: bool,
+) -> list[dict[str, Any]]:
+    task_id = str(payload.get("task_id") or active_lease.get("task_id") or "").strip()
+    if not task_id:
+        return []
+    options: list[dict[str, Any]] = [
+        {
+            "id": "inspect_task",
+            "tool": "get",
+            "ref": f"task:{project}:{task_id}",
+            "why": "Read current task context before retrying a claim.",
+        }
+    ]
+    if same_fingerprint:
+        options.append(
+            {
+                "id": "same_fingerprint_reclaim",
+                "tool": "submit",
+                "form_id": "start_task",
+                "requires": ["work_token"],
+                "why": "Use when this is your crashed/lost previous session and you still have the work_token.",
+            }
+        )
+    else:
+        options.append(
+            {
+                "id": "wait_or_coordinate",
+                "expires_at": active_lease.get("expires_at"),
+                "why": "Another active owner holds the lease; wait for expiry or coordinate handoff.",
+            }
+        )
+    return options
+
+
+def _start_task_recommended_reclaim_call(
+    *,
+    project: str,
+    payload: dict[str, Any],
+    same_fingerprint: bool,
+) -> dict[str, Any]:
+    work_token = str(payload.get("work_token") or "").strip()
+    if not same_fingerprint or not work_token:
+        return {}
+    reclaim_payload = _compact(
+        {
+            "project": project,
+            "task_id": payload.get("task_id"),
+            "owner_agent": payload.get("owner_agent") or payload.get("agent_id"),
+            "agent_fingerprint": payload.get("agent_fingerprint"),
+            "work_token": work_token,
+            "runtime_profile_id": payload.get("runtime_profile_id"),
+            "lease_ttl_seconds": payload.get("lease_ttl_seconds"),
+        }
+    )
+    return {
+        "tool": "submit",
+        "form_id": "start_task",
+        "state": "planning",
+        "project": project,
+        "payload": reclaim_payload,
+    }
 
 
 def _record_progress_reclaim_call(

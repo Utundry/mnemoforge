@@ -639,6 +639,108 @@ class TestMcpToolExecution:
         assert "http" not in packet["receipt"]["message"].casefold()
         assert "get_task_context" in packet["receipt"]["next_safe_action"]
 
+    async def test_mailbox_start_task_conflict_returns_same_fingerprint_recovery_receipt(self, monkeypatch):
+        async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
+            assert name == "start_task_session"
+            return json.dumps(
+                {
+                    "status": "conflict",
+                    "error": {
+                        "error": "task_already_claimed",
+                        "active_lease": {
+                            "lease_id": "lease-1",
+                            "project": "alpha",
+                            "task_id": args["task_id"],
+                            "owner_agent": "codex",
+                            "session_id": "lost-session",
+                            "agent_fingerprint": "agentfp:stable",
+                            "runtime_profile_id": "codex_cli",
+                            "status": "active",
+                            "expires_at": "2026-05-24T08:10:00Z",
+                            "work_token_hash": "secret-hash",
+                        },
+                    },
+                    "next_safe_action": "Task is already claimed by another session.",
+                }
+            )
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("start_task conflict should not call post")
+
+        async def fake_identity_defaults(session_id: str | None):
+            return {}
+
+        form = mcp_sse.mailbox_form_by_id("start_task")
+        assert form is not None
+
+        packet = await mailbox_start_task(
+            form=form,
+            payload={
+                "project": "alpha",
+                "task_id": "task-1",
+                "owner_agent": "codex",
+                "agent_fingerprint": "agentfp:stable",
+                "work_token": "known-token",
+            },
+            state="planning",
+            project="alpha",
+            runtime_profile_id="codex_cli",
+            diagnostic=False,
+            api_base="http://test",
+            session_id="recovered-session",
+            dependencies=MailboxActionDependencies(
+                post=fake_post,
+                execute_tool=fake_execute_tool,
+                get_session_identity_defaults=fake_identity_defaults,
+                task_mutation_guard=lambda **kwargs: None,
+            ),
+        )
+
+        receipt = packet["receipt"]
+        assert receipt["status"] == "conflict"
+        assert receipt["same_fingerprint"] is True
+        assert receipt["lease"]["lease_id"] == "lease-1"
+        assert "work_token_hash" not in receipt["lease"]
+        assert receipt["recommended_reclaim_call"] == {
+            "tool": "submit",
+            "form_id": "start_task",
+            "state": "planning",
+            "project": "alpha",
+            "payload": {
+                "project": "alpha",
+                "task_id": "task-1",
+                "owner_agent": "codex",
+                "agent_fingerprint": "agentfp:stable",
+                "work_token": "known-token",
+            },
+        }
+        assert receipt["recovery_options"][1]["id"] == "same_fingerprint_reclaim"
+
+    def test_simple_submit_compact_keeps_start_task_recovery_fields(self):
+        from app.services.mcp_simple_surface_actions import compact_simple_submit_packet
+
+        data = {
+            "receipt": {
+                "status": "conflict",
+                "form_id": "start_task",
+                "message": "Task is already claimed by this same agent fingerprint.",
+                "same_fingerprint": True,
+                "recovery_options": [{"id": "same_fingerprint_reclaim"}],
+                "recommended_reclaim_call": {"tool": "submit", "form_id": "start_task"},
+                "next_safe_action": "Submit recommended_reclaim_call to recover the same active work session.",
+            }
+        }
+
+        compact = compact_simple_submit_packet(
+            data,
+            {},
+            tool_surface_role=lambda tool_name: "public_entrypoint" if tool_name in {"submit", "get"} else "specialized",
+        )
+
+        assert compact["receipt"]["same_fingerprint"] is True
+        assert compact["receipt"]["recovery_options"][0]["id"] == "same_fingerprint_reclaim"
+        assert compact["receipt"]["recommended_reclaim_call"]["tool"] == "submit"
+
     async def test_mailbox_finish_task_wraps_finish_session_with_public_receipt(self, monkeypatch):
         form = mcp_sse.mailbox_form_by_id("finish_task")
         assert form is not None
