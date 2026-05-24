@@ -16,47 +16,13 @@ _DECLARATIVE_TOOL_DEFINITIONS = {
         "instruction_layers",
         "learning_review",
         "improvement_review",
+        "project_identity",
     )
     for tool in load_tool_contract_catalog_spec(catalog).tools
 }
 
 
 _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "list_project_aliases": {
-        "name": "list_project_aliases",
-        "description": (
-            "List active project identity aliases. Use this to see which historical project names "
-            "resolve to a canonical project id."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "project_id": {
-                    "type": "string",
-                    "description": "Optional project id or alias to scope the alias list.",
-                },
-            },
-        },
-    },
-    "rename_project": {
-        "name": "rename_project",
-        "description": (
-            "Rename a project identity as a normal lifecycle operation. Defaults to dry-run; "
-            "set apply=true to rewrite structured SQLite project references and create aliases."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["old_project_id", "new_project_id"],
-            "properties": {
-                "old_project_id": {"type": "string", "description": "Historical project id or working name."},
-                "new_project_id": {"type": "string", "description": "Canonical release/current project id."},
-                "apply": {"type": "boolean", "default": False, "description": "Apply changes. False returns a dry-run report."},
-                "include_text": {"type": "boolean", "default": False, "description": "Also rewrite free-text history fields."},
-                "ensure_alias": {"type": "boolean", "default": True, "description": "Create canonical and legacy alias rows."},
-                "reason": {"type": "string", "default": "", "description": "Reason stored with the alias/update report."},
-            },
-        },
-    },
     "normalize_mcp_intent": {
         "name": "normalize_mcp_intent",
         "description": (

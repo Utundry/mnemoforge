@@ -79,6 +79,7 @@ def test_default_workflow_specs_validate() -> None:
         "reject_learning_candidate",
     ]
     assert summary["improvement_review_tool_contracts"] == ["review_improvement"]
+    assert summary["project_identity_tool_contracts"] == ["list_project_aliases", "rename_project"]
     assert {
         "claim_task",
         "close_task",
@@ -326,6 +327,16 @@ def test_improvement_review_tool_contracts_are_declarative() -> None:
         "effective",
         "ineffective",
     ]
+
+
+def test_project_identity_tool_contracts_are_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("project_identity")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert contracts["list_project_aliases"].inputSchema["properties"]["project_id"]["type"] == "string"
+    assert contracts["rename_project"].inputSchema["required"] == ["old_project_id", "new_project_id"]
+    assert contracts["rename_project"].inputSchema["properties"]["apply"]["default"] is False
+    assert contracts["rename_project"].inputSchema["properties"]["ensure_alias"]["default"] is True
 
 
 def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:

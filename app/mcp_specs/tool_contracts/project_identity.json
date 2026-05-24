@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "id": "project_identity",
+  "purpose": "Declarative contracts for project identity aliases and rename lifecycle operations.",
+  "tools": [
+    {
+      "name": "list_project_aliases",
+      "description": "List active project identity aliases. Use this to see which historical project names resolve to a canonical project id.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Optional project id or alias to scope the alias list."
+          }
+        }
+      }
+    },
+    {
+      "name": "rename_project",
+      "description": "Rename a project identity as a normal lifecycle operation. Defaults to dry-run; set apply=true to rewrite structured SQLite project references and create aliases.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["old_project_id", "new_project_id"],
+        "properties": {
+          "old_project_id": {
+            "type": "string",
+            "description": "Historical project id or working name."
+          },
+          "new_project_id": {
+            "type": "string",
+            "description": "Canonical release/current project id."
+          },
+          "apply": {
+            "type": "boolean",
+            "default": false,
+            "description": "Apply changes. False returns a dry-run report."
+          },
+          "include_text": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also rewrite free-text history fields."
+          },
+          "ensure_alias": {
+            "type": "boolean",
+            "default": true,
+            "description": "Create canonical and legacy alias rows."
+          },
+          "reason": {
+            "type": "string",
+            "default": "",
+            "description": "Reason stored with the alias/update report."
+          }
+        }
+      }
+    }
+  ]
+}
