@@ -2889,14 +2889,64 @@ class TestMcpToolExecution:
         assert data["compact_result"] == [
             {
                 "artifact_key": "task:alpha:task-1",
+                "type": "task",
                 "title": "First task",
                 "status": "open",
-                "task_id": None,
-                "linked_artifact_key": None,
             }
         ]
         assert requested[0].startswith("/artifacts?project=alpha&status=open&limit=5")
         assert data["result"]["items"][0]["artifact_key"] == "task:alpha:task-1"
+
+    async def test_project_work_list_active_tasks_keeps_improvement_embryos_actionable(self, monkeypatch):
+        requested: list[str] = []
+
+        async def fake_get(api_base: str, path: str):
+            requested.append(path)
+            return {
+                "items": [
+                    {
+                        "artifact_key": "improvement:alpha:imp-1",
+                        "type": "improvement",
+                        "title": "High priority backend issue",
+                        "status": "open",
+                        "linked_artifact_key": "task:alpha:task-linked",
+                        "linked_status": "archived",
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {"project": "alpha", "intent": "list active tasks", "limit": 5},
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["selected_route"]["tool"] == "list_open_tasks"
+        assert requested[0] == "/artifacts?project=alpha&status=open&limit=5"
+        item = data["compact_result"][0]
+        assert item["type"] == "improvement"
+        assert item["linked_task_id"] == "task-linked"
+        assert "task_id" not in item
+        assert item["next_detail_form"]["payload"]["task_id"] == "task-linked"
+        assert item["next_action"] == "Review the improvement or open its linked task before claiming work."
+
+    async def test_project_work_list_open_work_keeps_work_items_broad(self, monkeypatch):
+        requested: list[str] = []
+
+        async def fake_get(api_base: str, path: str):
+            requested.append(path)
+            return {"items": []}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        await mcp_sse._execute_tool(
+            "project_work",
+            {"project": "alpha", "intent": "list open work items", "limit": 5},
+            "http://test",
+        )
+
+        assert requested[0] == "/artifacts?project=alpha&status=open&limit=5"
 
     async def test_project_work_next_priority_skips_claimed_tasks(self, monkeypatch):
         from pathlib import Path

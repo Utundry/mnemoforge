@@ -2042,13 +2042,25 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
         for item in items[:5]:
             if not isinstance(item, dict):
                 continue
+            item_type = str(item.get("type") or "").strip() or _artifact_type_from_key(item.get("artifact_key")) or "task"
+            linked_task_id = _task_id_from_artifact_key(item.get("linked_artifact_key"))
             compact_item = {
                 "artifact_key": item.get("artifact_key"),
+                "type": item_type,
                 "title": item.get("title"),
                 "status": item.get("status"),
                 "task_id": item.get("task_id"),
                 "linked_artifact_key": item.get("linked_artifact_key"),
+                "linked_status": item.get("linked_status"),
             }
+            if linked_task_id:
+                compact_item["linked_task_id"] = linked_task_id
+            if item_type == "improvement" and not compact_item.get("task_id"):
+                compact_item["next_action"] = (
+                    "Review the improvement or open its linked task before claiming work."
+                    if linked_task_id
+                    else "Review the improvement and create or promote a task before claiming work."
+                )
             if compact_item.get("task_id"):
                 compact_item["next_detail_form"] = {
                     "tool": "mailbox_submit",
@@ -2059,10 +2071,20 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
                         "detail": "compact",
                     },
                 }
+            elif linked_task_id:
+                compact_item["next_detail_form"] = {
+                    "tool": "mailbox_submit",
+                    "form_id": "get_task_context",
+                    "payload": {
+                        "project": item.get("project") or result.get("project"),
+                        "task_id": linked_task_id,
+                        "detail": "compact",
+                    },
+                }
             if isinstance(item.get("task_claim"), dict):
                 compact_item["claim_status"] = item.get("claim_status")
                 compact_item["claimed_by"] = (item.get("task_claim") or {}).get("owner_agent")
-            compact_items.append(compact_item)
+            compact_items.append({key: value for key, value in compact_item.items() if value not in (None, "", [])})
         return compact_items
     if route.get("tool") == "pull_task_context" and isinstance(result, dict):
         return {
@@ -2106,6 +2128,19 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
             "auto_heartbeat": result.get("auto_heartbeat"),
         }
     return result
+
+
+def _artifact_type_from_key(value: Any) -> str:
+    text = str(value or "").strip()
+    return text.split(":", 1)[0] if ":" in text else ""
+
+
+def _task_id_from_artifact_key(value: Any) -> str:
+    text = str(value or "").strip()
+    parts = text.split(":")
+    if len(parts) >= 3 and parts[0] == "task":
+        return ":".join(parts[2:]).strip()
+    return ""
 
 
 async def _resolve_mailbox_public_ref(api_base: str, args: dict[str, Any]) -> dict[str, Any] | None:

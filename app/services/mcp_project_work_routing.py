@@ -210,12 +210,16 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
         claim_filter = str(args.get("claim_filter") or "").strip().lower()
         if claim_filter not in {"available", "claimed", "all"}:
             claim_filter = "claimed" if tokens & {"claimed", "claim", "busy", "occupied", "leased"} else "all"
+        artifact_type = str(args.get("artifact_type") or args.get("type") or "all").strip().lower()
+        if artifact_type not in {"all", "task", "improvement"}:
+            artifact_type = "all"
         route["payload"] = {
             "project": project,
             "limit": limit,
             "claim_filter": claim_filter,
             "include_claims": True,
             "assignment_filter": "all",
+            "artifact_type": artifact_type,
         }
     elif route["intent_type"] == "pull_task_context":
         route["payload"] = {
