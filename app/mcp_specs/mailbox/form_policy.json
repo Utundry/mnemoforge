@@ -55,6 +55,7 @@
     ],
     "operator_review": [
       "get_task_context",
+      "route_hygiene",
       "route_feedback",
       "create_law",
       "confirm_law",

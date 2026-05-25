@@ -1,0 +1,36 @@
+{
+  "id": "route_hygiene",
+  "title": "Route hygiene report",
+  "purpose": "Read learned-route hygiene status for operator review without exposing route internals to normal agent packets.",
+  "states": ["operator_review"],
+  "mode": "read",
+  "required_fields": ["project"],
+  "optional_fields": ["facade", "include_disabled", "limit", "stale_after_days"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "facade": {"type": "string"},
+      "include_disabled": {"type": "boolean", "default": true},
+      "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+      "stale_after_days": {"type": "integer", "minimum": 1, "maximum": 365, "default": 30}
+    },
+    "required": ["project"]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "none"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["route_feedback"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "route_hygiene_report",
+      "mutation": false
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status"]
+  },
+  "public_hint": "Use in operator_review to inspect learned route health before disabling or reinforcing a route pattern."
+}

@@ -15,6 +15,7 @@ from app.services.mcp_mailbox import (
     mailbox_form_state_names,
 )
 from app.services.mcp_tool_contracts import build_report_task_checkpoint_payload
+from app.services.mcp_workflow_specs import load_route_catalog_spec
 from app.services.mcp_simple_read_actions import (
     PublicRefDependencies,
     compact_public_ref_matches,
@@ -163,6 +164,8 @@ async def build_mailbox_submit_packet(
         )
     if form_id == "set_feature_gate":
         return mailbox_set_feature_gate(**common)
+    if form_id == "route_hygiene":
+        return mailbox_route_hygiene(**common)
     if form_id == "route_feedback":
         return mailbox_route_feedback(**common)
 
@@ -1101,6 +1104,61 @@ def mailbox_set_feature_gate(
     return packet
 
 
+def mailbox_route_hygiene(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+) -> dict[str, Any]:
+    facade = str(payload.get("facade") or "").strip()
+    limit = max(1, min(int(payload.get("limit") or 50), 200))
+    stale_after_days = max(1, min(int(payload.get("stale_after_days") or 30), 365))
+    report = get_route_pattern_store().hygiene_report(
+        known_tools=_known_route_tools(),
+        limit=limit,
+        stale_after_days=stale_after_days,
+    )
+    if facade:
+        report["patterns"] = [
+            item for item in report.get("patterns", [])
+            if str(item.get("facade") or "") == facade
+        ]
+        report["disabled_patterns"] = [
+            item for item in report.get("disabled_patterns", [])
+            if str(item.get("facade") or "") == facade
+        ]
+        report["findings"] = [
+            item for item in report.get("findings", [])
+            if str(item.get("facade") or "") == facade
+        ]
+        report["summary"] = {
+            **(report.get("summary") if isinstance(report.get("summary"), dict) else {}),
+            "facade_filter": facade,
+            "returned_patterns": len(report["patterns"]),
+            "returned_disabled_patterns": len(report["disabled_patterns"]),
+            "returned_findings": len(report["findings"]),
+        }
+    if not bool(payload.get("include_disabled", True)):
+        report.pop("disabled_patterns", None)
+
+    return {
+        "state": state,
+        "project": project,
+        "receipt": {
+            "status": "accepted",
+            "form_id": form.id,
+            "mode": form.mode,
+            "message": "Route hygiene report generated.",
+            "next_safe_action": "Use route_feedback to reinforce useful phrases or invalidate stale learned routes.",
+        },
+        "result": report,
+        "next_safe_action": "Use route_feedback to reinforce useful phrases or invalidate stale learned routes.",
+    }
+
+
 def mailbox_route_feedback(
     *,
     form,
@@ -1113,6 +1171,9 @@ def mailbox_route_feedback(
     facade = str(payload.get("facade") or "").strip()
     pattern_id = str(payload.get("pattern_id") or "").strip()
     query = str(payload.get("query") or "").strip()
+    vote = str(payload.get("vote") or "negative").strip().lower()
+    if vote not in {"positive", "negative"}:
+        vote = "negative"
     if not pattern_id and not query:
         return {
             "state": state,
@@ -1131,6 +1192,30 @@ def mailbox_route_feedback(
         matched_route = get_route_pattern_store().match(facade=facade, pattern=query)
         pattern_id = str((matched_route or {}).get("pattern_id") or "").strip()
     if not pattern_id:
+        expected_tool = str(payload.get("expected_tool") or "").strip()
+        expected_intent_type = str(payload.get("expected_intent_type") or "").strip()
+        if vote == "positive" and query and expected_tool and expected_intent_type:
+            pattern_id = get_route_pattern_store().record(
+                facade=facade,
+                pattern=query,
+                intent_type=expected_intent_type,
+                tool=expected_tool,
+                mutating=bool(payload.get("mutating", False)),
+                confidence=float(payload.get("confidence") or 0.65),
+                source="operator_feedback",
+                metadata={
+                    "reason": str(payload.get("reason") or "operator_positive_alias").strip(),
+                    "matched_example": query,
+                    "alias_source": "route_feedback",
+                },
+            )
+        if pattern_id:
+            matched_route = {
+                "pattern_id": pattern_id,
+                "tool": expected_tool,
+                "intent_type": expected_intent_type,
+            }
+    if not pattern_id:
         return {
             "state": state,
             "project": project,
@@ -1138,7 +1223,7 @@ def mailbox_route_feedback(
                 "status": "not_found",
                 "form_id": form.id,
                 "message": "No active learned route pattern matched the feedback.",
-                "next_safe_action": "Use diagnostic route telemetry to capture pattern_id, or retry with the exact misrouted query.",
+                "next_safe_action": "Request route_hygiene in operator_review, or submit positive feedback with query, expected_tool, and expected_intent_type to create a learned alias.",
             },
         }
 
@@ -1148,6 +1233,12 @@ def mailbox_route_feedback(
             "project": project,
             "facade": facade,
             "query": query,
+            "vote": vote,
+            "language": str(payload.get("language") or "").strip(),
+            "phrase_family": str(payload.get("phrase_family") or "").strip(),
+            "jargon_terms": _string_list_arg(payload.get("jargon_terms")),
+            "typo_terms": _string_list_arg(payload.get("typo_terms")),
+            "keyboard_layout_terms": _string_list_arg(payload.get("keyboard_layout_terms")),
             "expected_tool": str(payload.get("expected_tool") or "").strip(),
             "expected_intent_type": str(payload.get("expected_intent_type") or "").strip(),
             "actual_tool": str(payload.get("actual_tool") or (matched_route or {}).get("tool") or "").strip(),
@@ -1155,7 +1246,27 @@ def mailbox_route_feedback(
             "updated_by": mailbox_actor(payload),
         }
     )
+    feedback = get_route_pattern_store().record_feedback(
+        pattern_id,
+        vote=vote,
+        reason=str(payload.get("reason") or "").strip(),
+        metadata=metadata,
+    )
+    if feedback is None:
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "not_found",
+                "form_id": form.id,
+                "pattern_id": pattern_id,
+                "message": "Learned route pattern does not exist.",
+                "next_safe_action": "Request route_hygiene in operator_review or retry with the exact misrouted query.",
+            },
+        }
+
     disabled = False
+    disable = bool(payload.get("disable", True)) if vote == "negative" else False
     if disable:
         disabled = get_route_pattern_store().disable_pattern(
             pattern_id,
@@ -1183,7 +1294,7 @@ def mailbox_route_feedback(
         actual_metadata={
             "result_kind": "route_feedback_recorded",
             "mutation": True,
-            "internal_tool": "route_pattern_store.disable_pattern",
+            "internal_tool": "route_pattern_store.record_feedback",
             "route_id": "mailbox.route_feedback.v1",
         },
         result={"id": pattern_id, "artifact_key": f"route_pattern:{facade}:{pattern_id}"},
@@ -1193,13 +1304,42 @@ def mailbox_route_feedback(
     packet["receipt"].update(
         {
             "pattern_id": pattern_id,
-            "feedback_action": "disabled" if disabled else "recorded",
+            "feedback_action": "disabled" if disabled else f"{vote}_recorded",
             "facade": facade,
+            "vote": vote,
         }
     )
-    packet["next_safe_action"] = "Retry the original user request; the stale learned route pattern is no longer active."
+    if vote == "positive":
+        packet["next_safe_action"] = "The learned route pattern was reinforced; keep using this phrasing when it matches the desired route."
+    elif disabled:
+        packet["next_safe_action"] = "Retry the original user request; the stale learned route pattern is no longer active."
+    else:
+        packet["next_safe_action"] = "Negative feedback was recorded; use route_hygiene to decide whether to disable this pattern."
     packet["receipt"]["next_safe_action"] = packet["next_safe_action"]
     return packet
+
+
+def _known_route_tools() -> set[str]:
+    tools: set[str] = set()
+    for facade in ("project_work", "project_rules", "project_context", "project_verify", "project_capture"):
+        try:
+            catalog = load_route_catalog_spec(facade)
+        except Exception:
+            continue
+        tools.update(str(route.tool or "").strip() for route in catalog.routes if str(route.tool or "").strip())
+    tools.update(
+        {
+            "ask_project",
+            "get",
+            "submit",
+            "state",
+            "help",
+            "mailbox_state",
+            "mailbox_submit",
+            "mailbox_get",
+        }
+    )
+    return tools
 
 
 async def mailbox_record_progress(

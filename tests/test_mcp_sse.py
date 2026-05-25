@@ -1926,6 +1926,10 @@ class TestMcpToolExecution:
                     "intent_type": "next_priority",
                 }
 
+            def record_feedback(self, pattern_id: str, *, vote: str, reason: str = "", metadata: dict | None = None):
+                calls.append(("feedback", {"pattern_id": pattern_id, "vote": vote, "reason": reason, "metadata": metadata or {}}))
+                return {"pattern_id": pattern_id, "positive_feedback": 0, "negative_feedback": 1}
+
             def disable_pattern(self, pattern_id: str, *, reason: str, metadata: dict | None = None):
                 calls.append(("disable", {"pattern_id": pattern_id, "reason": reason, "metadata": metadata or {}}))
                 return True
@@ -1955,8 +1959,132 @@ class TestMcpToolExecution:
         assert data["receipt"]["pattern_id"] == "learned-route-1"
         assert data["receipt"]["feedback_action"] == "disabled"
         assert calls[0][0] == "match"
-        assert calls[1][0] == "disable"
-        assert calls[1][1]["metadata"]["expected_tool"] == "memory_search"
+        assert calls[1][0] == "feedback"
+        assert calls[2][0] == "disable"
+        assert calls[2][1]["metadata"]["expected_tool"] == "memory_search"
+
+    async def test_mailbox_submit_route_feedback_can_reinforce_learned_pattern(self, monkeypatch):
+        from app.services import mcp_mailbox_actions
+
+        calls: list[tuple[str, dict]] = []
+
+        class FakeRoutePatternStore:
+            def record_feedback(self, pattern_id: str, *, vote: str, reason: str = "", metadata: dict | None = None):
+                calls.append(("feedback", {"pattern_id": pattern_id, "vote": vote, "reason": reason, "metadata": metadata or {}}))
+                return {"pattern_id": pattern_id, "positive_feedback": 1, "negative_feedback": 0}
+
+            def disable_pattern(self, pattern_id: str, *, reason: str, metadata: dict | None = None):
+                raise AssertionError("positive feedback must not disable useful learned phrases")
+
+        monkeypatch.setattr(mcp_mailbox_actions, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "operator_review",
+                "form_id": "route_feedback",
+                "payload": {
+                    "project": "alpha",
+                    "facade": "project_work",
+                    "pattern_id": "useful-route-1",
+                    "vote": "positive",
+                    "language": "ru",
+                    "phrase_family": "list active work",
+                    "jargon_terms": ["podnimi"],
+                    "reason": "User-native phrase correctly lists active tasks.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["feedback_action"] == "positive_recorded"
+        assert data["receipt"]["vote"] == "positive"
+        assert calls[0][1]["metadata"]["language"] == "ru"
+        assert calls[0][1]["metadata"]["jargon_terms"] == ["podnimi"]
+
+    async def test_mailbox_submit_route_feedback_can_create_positive_alias_for_typo(self, monkeypatch):
+        from app.services import mcp_mailbox_actions
+
+        calls: list[tuple[str, dict]] = []
+
+        class FakeRoutePatternStore:
+            def match(self, *, facade: str, pattern: str, allowed_intent_types=None, semantic_threshold: float = 0.6):
+                calls.append(("match", {"facade": facade, "pattern": pattern}))
+                return None
+
+            def record(self, **kwargs):
+                calls.append(("record", kwargs))
+                return "alias-route-1"
+
+            def record_feedback(self, pattern_id: str, *, vote: str, reason: str = "", metadata: dict | None = None):
+                calls.append(("feedback", {"pattern_id": pattern_id, "vote": vote, "reason": reason, "metadata": metadata or {}}))
+                return {"pattern_id": pattern_id, "positive_feedback": 1, "negative_feedback": 0}
+
+        monkeypatch.setattr(mcp_mailbox_actions, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "operator_review",
+                "form_id": "route_feedback",
+                "payload": {
+                    "project": "alpha",
+                    "facade": "project_work",
+                    "query": "gjrf;b frnbdyst pflfxb",
+                    "vote": "positive",
+                    "expected_tool": "list_open_tasks",
+                    "expected_intent_type": "next_priority",
+                    "keyboard_layout_terms": ["gjrf;b"],
+                    "typo_terms": ["pflfxb"],
+                    "reason": "Wrong keyboard layout phrase should list active tasks.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["pattern_id"] == "alias-route-1"
+        assert calls[1][0] == "record"
+        assert calls[1][1]["tool"] == "list_open_tasks"
+        assert calls[2][1]["metadata"]["keyboard_layout_terms"] == ["gjrf;b"]
+        assert calls[2][1]["metadata"]["typo_terms"] == ["pflfxb"]
+
+    async def test_mailbox_submit_route_hygiene_returns_operator_report(self, monkeypatch):
+        from app.services import mcp_mailbox_actions
+
+        class FakeRoutePatternStore:
+            def hygiene_report(self, *, known_tools: set[str] | None = None, limit: int = 100, stale_after_days: int = 30):
+                assert "list_open_tasks" in (known_tools or set())
+                return {
+                    "status": "ok",
+                    "summary": {"active_patterns": 1, "disabled_patterns": 0, "findings": 1},
+                    "findings": [{"type": "negative_feedback", "facade": "project_work", "pattern_id": "route-1"}],
+                    "patterns": [{"pattern_id": "route-1", "facade": "project_work", "tool": "list_open_tasks"}],
+                    "disabled_patterns": [],
+                }
+
+        monkeypatch.setattr(mcp_mailbox_actions, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "operator_review",
+                "form_id": "route_hygiene",
+                "payload": {"project": "alpha", "facade": "project_work", "limit": 20},
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["result"]["summary"]["facade_filter"] == "project_work"
+        assert data["result"]["summary"]["returned_findings"] == 1
 
     async def test_mailbox_submit_record_progress_without_task_records_memory(self, monkeypatch):
         posted: list[tuple[str, dict]] = []

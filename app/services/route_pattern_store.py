@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS route_patterns (
     hit_count INTEGER NOT NULL DEFAULT 0,
     last_hit_at REAL NOT NULL DEFAULT 0,
     disabled INTEGER NOT NULL DEFAULT 0,
+    positive_feedback INTEGER NOT NULL DEFAULT 0,
+    negative_feedback INTEGER NOT NULL DEFAULT 0,
+    last_feedback_at REAL NOT NULL DEFAULT 0,
     metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
@@ -40,6 +43,12 @@ WHERE disabled = 0;
 CREATE INDEX IF NOT EXISTS idx_route_patterns_facade
 ON route_patterns(facade, disabled, updated_at DESC);
 """
+
+_MIGRATION_COLUMNS = {
+    "positive_feedback": "INTEGER NOT NULL DEFAULT 0",
+    "negative_feedback": "INTEGER NOT NULL DEFAULT 0",
+    "last_feedback_at": "REAL NOT NULL DEFAULT 0",
+}
 
 
 def _normalize_pattern(text: str) -> str:
@@ -106,6 +115,39 @@ def _row_to_route(row: sqlite3.Row, *, backend_used: str, score: float, matched_
     }
 
 
+def _row_metadata(row: sqlite3.Row) -> dict[str, Any]:
+    try:
+        metadata = json.loads(row["metadata_json"] or "{}")
+        return metadata if isinstance(metadata, dict) else {}
+    except Exception:
+        return {}
+
+
+def _row_to_pattern(row: sqlite3.Row) -> dict[str, Any]:
+    metadata = _row_metadata(row)
+    return {
+        "pattern_id": row["id"],
+        "facade": row["facade"],
+        "normalized_pattern": row["normalized_pattern"],
+        "intent_type": row["intent_type"],
+        "tool": row["tool"],
+        "mutating": bool(row["mutating"]),
+        "confidence": round(float(row["confidence"] or 0.0), 3),
+        "source": row["source"],
+        "evidence_count": int(row["evidence_count"] or 0),
+        "hit_count": int(row["hit_count"] or 0),
+        "positive_feedback": int(row["positive_feedback"] or 0),
+        "negative_feedback": int(row["negative_feedback"] or 0),
+        "last_hit_at": float(row["last_hit_at"] or 0.0),
+        "last_feedback_at": float(row["last_feedback_at"] or 0.0),
+        "disabled": bool(row["disabled"]),
+        "disabled_reason": str(metadata.get("disabled_reason") or ""),
+        "created_at": float(row["created_at"] or 0.0),
+        "updated_at": float(row["updated_at"] or 0.0),
+        "metadata": metadata,
+    }
+
+
 class RoutePatternStore:
     def __init__(self, db_path: Path = _DB_PATH) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,7 +156,18 @@ class RoutePatternStore:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(_CREATE_SQL)
+            self._ensure_schema_columns_locked()
             self._conn.commit()
+
+    def _ensure_schema_columns_locked(self) -> None:
+        existing = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(route_patterns)").fetchall()
+        }
+        for column, definition in _MIGRATION_COLUMNS.items():
+            if column in existing:
+                continue
+            self._conn.execute(f"ALTER TABLE route_patterns ADD COLUMN {column} {definition}")
 
     def record(
         self,
@@ -299,6 +352,169 @@ class RoutePatternStore:
             )
             self._conn.commit()
             return True
+
+    def record_feedback(
+        self,
+        pattern_id: str,
+        *,
+        vote: str,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        pattern_id = str(pattern_id or "").strip()
+        vote_name = str(vote or "").strip().lower()
+        if vote_name not in {"positive", "negative"} or not pattern_id:
+            return None
+        now = time.time()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM route_patterns WHERE id = ?",
+                (pattern_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            current_metadata = _row_metadata(row)
+            feedback_events = current_metadata.get("feedback_events")
+            if not isinstance(feedback_events, list):
+                feedback_events = []
+            feedback_events.append(
+                {
+                    "vote": vote_name,
+                    "reason": str(reason or "").strip(),
+                    "at": now,
+                    "context": metadata or {},
+                }
+            )
+            current_metadata["feedback_events"] = feedback_events[-20:]
+            if vote_name == "positive":
+                confidence = min(1.0, float(row["confidence"] or 0.0) + 0.04)
+                self._conn.execute(
+                    """
+                    UPDATE route_patterns
+                    SET positive_feedback = positive_feedback + 1,
+                        evidence_count = evidence_count + 1,
+                        confidence = ?,
+                        last_feedback_at = ?,
+                        metadata_json = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (confidence, now, json.dumps(current_metadata, ensure_ascii=False), now, pattern_id),
+                )
+            else:
+                confidence = max(0.0, float(row["confidence"] or 0.0) - 0.12)
+                self._conn.execute(
+                    """
+                    UPDATE route_patterns
+                    SET negative_feedback = negative_feedback + 1,
+                        confidence = ?,
+                        last_feedback_at = ?,
+                        metadata_json = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (confidence, now, json.dumps(current_metadata, ensure_ascii=False), now, pattern_id),
+                )
+            self._conn.commit()
+            updated = self._conn.execute(
+                "SELECT * FROM route_patterns WHERE id = ?",
+                (pattern_id,),
+            ).fetchone()
+        return _row_to_pattern(updated) if updated is not None else None
+
+    def list_patterns(
+        self,
+        *,
+        facade: str = "",
+        disabled: bool | None = False,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit or 50), 200))
+        clauses: list[str] = []
+        params: list[Any] = []
+        facade_name = str(facade or "").strip()
+        if facade_name:
+            clauses.append("facade = ?")
+            params.append(facade_name)
+        if disabled is not None:
+            clauses.append("disabled = ?")
+            params.append(1 if disabled else 0)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"""
+                SELECT * FROM route_patterns
+                {where}
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+        return [_row_to_pattern(row) for row in rows]
+
+    def hygiene_report(
+        self,
+        *,
+        known_tools: set[str] | None = None,
+        limit: int = 100,
+        stale_after_days: int = 30,
+    ) -> dict[str, Any]:
+        active = self.list_patterns(disabled=False, limit=limit)
+        disabled = self.list_patterns(disabled=True, limit=limit)
+        known = {str(tool or "").strip() for tool in (known_tools or set()) if str(tool or "").strip()}
+        now = time.time()
+        stale_after_seconds = max(1, int(stale_after_days or 30)) * 86400
+        findings: list[dict[str, Any]] = []
+        for item in active:
+            tool = str(item.get("tool") or "").strip()
+            if known and tool not in known:
+                findings.append(
+                    {
+                        "type": "unknown_tool",
+                        "severity": "high",
+                        "pattern_id": item["pattern_id"],
+                        "facade": item["facade"],
+                        "tool": tool,
+                        "reason": "Learned route points to a tool that is not in the current known tool set.",
+                    }
+                )
+            negative = int(item.get("negative_feedback") or 0)
+            positive = int(item.get("positive_feedback") or 0)
+            if negative >= positive + 2:
+                findings.append(
+                    {
+                        "type": "negative_feedback",
+                        "severity": "medium",
+                        "pattern_id": item["pattern_id"],
+                        "facade": item["facade"],
+                        "tool": tool,
+                        "reason": "Learned route has more negative than positive feedback.",
+                    }
+                )
+            last_hit = float(item.get("last_hit_at") or 0.0)
+            age_source = last_hit or float(item.get("updated_at") or 0.0)
+            if age_source and now - age_source > stale_after_seconds and int(item.get("evidence_count") or 0) <= 1:
+                findings.append(
+                    {
+                        "type": "low_evidence_stale_pattern",
+                        "severity": "low",
+                        "pattern_id": item["pattern_id"],
+                        "facade": item["facade"],
+                        "tool": tool,
+                        "reason": "Learned route has low evidence and has not been used recently.",
+                    }
+                )
+        return {
+            "status": "ok",
+            "summary": {
+                "active_patterns": len(active),
+                "disabled_patterns": len(disabled),
+                "findings": len(findings),
+            },
+            "findings": findings[:limit],
+            "patterns": active[: min(limit, 50)],
+            "disabled_patterns": disabled[: min(limit, 25)],
+        }
 
 
 _store: RoutePatternStore | None = None

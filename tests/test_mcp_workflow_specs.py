@@ -736,6 +736,25 @@ def test_route_feedback_form_is_operator_review_only() -> None:
     form = next(item for item in operator_review["forms"] if item["form_id"] == "route_feedback")
     assert form["mode"] == "transition"
     assert {"facade", "reason"} <= set(form["required_fields"])
+    assert {
+        "vote",
+        "language",
+        "phrase_family",
+        "jargon_terms",
+        "typo_terms",
+        "keyboard_layout_terms",
+    } <= set(form["optional_fields"])
+    assert "postconditions" not in form
+
+
+def test_route_hygiene_form_is_operator_review_only() -> None:
+    planning = build_mailbox_state_packet(state="planning", project="mnemoforge", detail="full")
+    operator_review = build_mailbox_state_packet(state="operator_review", project="mnemoforge")
+
+    assert not any(form["form_id"] == "route_hygiene" for form in planning["forms"])
+    form = next(item for item in operator_review["forms"] if item["form_id"] == "route_hygiene")
+    assert form["mode"] == "read"
+    assert form["required_fields"] == ["project"]
     assert "postconditions" not in form
 
 
