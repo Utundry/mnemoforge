@@ -325,7 +325,7 @@ async def finish_task_session_action(
                 source="finish_task_session",
                 content=item,
             )
-        for item in _string_list_arg(args.get("changed_files")):
+        for item in _closeout_span_values(args, "changed_files"):
             session_store.record_span(
                 project=project,
                 task_id=task_id,
@@ -446,3 +446,12 @@ def _string_list_arg(value: Any) -> list[str]:
         return [str(item).strip() for item in value if str(item).strip()]
     text = str(value).strip()
     return [text] if text else []
+
+
+def _closeout_span_values(args: dict[str, Any], key: str) -> list[str]:
+    values = _string_list_arg(args.get(key))
+    if values:
+        return values
+    if key == "changed_files" and key in args:
+        return ["none"]
+    return []

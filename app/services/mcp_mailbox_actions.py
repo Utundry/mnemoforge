@@ -253,6 +253,8 @@ def public_mailbox_error_message(exc: Exception) -> str:
         return "Requested task or route was not found."
     if "401" in text or "403" in text or "unauthorized" in lowered or "forbidden" in lowered:
         return "Mailbox action was not authorized for the current session."
+    if "closeout_required" in lowered or "closeout evidence" in lowered:
+        return "Completed work requires explicit closeout evidence: verification, changed_files, and next_step."
     return "Mailbox action could not be completed by the server."
 
 
@@ -1354,7 +1356,7 @@ def _record_closeout_spans_from_progress(
     span_session_id = active_work.session_id or owner_session_id
     for kind, values in (
         ("verification", _string_list_arg(payload.get("verification"))),
-        ("changed_files", _string_list_arg(payload.get("changed_files"))),
+        ("changed_files", _closeout_span_values(payload, "changed_files")),
         ("next_step", _string_list_arg(payload.get("next_step"))),
     ):
         for value in values:
@@ -1377,6 +1379,15 @@ def _string_list_arg(value: Any) -> list[str]:
         return [str(item).strip() for item in value if str(item).strip()]
     text = str(value).strip()
     return [text] if text else []
+
+
+def _closeout_span_values(payload: dict[str, Any], key: str) -> list[str]:
+    values = _string_list_arg(payload.get(key))
+    if values:
+        return values
+    if key == "changed_files" and key in payload:
+        return ["none"]
+    return []
 
 
 def _unique_strings(values: list[str]) -> list[str]:

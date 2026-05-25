@@ -602,6 +602,78 @@ class TestMcpToolExecution:
             lease_store.close()
             stenographer_store.close()
 
+    async def test_mailbox_finish_accepts_explicit_empty_changed_files(self, monkeypatch):
+        from app.services import stenographer_service as stenographer_mod
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            if path.startswith("/project/tasks/") and path.endswith("/changes"):
+                return {"id": f"checkpoint-{payload.get('stage')}", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            started = json.loads(
+                await mcp_sse._execute_tool(
+                    "submit",
+                    {
+                        "form_id": "start_task",
+                        "state": "planning",
+                        "project": "alpha",
+                        "payload": {
+                            "project": "alpha",
+                            "task_id": "task-mailbox-empty-changes",
+                            "owner_agent": "codex",
+                            "auto_heartbeat": False,
+                        },
+                    },
+                    "http://test",
+                )
+            )
+            token = started["receipt"]["work_token"]
+            work_id = started["receipt"]["work_session"]["work_id"]
+
+            finished = json.loads(
+                await mcp_sse._execute_tool(
+                    "submit",
+                    {
+                        "form_id": "finish_task",
+                        "state": "handoff",
+                        "project": "alpha",
+                        "payload": {
+                            "project": "alpha",
+                            "task_id": "task-mailbox-empty-changes",
+                            "owner_agent": "codex",
+                            "work_token": token,
+                            "work_id": work_id,
+                            "summary": "Finished with explicit no file changes.",
+                            "changed_files": [],
+                            "verification": ["finish_task fix verified"],
+                            "next_step": "none",
+                        },
+                    },
+                    "http://test",
+                )
+            )
+
+            assert finished["receipt"]["status"] == "finished"
+            spans = stenographer_store.list_spans(
+                project="alpha",
+                task_id="task-mailbox-empty-changes",
+                work_id=work_id,
+            )
+            changed = [span for span in spans if span.kind == "changed_files"]
+            assert [span.content for span in changed] == ["none"]
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
     async def test_mailbox_start_task_converts_internal_error_to_public_receipt(self, monkeypatch):
         async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
             raise RuntimeError('HTTP 404: {"detail":"Task not found"}')
