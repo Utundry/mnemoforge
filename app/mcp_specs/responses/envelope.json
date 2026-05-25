@@ -2,6 +2,73 @@
   "version": 1,
   "purpose": "Define which MCP mailroom response fields are safe for external agent packets and which must remain server-internal diagnostics.",
   "default_visibility": "public",
+  "profiles": {
+    "compact": {
+      "purpose": "Default weak-model packet. Keep actionable data and continuation handles; remove diagnostics and empty fields.",
+      "include_visibility": ["public", "continuation"],
+      "drop_empty": true
+    },
+    "full": {
+      "purpose": "Public packet with stable fields preserved for richer reads, but still without diagnostics.",
+      "include_visibility": ["public", "continuation"],
+      "drop_empty": false
+    },
+    "diagnostic": {
+      "purpose": "Developer/operator packet. Keep routing, lifecycle, build, and internal diagnostics.",
+      "include_visibility": ["public", "continuation", "diagnostic", "internal"],
+      "drop_empty": false
+    }
+  },
+  "field_visibility": {
+    "_internal": "internal",
+    "actual_metadata": "internal",
+    "agent_action": "diagnostic",
+    "canonical_surface": "diagnostic",
+    "expected_metadata": "internal",
+    "feedback_expected": "diagnostic",
+    "follow_up": "diagnostic",
+    "internal_tool": "internal",
+    "one_sentence_summary": "diagnostic",
+    "raw_tool_payload": "internal",
+    "route_candidates": "diagnostic",
+    "route_health_event": "internal",
+    "route_id": "internal",
+    "route_telemetry": "diagnostic",
+    "scorer": "diagnostic",
+    "scorer_trace": "internal",
+    "selected_route": "diagnostic",
+    "semantic_rules": "diagnostic",
+    "server_build": "diagnostic",
+    "simple_interface": "diagnostic",
+    "stage": "diagnostic",
+    "tool_lifecycle": "diagnostic",
+    "lease": "continuation",
+    "lease_id": "continuation",
+    "requested_ref": "continuation",
+    "data_ref": "continuation",
+    "work_id": "continuation",
+    "work_session": "continuation",
+    "work_token": "continuation"
+  },
+  "path_visibility": {
+    "agent_action.compact_result": "public",
+    "agent_action.recommended_next_call": "public",
+    "receipt.data_ref": "continuation",
+    "receipt.lease": "continuation",
+    "receipt.lease_id": "continuation",
+    "receipt.requested_ref": "continuation",
+    "receipt.work_id": "continuation",
+    "receipt.work_session": "continuation",
+    "receipt.work_token": "continuation",
+    "result.lease": "continuation",
+    "result.lease_id": "continuation",
+    "result.work_id": "continuation",
+    "result.work_session": "continuation",
+    "result.work_token": "continuation",
+    "tools.stage": "diagnostic",
+    "tools.feedback_expected": "diagnostic",
+    "tools.follow_up": "diagnostic"
+  },
   "public_fields": [
     {
       "name": "state",

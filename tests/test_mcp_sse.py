@@ -2332,19 +2332,30 @@ class TestMcpToolExecution:
             )
         )
 
-        assert help_result["simple_interface"]["tools"] == ["help", "state", "get", "submit"]
+        assert "simple_interface" not in help_result
+        assert "stage" not in help_result
+        assert "feedback_expected" not in help_result
+        assert "follow_up" not in help_result
         assert "forms" not in help_result
         assert help_result["tools"]["state"].startswith("Current workflow")
-        assert state_result["simple_interface"]["tools"] == ["help", "state", "get", "submit"]
+        assert "simple_interface" not in state_result
         assert any(form["form_id"] == "get_task_context" for form in state_result["forms"])
         assert get_result["receipt"]["data_ref"] == "task:alpha:task-123"
         assert get_result["result"]["title"] == "Use simple mailbox aliases."
-        assert submit_result["simple_interface"]["tool"] == "submit"
-        assert submit_result["simple_interface"]["form_id"] == "get_task_context"
+        assert "simple_interface" not in submit_result
         assert submit_result["result"]["title"] == "Use simple mailbox aliases."
-        assert put_result["simple_interface"]["tool"] == "put"
-        assert put_result["simple_interface"]["form_id"] == "get_task_context"
+        assert "simple_interface" not in put_result
         assert put_result["result"]["title"] == "Use simple mailbox aliases."
+
+        diagnostic_help = json.loads(
+            await mcp_sse._execute_tool(
+                "help",
+                {"project": "alpha", "diagnostic": True, "runtime_profile_id": "diagnostic_operator"},
+                "http://test",
+            )
+        )
+        assert diagnostic_help["simple_interface"]["tools"] == ["help", "state", "get", "submit"]
+        assert diagnostic_help["stage"]
 
     async def test_simple_get_compacts_task_payload_by_default_and_full_keeps_details(self, monkeypatch):
         seen_args: list[dict] = []
@@ -2393,7 +2404,7 @@ class TestMcpToolExecution:
         assert compact["result"]["latest_checkpoint"]["summary"] == "Implemented compact envelope."
         assert compact["result"]["recommended_first_tool"] == "submit"
         assert compact["result"]["recommended_next_call"]["form_id"] == "record_progress"
-        assert compact["result"]["recommended_next_call"]["internal_tool"] == "record_task_checkpoint"
+        assert "internal_tool" not in compact["result"]["recommended_next_call"]
         assert "available_layers" not in compact["result"]
         assert "token_budget" not in compact["result"]
         assert full["result"]["available_layers"]["task_history"]["available"] is True
@@ -2489,7 +2500,7 @@ class TestMcpToolExecution:
         result = json.loads(
             await mcp_sse._execute_tool(
                 "get",
-                {"project": "alpha", "query": "mailbox usability stored fact", "limit": 5},
+                {"project": "alpha", "query": "mailbox usability stored fact", "limit": 5, "diagnostic": True},
                 "http://test",
             )
         )
@@ -2518,7 +2529,7 @@ class TestMcpToolExecution:
         result = json.loads(
             await mcp_sse._execute_tool(
                 "get",
-                {"project": "alpha", "query": "search memories for TTL reclaim receipt"},
+                {"project": "alpha", "query": "search memories for TTL reclaim receipt", "diagnostic": True},
                 "http://test",
             )
         )
@@ -2552,7 +2563,7 @@ class TestMcpToolExecution:
 
         assert result["receipt"]["status"] == "accepted"
         assert result["receipt"]["resource_kind"] == "query"
-        assert result["simple_interface"]["mode"] == "query"
+        assert "simple_interface" not in result
         assert result["result"]["selected_facade"] == "project_work"
 
     async def test_simple_get_project_query_requires_project_scope(self, monkeypatch):
@@ -2575,7 +2586,7 @@ class TestMcpToolExecution:
 
         assert result["receipt"]["status"] == "needs_project"
         assert result["receipt"]["missing_fields"] == ["project"]
-        assert result["project"] == ""
+        assert "project" not in result
         assert "mnemoforge" not in json.dumps(result)
 
     async def test_simple_get_project_query_uses_session_project_scope(self, monkeypatch):
@@ -2697,15 +2708,10 @@ class TestMcpToolExecution:
         payload = result["result"]
         assert payload["selected_facade"] == "project_work"
         assert payload["items"][0]["task_id"] == "task-1"
-        assert payload["selected_route"] == {
-            "tool": "list_open_tasks",
-            "family": "project_knowledge",
-            "intent_type": "next_priority",
-            "confidence": 0.88,
-        }
+        assert "selected_route" not in payload
         assert "answer" not in payload
         assert "route_telemetry" not in payload
-        assert "route_candidates" not in payload["selected_route"]
+        assert "route_candidates" not in json.dumps(payload)
 
     async def test_simple_state_compacts_forms_by_default_and_full_keeps_schemas(self):
         compact = json.loads(
@@ -2784,8 +2790,7 @@ class TestMcpToolExecution:
 
         assert compact["details_available"] is True
         assert compact["receipt"]["status"] == "accepted"
-        assert compact["simple_interface"]["tool"] == "submit"
-        assert compact["simple_interface"]["form_id"] == "get_task_context"
+        assert "simple_interface" not in compact
         assert compact["result"]["task_id"] == "task-123"
         assert compact["result"]["title"] == "Compact put task."
         assert "available_layers" not in compact["result"]
