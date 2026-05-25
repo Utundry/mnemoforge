@@ -21,6 +21,7 @@ from app.services.mcp_simple_read_actions import (
     resolve_public_artifact_short_ref,
 )
 from app.services.public_ref_index import AmbiguousPublicRefError, is_short_public_id
+from app.services.route_pattern_store import get_route_pattern_store
 
 
 PostCallback = Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -162,6 +163,8 @@ async def build_mailbox_submit_packet(
         )
     if form_id == "set_feature_gate":
         return mailbox_set_feature_gate(**common)
+    if form_id == "route_feedback":
+        return mailbox_route_feedback(**common)
 
     return preflight
 
@@ -1095,6 +1098,107 @@ def mailbox_set_feature_gate(
         diagnostic=diagnostic,
     )
     packet["receipt"].update({"feature_id": gate["feature_id"], "scope": gate["scope"], "scope_id": gate["scope_id"], "enabled": gate["enabled"]})
+    return packet
+
+
+def mailbox_route_feedback(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+) -> dict[str, Any]:
+    facade = str(payload.get("facade") or "").strip()
+    pattern_id = str(payload.get("pattern_id") or "").strip()
+    query = str(payload.get("query") or "").strip()
+    if not pattern_id and not query:
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "needs_input",
+                "form_id": form.id,
+                "message": "route_feedback requires pattern_id or query.",
+                "missing_fields": ["pattern_id_or_query"],
+                "next_safe_action": "Submit route_feedback with a learned pattern_id, or facade plus the misrouted query.",
+            },
+        }
+
+    matched_route: dict[str, Any] | None = None
+    if not pattern_id:
+        matched_route = get_route_pattern_store().match(facade=facade, pattern=query)
+        pattern_id = str((matched_route or {}).get("pattern_id") or "").strip()
+    if not pattern_id:
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "not_found",
+                "form_id": form.id,
+                "message": "No active learned route pattern matched the feedback.",
+                "next_safe_action": "Use diagnostic route telemetry to capture pattern_id, or retry with the exact misrouted query.",
+            },
+        }
+
+    disable = bool(payload.get("disable", True))
+    metadata = _compact(
+        {
+            "project": project,
+            "facade": facade,
+            "query": query,
+            "expected_tool": str(payload.get("expected_tool") or "").strip(),
+            "expected_intent_type": str(payload.get("expected_intent_type") or "").strip(),
+            "actual_tool": str(payload.get("actual_tool") or (matched_route or {}).get("tool") or "").strip(),
+            "actual_intent_type": str(payload.get("actual_intent_type") or (matched_route or {}).get("intent_type") or "").strip(),
+            "updated_by": mailbox_actor(payload),
+        }
+    )
+    disabled = False
+    if disable:
+        disabled = get_route_pattern_store().disable_pattern(
+            pattern_id,
+            reason=str(payload.get("reason") or "operator_negative_feedback").strip() or "operator_negative_feedback",
+            metadata=metadata,
+        )
+        if not disabled:
+            return {
+                "state": state,
+                "project": project,
+                "receipt": {
+                    "status": "not_found",
+                    "form_id": form.id,
+                    "pattern_id": pattern_id,
+                    "message": "Learned route pattern was already disabled or does not exist.",
+                    "next_safe_action": "Request diagnostic state or retry with a current active pattern_id.",
+                },
+            }
+
+    packet = build_mailbox_mutation_packet(
+        form=form,
+        payload=payload,
+        state=state,
+        project=project,
+        actual_metadata={
+            "result_kind": "route_feedback_recorded",
+            "mutation": True,
+            "internal_tool": "route_pattern_store.disable_pattern",
+            "route_id": "mailbox.route_feedback.v1",
+        },
+        result={"id": pattern_id, "artifact_key": f"route_pattern:{facade}:{pattern_id}"},
+        runtime_profile_id=runtime_profile_id,
+        diagnostic=diagnostic,
+    )
+    packet["receipt"].update(
+        {
+            "pattern_id": pattern_id,
+            "feedback_action": "disabled" if disabled else "recorded",
+            "facade": facade,
+        }
+    )
+    packet["next_safe_action"] = "Retry the original user request; the stale learned route pattern is no longer active."
+    packet["receipt"]["next_safe_action"] = packet["next_safe_action"]
     return packet
 
 

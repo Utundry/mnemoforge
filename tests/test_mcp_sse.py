@@ -1912,6 +1912,52 @@ class TestMcpToolExecution:
         assert data["receipt"]["scope_id"] == "alpha"
         assert data["receipt"]["enabled"] is False
 
+    async def test_mailbox_submit_route_feedback_disables_learned_pattern(self, monkeypatch):
+        from app.services import mcp_mailbox_actions
+
+        calls: list[tuple[str, dict]] = []
+
+        class FakeRoutePatternStore:
+            def match(self, *, facade: str, pattern: str, allowed_intent_types=None, semantic_threshold: float = 0.6):
+                calls.append(("match", {"facade": facade, "pattern": pattern}))
+                return {
+                    "pattern_id": "learned-route-1",
+                    "tool": "project_work",
+                    "intent_type": "next_priority",
+                }
+
+            def disable_pattern(self, pattern_id: str, *, reason: str, metadata: dict | None = None):
+                calls.append(("disable", {"pattern_id": pattern_id, "reason": reason, "metadata": metadata or {}}))
+                return True
+
+        monkeypatch.setattr(mcp_mailbox_actions, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "operator_review",
+                "form_id": "route_feedback",
+                "payload": {
+                    "project": "alpha",
+                    "facade": "ask_project",
+                    "query": "find memory with content usability report",
+                    "expected_tool": "memory_search",
+                    "actual_tool": "project_work",
+                    "reason": "Observed read query routed to work facade.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["pattern_id"] == "learned-route-1"
+        assert data["receipt"]["feedback_action"] == "disabled"
+        assert calls[0][0] == "match"
+        assert calls[1][0] == "disable"
+        assert calls[1][1]["metadata"]["expected_tool"] == "memory_search"
+
     async def test_mailbox_submit_record_progress_without_task_records_memory(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
 

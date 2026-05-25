@@ -1,0 +1,50 @@
+{
+  "id": "route_feedback",
+  "title": "Record route feedback",
+  "purpose": "Operator diagnostic form for invalidating a stale learned route pattern without exposing route internals to normal weak-model packets.",
+  "states": ["operator_review"],
+  "mode": "transition",
+  "required_fields": ["facade", "reason"],
+  "optional_fields": [
+    "pattern_id",
+    "query",
+    "expected_tool",
+    "expected_intent_type",
+    "actual_tool",
+    "actual_intent_type",
+    "disable",
+    "updated_by"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "facade": {"type": "string"},
+      "reason": {"type": "string"},
+      "pattern_id": {"type": "string"},
+      "query": {"type": "string"},
+      "expected_tool": {"type": "string"},
+      "expected_intent_type": {"type": "string"},
+      "actual_tool": {"type": "string"},
+      "actual_intent_type": {"type": "string"},
+      "disable": {"type": "boolean", "default": true},
+      "updated_by": {"type": "string", "default": "codex"}
+    },
+    "required": ["facade", "reason"]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "none"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["set_feature_gate"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "route_feedback_recorded",
+      "mutation": true
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "pattern_id"]
+  },
+  "public_hint": "Use only in operator_review after a concrete misroute is observed; normal agents should not need this form."
+}

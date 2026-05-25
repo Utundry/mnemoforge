@@ -728,6 +728,17 @@ def test_set_feature_gate_form_is_public_mailbox_control() -> None:
     assert "postconditions" not in form
 
 
+def test_route_feedback_form_is_operator_review_only() -> None:
+    planning = build_mailbox_state_packet(state="planning", project="mnemoforge", detail="full")
+    operator_review = build_mailbox_state_packet(state="operator_review", project="mnemoforge")
+
+    assert not any(form["form_id"] == "route_feedback" for form in planning["forms"])
+    form = next(item for item in operator_review["forms"] if item["form_id"] == "route_feedback")
+    assert form["mode"] == "transition"
+    assert {"facade", "reason"} <= set(form["required_fields"])
+    assert "postconditions" not in form
+
+
 def test_mailbox_state_internal_diagnostics_include_runtime_feature_gate_overrides() -> None:
     from app.services.mcp_feature_gates import get_mcp_feature_gate_store
 
