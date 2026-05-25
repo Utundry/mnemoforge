@@ -453,6 +453,52 @@ def test_classify_memory_payload_treats_source_conversation_as_raw_dialogue():
     assert result["exclude_from_learning"] is True
 
 
+def test_classify_memory_payload_flags_stale_public_tool_guidance():
+    result = classify_memory_payload(
+        {
+            "category": "context",
+            "source": "agent-note",
+            "tags": ["project:mnemoforge"],
+            "content": "To save facts, use the memory_store tool directly before continuing.",
+        }
+    )
+
+    assert result["dataset_class"] == "stale_guidance"
+    assert result["recommended_action"] == "exclude-from-learning"
+    assert result["exclude_from_learning"] is True
+    assert any("memory_store" in reason for reason in result["reasons"])
+
+
+def test_classify_memory_payload_keeps_historical_improvement_about_old_tool():
+    result = classify_memory_payload(
+        {
+            "category": "improvement",
+            "source": "improvement_created",
+            "tags": ["entity:improvement", "project:mnemoforge"],
+            "content": "Old report: memory_store was missing from the simplified API.",
+        }
+    )
+
+    assert result["dataset_class"] == "canonical_knowledge"
+    assert result["recommended_action"] == "keep"
+    assert result["exclude_from_learning"] is False
+
+
+def test_classify_memory_payload_flags_unknown_mailbox_form_guidance():
+    result = classify_memory_payload(
+        {
+            "category": "reference",
+            "source": "agent-guidance",
+            "tags": ["project:mnemoforge"],
+            "content": "Submit form_id=obsolete_checkpoint_draft to reject the draft.",
+        }
+    )
+
+    assert result["dataset_class"] == "stale_guidance"
+    assert result["recommended_action"] == "exclude-from-learning"
+    assert any("unknown_mailbox_form_guidance:obsolete_checkpoint_draft" in reason for reason in result["reasons"])
+
+
 @pytest.mark.asyncio
 async def test_data_hygiene_audit_falls_back_to_memory_store_when_qdrant_scroll_fails(client, monkeypatch):
     from app.dependencies import get_qdrant

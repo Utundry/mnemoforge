@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -179,6 +180,13 @@ DATASET_POLICY_REGISTRY: dict[str, dict[str, Any]] = {
         "manual_review_required": True,
         "description": "Synthetic and test data should leave live stores, but only after explicit review.",
     },
+    "stale_guidance": {
+        "retention": "exclude-from-learning",
+        "learning_mode": "blocked",
+        "auto_remediate": True,
+        "manual_review_required": False,
+        "description": "Outdated operational guidance should not feed agent learning or hot retrieval.",
+    },
 }
 
 
@@ -210,6 +218,70 @@ def _has_synthetic_markers(*values: Any) -> tuple[bool, list[str]]:
             elif any(token in text for token in ("pytest", "synthetic", "fixture", "mock", "demo dataset", "fake data")):
                 reasons.append("synthetic_text_marker")
     return bool(reasons), reasons
+
+
+def _known_public_tools() -> set[str]:
+    try:
+        from app.services.mcp_workflow_specs import load_tool_contract_catalog_spec
+
+        catalog = load_tool_contract_catalog_spec("public_surface")
+        return {str(tool.name or "").strip() for tool in catalog.tools if str(tool.name or "").strip()}
+    except Exception:
+        return {"help", "state", "get", "submit", "put"}
+
+
+def _known_mailbox_forms() -> set[str]:
+    try:
+        from app.services.mcp_workflow_specs import list_mailbox_form_specs
+
+        return {str(form.id or "").strip() for form in list_mailbox_form_specs() if str(form.id or "").strip()}
+    except Exception:
+        return set()
+
+
+def _stale_guidance_markers(payload: dict[str, Any]) -> list[str]:
+    content = str(payload.get("content") or "")
+    category = str(payload.get("category") or "").strip().lower()
+    source = str(payload.get("source") or "").strip().lower()
+    tags = [str(tag).strip().lower() for tag in (payload.get("tags") or [])]
+    haystack = " ".join([content, category, source, " ".join(tags)]).lower()
+    if not haystack.strip():
+        return []
+    if any(tag in {"entity:task", "entity:task_change", "entity:improvement", "entity:law"} for tag in tags):
+        return []
+    if category in _CANONICAL_CATEGORIES or category in _EVOLUTIONARY_CATEGORIES or category.startswith("project_"):
+        return []
+
+    reasons: list[str] = []
+    obsolete_tool_replacements = {
+        "memory_store": "submit:store_memory",
+        "record_work_result": "submit:record_progress",
+        "approve_checkpoint_draft": "submit:record_progress",
+        "reject_checkpoint_draft": "submit:record_progress",
+    }
+    current_tools = _known_public_tools()
+    for tool_name, replacement in obsolete_tool_replacements.items():
+        if tool_name in current_tools:
+            continue
+        if not re.search(rf"\b{re.escape(tool_name)}\b", haystack):
+            continue
+        commandish = re.search(
+            rf"\b(use|call|invoke|tool|route|mcp|api|submit|record|store|write|create)\b[^.\n]{{0,120}}\b{re.escape(tool_name)}\b",
+            haystack,
+        ) or re.search(
+            rf"\b{re.escape(tool_name)}\b[^.\n]{{0,120}}\b(use|call|invoke|tool|route|mcp|api|submit|record|store|write|create)\b",
+            haystack,
+        )
+        if commandish:
+            reasons.append(f"stale_tool_guidance:{tool_name}->replacement:{replacement}")
+
+    known_forms = _known_mailbox_forms()
+    form_mentions = set(re.findall(r"\bform[_ -]?id\s*[:=]\s*['\"]?([a-z][a-z0-9_]{2,})", haystack))
+    form_mentions.update(re.findall(r"\bsubmit\s*\(\s*['\"]?([a-z][a-z0-9_]{2,})", haystack))
+    for form_id in sorted(form_mentions):
+        if form_id not in known_forms and form_id not in current_tools:
+            reasons.append(f"unknown_mailbox_form_guidance:{form_id}")
+    return reasons
 
 
 def classify_memory_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -249,6 +321,17 @@ def classify_memory_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "recommended_action": "archive",
             "exclude_from_learning": True,
             "confidence": 0.8,
+            "reasons": reasons,
+        }
+
+    stale_guidance_reasons = _stale_guidance_markers(payload)
+    if stale_guidance_reasons:
+        reasons.extend(stale_guidance_reasons)
+        return {
+            "dataset_class": "stale_guidance",
+            "recommended_action": "exclude-from-learning",
+            "exclude_from_learning": True,
+            "confidence": 0.88,
             "reasons": reasons,
         }
 
