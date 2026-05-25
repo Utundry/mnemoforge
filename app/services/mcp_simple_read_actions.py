@@ -26,6 +26,7 @@ TaskIdDetector = Callable[[str], Any]
 
 @dataclass(frozen=True)
 class SimpleReadDependencies:
+    get: GetCallback
     post: PostCallback
     query_project_expert: ProjectExpertQueryCallback
     extract_task_id_like: TaskIdDetector
@@ -361,6 +362,74 @@ async def build_simple_get_query_response(
     project = str(args.get("project") or args.get("project_id") or "").strip()
     limit = int(args.get("limit") or 10)
     state = str(args.get("state") or "planning")
+    artifact_list_type = explicit_artifact_list_type(query)
+    if artifact_list_type and not project:
+        return {
+            "state": state,
+            "project": "",
+            "receipt": {
+                "status": "needs_project",
+                "message": "Project-scoped artifact list query requires an explicit project or session project.",
+                "resource_kind": "artifact_list",
+                "missing_fields": ["project"],
+                "next_safe_action": "Call get again with project set to the target project.",
+            },
+            "simple_interface": {"tool": "get", "mode": "query", "route": "artifact_list"},
+            "next_safe_action": "Call get again with project set to the target project.",
+            "details_available": True,
+        }
+    if artifact_list_type and project:
+        status = artifact_list_status_filter(query)
+        type_query = "" if artifact_list_type == "all" else f"&type={quote(artifact_list_type, safe='')}"
+        status_query = f"&status={quote(status, safe='')}" if status else ""
+        data = await dependencies.get(
+            api_base,
+            f"/artifacts?project={quote(project, safe='')}{status_query}&limit={limit}{type_query}",
+        )
+        if not isinstance(data, dict):
+            data = await dependencies.query_project_expert(
+                api_base,
+                {
+                    "project": project,
+                    "question": query,
+                    "detail": str(args.get("detail") or "compact"),
+                    "limit": limit,
+                    "client_profile": str(args.get("client_profile") or "agent"),
+                    "response_format": _response_format(args),
+                    "artifact_type": artifact_list_type,
+                },
+                session_id,
+            )
+            return {
+                "state": state,
+                "project": project,
+                "receipt": {
+                    "status": "accepted",
+                    "message": "Natural artifact list query resolved through the project expert fallback.",
+                    "resource_kind": "artifact_list",
+                    "next_safe_action": "Use get with a returned ref for more detail.",
+                },
+                "result": compact_project_expert_result(data, args),
+                "simple_interface": {"tool": "get", "mode": "query", "route": "artifact_list_fallback"},
+                "next_safe_action": "Use get with a returned ref for more detail.",
+                "details_available": True,
+            }
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Natural artifact list query resolved through artifact search.",
+                "resource_kind": "artifact_list",
+                "artifact_type": artifact_list_type,
+                "count": len(data.get("items") or []) if isinstance(data.get("items"), list) else 0,
+                "next_safe_action": "Use get with a returned artifact ref for more detail.",
+            },
+            "result": compact_artifact_list_results(data, limit=limit),
+            "simple_interface": {"tool": "get", "mode": "query", "route": "artifact_list"},
+            "next_safe_action": "Use get with a returned artifact ref for more detail.",
+            "details_available": True,
+        }
     uses_project_expert = query_uses_project_expert(query, extract_task_id_like=dependencies.extract_task_id_like)
     if uses_project_expert and not project:
         return {
@@ -440,6 +509,31 @@ def query_uses_project_expert(query: str, *, extract_task_id_like: TaskIdDetecto
     return any(term in text for term in _PROJECT_QUERY_TERMS)
 
 
+def explicit_artifact_list_type(query: str) -> str:
+    text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
+    if not any(term in text for term in _READ_LOOKUP_TERMS):
+        return ""
+    asks_improvements = any(term in text for term in _IMPROVEMENT_QUERY_TERMS)
+    asks_tasks = any(term in text for term in _TASK_QUERY_TERMS)
+    asks_work_items = any(term in text for term in ("work items", "work item", "artifacts", "artifact"))
+    if asks_improvements and asks_tasks:
+        return "all"
+    if asks_improvements:
+        return "improvement"
+    if asks_work_items:
+        return "all"
+    return ""
+
+
+def artifact_list_status_filter(query: str) -> str:
+    text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
+    if any(term in text for term in ("open", "active", "unresolved", "pending", "backlog", "\u043e\u0442\u043a\u0440\u044b\u0442", "\u0430\u043a\u0442\u0438\u0432", "\u043d\u0435\u0440\u0435\u0448")):
+        return "open"
+    if any(term in text for term in ("done", "closed", "resolved", "archived", "\u0437\u0430\u043a\u0440\u044b\u0442", "\u0440\u0435\u0448\u0435\u043d")):
+        return "done"
+    return ""
+
+
 def explicit_memory_lookup(text: str) -> bool:
     return any(
         marker in str(text or "")
@@ -478,6 +572,29 @@ def compact_memory_search_results(results: Any) -> list[dict[str, Any]]:
             }
         )
     return compact
+
+
+def compact_artifact_list_results(data: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    compact_items: list[dict[str, Any]] = []
+    for item in items[:limit]:
+        if not isinstance(item, dict):
+            continue
+        compact = {
+            "artifact_key": item.get("artifact_key"),
+            "type": item.get("type"),
+            "id": item.get("id") or item.get("task_id"),
+            "title": item.get("title"),
+            "status": item.get("status"),
+            "task_id": item.get("task_id"),
+            "linked_artifact_key": item.get("linked_artifact_key"),
+            "linked_status": item.get("linked_status"),
+        }
+        compact_items.append({key: value for key, value in compact.items() if value not in (None, "", [])})
+    return {
+        "items": compact_items,
+        "count": len(compact_items),
+    }
 
 
 def compact_project_expert_result(data: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
@@ -633,4 +750,45 @@ _PROJECT_QUERY_TERMS = (
     "\u043f\u0440\u0430\u0432\u0438\u043b",
     "\u0437\u0430\u043a\u043e\u043d",
     "\u043e\u0433\u0440\u0430\u043d\u0438\u0447",
+)
+
+
+_READ_LOOKUP_TERMS = (
+    "find",
+    "search",
+    "show",
+    "list",
+    "lookup",
+    "look up",
+    "read",
+    "get",
+    "details",
+    "detail",
+    "\u0432\u044b\u0432\u0435\u0434\u0438",
+    "\u043f\u043e\u043a\u0430\u0436\u0438",
+    "\u043d\u0430\u0439\u0434\u0438",
+    "\u043f\u0440\u043e\u0447\u0438\u0442\u0430\u0439",
+    "\u0434\u0435\u0442\u0430\u043b\u0438",
+)
+
+
+_IMPROVEMENT_QUERY_TERMS = (
+    "improvement",
+    "improvements",
+    "backlog",
+    "idea",
+    "ideas",
+    "proposal",
+    "proposals",
+    "\u0443\u043b\u0443\u0447\u0448",
+    "\u0438\u0434\u0435\u0438",
+    "\u0431\u044d\u043a\u043b\u043e\u0433",
+)
+
+
+_TASK_QUERY_TERMS = (
+    "task",
+    "tasks",
+    "\u0437\u0430\u0434\u0430\u0447",
+    "\u0437\u0430\u0434\u0430\u0447\u0438",
 )

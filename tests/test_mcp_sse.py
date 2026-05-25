@@ -2538,6 +2538,77 @@ class TestMcpToolExecution:
         assert result["simple_interface"]["route"] == "memory_search"
         assert posted[0][1]["query"] == "search memories for TTL reclaim receipt"
 
+    async def test_simple_get_query_lists_improvements_via_artifact_surface(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {
+                "items": [
+                    {
+                        "artifact_key": "improvement:alpha:imp-1",
+                        "type": "improvement",
+                        "id": "imp-1",
+                        "title": "Improve response profile",
+                        "status": "open",
+                        "linked_artifact_key": "task:alpha:imp-1",
+                        "linked_status": "open",
+                    }
+                ]
+            }
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("explicit improvement list should not route through ask_project")
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "list recent improvements", "limit": 5},
+                "http://test",
+            )
+        )
+
+        assert seen["path"] == "/artifacts?project=alpha&limit=5&type=improvement"
+        assert result["receipt"]["resource_kind"] == "artifact_list"
+        assert result["receipt"]["artifact_type"] == "improvement"
+        assert result["result"]["items"][0]["artifact_key"] == "improvement:alpha:imp-1"
+        assert result["result"]["items"][0]["type"] == "improvement"
+        assert "simple_interface" not in result
+
+    async def test_simple_get_query_lists_mixed_tasks_and_improvements(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {
+                "items": [
+                    {"artifact_key": "task:alpha:task-1", "type": "task", "task_id": "task-1", "title": "Task", "status": "open"},
+                    {"artifact_key": "improvement:alpha:imp-1", "type": "improvement", "id": "imp-1", "title": "Improvement", "status": "open"},
+                ]
+            }
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("mixed work item list should use the artifact surface directly")
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "list tasks and improvements", "limit": 5},
+                "http://test",
+            )
+        )
+
+        assert seen["path"] == "/artifacts?project=alpha&limit=5"
+        assert result["receipt"]["resource_kind"] == "artifact_list"
+        assert result["receipt"]["artifact_type"] == "all"
+        assert [item["type"] for item in result["result"]["items"]] == ["task", "improvement"]
+
     async def test_simple_get_query_keeps_project_questions_on_project_expert(self, monkeypatch):
         async def fake_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
             return {

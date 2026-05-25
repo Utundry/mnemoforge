@@ -2186,6 +2186,7 @@ def _simple_surface_dependencies() -> SimpleSurfaceDependencies:
             args=query_args,
             session_id=sid,
             dependencies=SimpleReadDependencies(
+                get=_get,
                 post=_post,
                 query_project_expert=lambda expert_base, expert_args, expert_sid: _build_ask_project_payload(
                     expert_base,
