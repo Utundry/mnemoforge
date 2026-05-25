@@ -17,7 +17,7 @@ Agent:
 **One command turns a chat into a working system.**
 
 
-## ⚠️ Work in Progress
+## Work In Progress
 
 This project is under active architectural evolution.
 
@@ -32,7 +32,19 @@ Because of this:
 
 Real-world bug reports and strange behaviors are extremely valuable.
 
-If something breaks — please open an issue.
+If something breaks, please open an issue.
+
+### Note From The Maintainer
+
+I am sorry to users who downloaded an earlier public image that did not work
+reliably. The project was moving fast, and a broken version reached users before
+the public runtime path was stable enough. Thank you for trying Mnemoforge at
+that stage, and thank you for the feedback that helped expose the real
+integration problems.
+
+The current public flow is now tested through Docker-backed verification and
+live MCP smoke checks before publishing, but Mnemoforge is still alpha software.
+Please treat new images as active releases and report anything that breaks.
 
 ## Quick Demo
 
@@ -80,6 +92,47 @@ Mnemoforge focuses on the deeper problem: preserving the agent's ability to
 continue execution. It keeps task state, decisions, checkpoints, governed
 knowledge, and project-specific operating rules available through MCP so an
 agent can resume work instead of starting from zero.
+
+## Why Mnemoforge? A Field Note From An Agent
+
+The note below is a real opinion written by an LLM agent after using
+Mnemoforge for several days on the `ui_avt` project. It is included as a field
+report, not as a benchmark or product claim. It has been lightly formatted for
+README readability.
+
+> Token Economy: Mnemoforge in agent development.
+>
+> Yes, it saves context tokens. In my usage, the saving was roughly 3-5x.
+>
+> The cost is real: MCP tool descriptions, routing metadata, and oversized
+> context packets can consume tokens. But the savings were larger. Instead of
+> rereading project docs, grepping files, reconstructing rules, and rediscovering
+> the latest task state, I could ask Mnemoforge for project context, laws,
+> checkpoints, stored facts, and active tasks.
+>
+> The biggest savings showed up at session start, during search, and after
+> interruption. A compact `get(query="context")` or task lookup replaced a much
+> larger manual recovery process.
+>
+> The important part is not only token cost. Mnemoforge changes how an agent
+> works. Without it, I have to reconstruct what happened from the repository,
+> chat history, and user reminders. With it, I can recover operational state:
+> what task exists, what was verified, what rules apply, what the next safe
+> action is, and which facts were already discovered.
+>
+> The strongest practical feature is continuity. After reset, context loss, or
+> switching models, the next agent can continue from a checkpoint instead of
+> starting from zero.
+>
+> The response format matters. When responses were noisy, much of the value was
+> buried under telemetry. After noise reduction, the useful-to-noise ratio became
+> much better: status, result data, next safe action, work tokens, leases, and
+> work sessions remained visible, while internal routing details stopped
+> dominating the answer.
+>
+> My conclusion after real use: Mnemoforge is not just memory. It is an
+> operational runtime for agents. It preserves task state, project laws,
+> checkpoints, verified facts, and next actions across sessions.
 
 ## Evolving Task Definition
 
@@ -152,74 +205,6 @@ This is the point of operational continuity: Mnemoforge does not require every
 model to be equally strong. Even smaller local models can participate
 effectively in real engineering workflows when task state, tools, checkpoints,
 and verification evidence are preserved.
-
-## Example: Controlled Routing With A Local Model
-
-![Local SLM following a constrained Mnemoforge routing workflow](docs/assets/controlled-routing-local-model.png)
-
-A small local SLM connected through LM Studio was asked to operate on a real
-Mnemoforge project through MCP, under strict read-only constraints.
-
-```text
-Task:
-- resolve a partial task id: 382e7306;
-- handle an ambiguous request: can this repo be used yet;
-- avoid mutating actions;
-- inspect routing behavior and learned-route cache signals.
-
-Observed result:
-- the model respected the operational constraints;
-- the partial id was routed toward task artifact resolution;
-- the ambiguous request was handled through the project-context facade instead
-  of free-form guessing;
-- the model attempted to reason about route telemetry and learned routing;
-- the remaining gap was clear: weaker models need compact diagnostic fields
-  rather than broad JSON or explanatory output.
-```
-
-Mnemoforge is not just memory for agents. It is an operational environment that
-makes weaker models safer and more useful by providing routing, constraints,
-continuity, and verification state.
-
-## Example: Local Model Compatibility Mode
-
-The controlled-routing test exposed a practical MCP integration problem: some
-local clients and smaller models do not reliably inspect nested raw tool
-results. The model was not the root cause, and the routing was not broken. The
-presentation layer was too heavy for that client/model pair.
-
-Mnemoforge facades can return a compact diagnostic block instead of nested JSON:
-
-```text
-project_context(
-  project="mnemoforge",
-  intent="382e7306",
-  diagnostic=true
-)
-```
-
-The response is plain text with the operational fields an agent needs:
-
-```text
-Mnemoforge route diagnostic
-facade=project_context
-project=mnemoforge
-intent=382e7306
-route.tool=list_artifacts
-route.intent_type=task_lookup
-scorer.backend_used=lexical
-scorer.llm_attempted=false
-telemetry.scorer_backend=lexical
-warnings=Partial task_id detected; resolve the exact task_id...
-first_task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef
-next_safe_action=Continue from the executed route result.
-```
-
-This mode is available on the thematic facades (`project_work`,
-`project_context`, `project_verify`, and `project_capture`) through
-`diagnostic=true` or `response_format="diagnostic"`. It lets local models see
-routes, telemetry, warnings, useful IDs, and the next safe action without
-having to parse deep JSON.
 
 ## Example: Small Local Model Retrieving Project State
 
@@ -426,27 +411,15 @@ required `question` parameter, then recovered by sending a concrete project
 question through the facade. Later, when asked to create a task, it routed the
 request through `project_work`.
 
-Mnemoforge returned a guarded route plan instead of silently mutating state:
-
-```text
-status=planned
-action_status=needs_confirmation
-selected_route.tool=record_work_result
-selected_route.intent_type=create_task
-guardrail_triggered=true
-executed=false
-next_safe_action=Review the selected route and execute the submit_payload if it
-matches the operator intent.
-```
-
-That is the important part. Even when the model was weak, the system kept the
-mutation behind an explicit confirmation gate.
+Mnemoforge returned a guarded plan instead of silently mutating state. That is
+the important part: even when the model was weak, the system kept the mutation
+behind an explicit confirmation gate.
 
 The same session also showed the current boundary: after the guarded response,
 the model claimed that the task had been created even though `executed=false`.
 That is useful evidence, not just a failure. It shows why weak-model workflows
-need compact diagnostics, explicit confirmation language, and stricter
-memory/context checks before implementation or mutation.
+need clear confirmation language and stricter memory/context checks before
+implementation or mutation.
 
 The clean-build run demonstrated three things at once:
 
