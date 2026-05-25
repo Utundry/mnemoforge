@@ -239,6 +239,16 @@ def _known_mailbox_forms() -> set[str]:
         return set()
 
 
+def _governed_payload_class(category: str, source: str, tags: list[str]) -> str:
+    if category in _CANONICAL_CATEGORIES or source in {"improvement", "improvement_created"}:
+        return "canonical_knowledge"
+    if any(tag in {"entity:task", "entity:task_change", "entity:improvement", "entity:law"} for tag in tags):
+        return "evolutionary_knowledge"
+    if category in _EVOLUTIONARY_CATEGORIES or category.startswith("project_"):
+        return "evolutionary_knowledge"
+    return ""
+
+
 def _stale_guidance_markers(payload: dict[str, Any]) -> list[str]:
     content = str(payload.get("content") or "")
     category = str(payload.get("category") or "").strip().lower()
@@ -247,9 +257,7 @@ def _stale_guidance_markers(payload: dict[str, Any]) -> list[str]:
     haystack = " ".join([content, category, source, " ".join(tags)]).lower()
     if not haystack.strip():
         return []
-    if any(tag in {"entity:task", "entity:task_change", "entity:improvement", "entity:law"} for tag in tags):
-        return []
-    if category in _CANONICAL_CATEGORIES or category in _EVOLUTIONARY_CATEGORIES or category.startswith("project_"):
+    if _governed_payload_class(category, source, tags):
         return []
 
     reasons: list[str] = []
@@ -295,6 +303,24 @@ def classify_memory_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     synthetic, synthetic_reasons = _has_synthetic_markers(tags, source, project, content, meta.get("origin"), meta.get("environment"))
     if synthetic:
+        governed_class = _governed_payload_class(category, source, tags)
+        if governed_class:
+            reasons.extend(["synthetic_marker_ignored_for_governed_record", *synthetic_reasons])
+            if governed_class == "canonical_knowledge":
+                return {
+                    "dataset_class": "canonical_knowledge",
+                    "recommended_action": "keep",
+                    "exclude_from_learning": False,
+                    "confidence": 0.9,
+                    "reasons": reasons,
+                }
+            return {
+                "dataset_class": "evolutionary_knowledge",
+                "recommended_action": "keep",
+                "exclude_from_learning": False,
+                "confidence": 0.82,
+                "reasons": reasons,
+            }
         reasons.extend(synthetic_reasons)
         return {
             "dataset_class": "synthetic_test",
@@ -692,6 +718,7 @@ class DataHygieneStore:
         *,
         recommended_action: str,
         store_name: str | None = None,
+        dataset_class: str | None = None,
         limit: int = 500,
     ) -> list[dict[str, Any]]:
         sql = """
@@ -702,6 +729,9 @@ class DataHygieneStore:
         if store_name:
             sql += " AND store_name = ?"
             params.append(store_name)
+        if dataset_class:
+            sql += " AND dataset_class = ?"
+            params.append(dataset_class)
         sql += " ORDER BY confidence DESC, last_seen_at DESC LIMIT ?"
         params.append(limit)
         with self._lock:
@@ -720,6 +750,42 @@ class DataHygieneStore:
                 (finding_id,),
             ).fetchone()
         return self._decode_finding(row) if row else None
+
+    def resolve_open_findings_for_record(
+        self,
+        *,
+        store_name: str,
+        record_locator: str,
+        reason: str,
+    ) -> int:
+        now = time.time()
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT finding_id, reasons_json, details_json
+                FROM hygiene_findings
+                WHERE store_name = ? AND record_locator = ? AND status = 'open'
+                """,
+                (store_name, record_locator),
+            ).fetchall()
+            updated = 0
+            for row in rows:
+                reasons = _loads_json(row["reasons_json"], [])
+                if reason not in reasons:
+                    reasons.append(reason)
+                details = _loads_json(row["details_json"], {})
+                details["resolved_by"] = reason
+                self._conn.execute(
+                    """
+                    UPDATE hygiene_findings
+                    SET status = 'resolved', last_seen_at = ?, reasons_json = ?, details_json = ?
+                    WHERE finding_id = ?
+                    """,
+                    (now, json.dumps(reasons), json.dumps(details), row["finding_id"]),
+                )
+                updated += 1
+            self._conn.commit()
+        return updated
 
     def list_remediations(
         self,
@@ -858,6 +924,41 @@ class DataHygieneStore:
             ).fetchone()
         return self._decode_remediation(updated) if updated else None
 
+    def patch_finding_details(
+        self,
+        *,
+        finding_id: str,
+        patch: dict[str, Any],
+        append_reasons: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT details_json, reasons_json FROM hygiene_findings WHERE finding_id = ?",
+                (finding_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            details = _loads_json(row["details_json"], {})
+            details.update(patch)
+            reasons = _loads_json(row["reasons_json"], [])
+            for reason in append_reasons or []:
+                if reason not in reasons:
+                    reasons.append(reason)
+            self._conn.execute(
+                """
+                UPDATE hygiene_findings
+                SET details_json = ?, reasons_json = ?, last_seen_at = ?
+                WHERE finding_id = ?
+                """,
+                (json.dumps(details), json.dumps(reasons), time.time(), finding_id),
+            )
+            self._conn.commit()
+            updated = self._conn.execute(
+                "SELECT * FROM hygiene_findings WHERE finding_id = ?",
+                (finding_id,),
+            ).fetchone()
+        return self._decode_finding(updated) if updated else None
+
     def overview(self) -> dict[str, Any]:
         latest = self.latest_audit()
         findings = self.list_findings(limit=1000)
@@ -935,6 +1036,7 @@ async def run_data_hygiene_audit(
     scanned_memories = 0
     scanned_events = 0
     findings_count = 0
+    resolved_stale_findings = 0
     memory_scan_source = "qdrant"
     qdrant_scan_error = ""
 
@@ -1082,6 +1184,12 @@ async def run_data_hygiene_audit(
                         },
                     )
                     findings_count += 1
+                else:
+                    resolved_stale_findings += store.resolve_open_findings_for_record(
+                        store_name="qdrant_memories",
+                        record_locator=str(point.id),
+                        reason=f"current_classification_keep:{result['dataset_class']}",
+                    )
             remaining -= len(point_ids)
             if next_offset is None:
                 qdrant_wrapped = True
@@ -1123,6 +1231,13 @@ async def run_data_hygiene_audit(
                     },
                 )
                 findings_count += 1
+            else:
+                locator = str(row.get("memory_id") or "")
+                resolved_stale_findings += store.resolve_open_findings_for_record(
+                    store_name="qdrant_memories",
+                    record_locator=locator,
+                    reason=f"current_classification_keep:{result['dataset_class']}",
+                )
 
     events = await get_learning_store().list_events(
         limit=event_limit,
@@ -1156,6 +1271,12 @@ async def run_data_hygiene_audit(
                 },
             )
             findings_count += 1
+        else:
+            resolved_stale_findings += store.resolve_open_findings_for_record(
+                store_name="learning_events",
+                record_locator=str(event["id"]),
+                reason=f"current_classification_keep:{result['dataset_class']}",
+            )
     if events:
         oldest_event = events[-1]
         next_event_before_ts = float(oldest_event.get("ts") or 0.0)
@@ -1175,6 +1296,7 @@ async def run_data_hygiene_audit(
         "scanned_memories": scanned_memories,
         "scanned_events": scanned_events,
         "findings_count": findings_count,
+        "resolved_stale_findings": resolved_stale_findings,
         "memory_scan_source": memory_scan_source,
         "qdrant_scan_start_offset": qdrant_offset,
         "qdrant_scan_next_offset": offset if not qdrant_wrapped else None,
@@ -1229,6 +1351,7 @@ async def queue_hygiene_remediation(
     requested_by: str,
     queue,
     store_name: str | None = None,
+    dataset_class: str | None = None,
     limit: int = 500,
 ) -> dict[str, Any]:
     import uuid
@@ -1240,15 +1363,18 @@ async def queue_hygiene_remediation(
     findings = store.list_open_findings_for_action(
         recommended_action=recommended_action,
         store_name=store_name,
+        dataset_class=dataset_class,
         limit=limit,
     )
     if not findings:
-        raise ValueError(f"No open findings exist for action {recommended_action}")
+        scope = f" and dataset_class {dataset_class}" if dataset_class else ""
+        raise ValueError(f"No open findings exist for action {recommended_action}{scope}")
     job_id = await queue.submit(
         config["job_type"],
         {
             "recommended_action": recommended_action,
             "store_name": store_name or "",
+            "dataset_class": dataset_class or "",
             "finding_ids": [item["finding_id"] for item in findings],
             "records": [
                 {
@@ -1270,9 +1396,28 @@ async def queue_hygiene_remediation(
         job_id=job_id,
         details={
             "description": config["description"],
+            "dataset_class": dataset_class or "",
             "finding_ids": [item["finding_id"] for item in findings],
         },
     )
+
+
+def compact_hygiene_remediation(item: dict[str, Any], *, sample_size: int = 5) -> dict[str, Any]:
+    details = item.get("details") or {}
+    finding_ids = [str(value) for value in (details.get("finding_ids") or []) if str(value)]
+    closure_summary = details.get("closure_summary") or {}
+    compact = {key: value for key, value in item.items() if key != "details"}
+    compact["details_summary"] = {
+        "description": str(details.get("description") or ""),
+        "dataset_class": str(details.get("dataset_class") or ""),
+        "finding_count": len(finding_ids),
+        "sample_finding_ids": finding_ids[:sample_size],
+    }
+    if closure_summary:
+        compact["details_summary"]["closure_summary"] = closure_summary
+    if details.get("closure_checked_at"):
+        compact["details_summary"]["closure_checked_at"] = details.get("closure_checked_at")
+    return compact
 
 
 async def queue_reviewed_delete_remediation(
@@ -1541,6 +1686,47 @@ def promote_auto_test_cleanup_candidates(
         "ready_for_reviewed_delete": ready_for_reviewed_delete,
         "ready_for_approved_delete": ready_for_approved_delete,
         "skipped": skipped,
+    }
+
+
+def is_governed_synthetic_false_positive(item: dict[str, Any]) -> bool:
+    if str(item.get("dataset_class") or "") != "synthetic_test":
+        return False
+    if str(item.get("recommended_action") or "") != "delete":
+        return False
+    details = item.get("details") or {}
+    category = str(details.get("category") or "").strip().lower()
+    source = str(details.get("source") or "").strip().lower()
+    tags = [str(tag).strip().lower() for tag in (details.get("tags") or [])]
+    return bool(_governed_payload_class(category, source, tags))
+
+
+def resolve_governed_synthetic_false_positives(*, limit: int = 500) -> dict[str, Any]:
+    store = get_data_hygiene_store()
+    rows = store.list_findings(dataset_class="synthetic_test", recommended_action="delete", status="open", limit=max(limit * 10, 2000))
+    updated_ids: list[str] = []
+    skipped = 0
+    for item in rows:
+        if len(updated_ids) >= limit:
+            break
+        if not is_governed_synthetic_false_positive(item):
+            skipped += 1
+            continue
+        changed = store.set_finding_status(finding_id=item["finding_id"], status="resolved")
+        if changed:
+            store.patch_finding_details(
+                finding_id=item["finding_id"],
+                patch={"resolved_by": "governed_synthetic_false_positive"},
+                append_reasons=["governed_synthetic_false_positive"],
+            )
+            updated_ids.append(item["finding_id"])
+        else:
+            skipped += 1
+    return {
+        "matched": len(rows),
+        "updated": len(updated_ids),
+        "skipped": skipped,
+        "finding_ids": updated_ids,
     }
 
 

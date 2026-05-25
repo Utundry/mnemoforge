@@ -31,6 +31,7 @@ from app.services.data_hygiene_service import (
     build_delete_dry_run,
     build_reviewed_delete_preview,
     build_retention_report,
+    compact_hygiene_remediation,
     findings_for_manual_review,
     get_data_hygiene_store,
     policy_for_dataset_class,
@@ -38,6 +39,7 @@ from app.services.data_hygiene_service import (
     queue_hygiene_remediation,
     queue_reviewed_delete_remediation,
     reconcile_completed_remediations as reconcile_hygiene_completed_remediations,
+    resolve_governed_synthetic_false_positives,
     run_data_hygiene_audit,
 )
 from app.services.functionality_inventory_service import (
@@ -936,6 +938,7 @@ async def list_data_hygiene_remediations(
     recommended_action: str | None = Query(None),
     status: str | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
+    detail: str = Query("compact", pattern="^(compact|full)$"),
     _: None = Depends(_admin_guard),
 ) -> dict[str, Any]:
     _sync_data_hygiene_remediations_best_effort()
@@ -944,6 +947,8 @@ async def list_data_hygiene_remediations(
         status=status,
         limit=limit,
     )
+    if detail == "compact":
+        items = [compact_hygiene_remediation(item) for item in items]
     return {"items": items, "total": len(items)}
 
 
@@ -1001,6 +1006,16 @@ async def quarantine_synthetic_delete_candidates(
     return result
 
 
+@router.post("/data-hygiene/review/resolve-governed-synthetic")
+async def resolve_governed_synthetic_review_noise(
+    limit: int = Query(500, ge=1, le=5000),
+    _: None = Depends(_admin_guard),
+) -> dict[str, Any]:
+    result = resolve_governed_synthetic_false_positives(limit=limit)
+    result["workflow"] = build_workflow_summary(limit=1000)
+    return result
+
+
 @router.post("/data-hygiene/audit")
 async def run_data_hygiene_audit_now(
     memory_limit: int = Query(1000, ge=1, le=5000),
@@ -1022,6 +1037,7 @@ async def ai_resolve_data_hygiene(
     requested_by: str = Query("ai-operator"),
     limit: int = Query(500, ge=1, le=5000),
     sample_size: int = Query(10, ge=1, le=50),
+    detail: str = Query("compact", pattern="^(compact|full)$"),
     _: None = Depends(_admin_guard),
 ) -> dict[str, Any]:
     from app.services.job_queue import get_job_queue
@@ -1071,12 +1087,15 @@ async def ai_resolve_data_hygiene(
     _sync_data_hygiene_remediations_best_effort()
     reconcile = await reconcile_hygiene_completed_remediations(queue=queue)
     updated_plan = build_ai_hygiene_resolution_plan(limit=limit, sample_size=sample_size)
+    response_remediations = queued_remediations
+    if detail == "compact":
+        response_remediations = [compact_hygiene_remediation(item) for item in queued_remediations]
 
     return {
         "auto_apply_safe": auto_apply_safe,
         "requested_by": requested_by,
         "plan": updated_plan,
-        "queued_remediations": queued_remediations,
+        "queued_remediations": response_remediations,
         "queued_count": len(queued_remediations),
         "skipped_candidates": skipped_candidates,
         "reconcile": reconcile,
@@ -1094,8 +1113,10 @@ async def reconcile_data_hygiene_remediations(_: None = Depends(_admin_guard)) -
 async def queue_data_hygiene_remediation(
     recommended_action: str = Query(..., pattern="^(exclude-from-learning|archive)$"),
     store_name: str | None = Query(None),
+    dataset_class: str | None = Query(None),
     requested_by: str = Query("admin"),
     limit: int = Query(500, ge=1, le=5000),
+    detail: str = Query("compact", pattern="^(compact|full)$"),
     _: None = Depends(_admin_guard),
 ) -> dict[str, Any]:
     from app.services.job_queue import get_job_queue
@@ -1105,9 +1126,12 @@ async def queue_data_hygiene_remediation(
         requested_by=requested_by,
         queue=get_job_queue(),
         store_name=store_name,
+        dataset_class=dataset_class,
         limit=limit,
     )
     _sync_data_hygiene_remediations_best_effort()
+    if detail == "compact":
+        return compact_hygiene_remediation(item)
     return item
 
 

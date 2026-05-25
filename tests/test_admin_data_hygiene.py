@@ -5,6 +5,7 @@ from app.services.data_hygiene_service import (
     get_data_hygiene_store,
     is_auto_test_cleanup_candidate,
     promote_auto_test_cleanup_candidates,
+    resolve_governed_synthetic_false_positives,
     run_data_hygiene_audit,
 )
 from app.services.job_queue import get_job_queue
@@ -499,6 +500,47 @@ def test_classify_memory_payload_flags_unknown_mailbox_form_guidance():
     assert any("unknown_mailbox_form_guidance:obsolete_checkpoint_draft" in reason for reason in result["reasons"])
 
 
+def test_classify_memory_payload_keeps_governed_task_with_test_tags():
+    result = classify_memory_payload(
+        {
+            "category": "task",
+            "source": "improvement",
+            "tags": [
+                "project:mnemoforge",
+                "tests",
+                "entity:task",
+                "task_id:faeae7b2-a8c9-4487-8b80-df9a38b2818d",
+            ],
+            "content": "Task mentions tests but is governed project memory, not disposable fixture data.",
+        }
+    )
+
+    assert result["dataset_class"] == "canonical_knowledge"
+    assert result["recommended_action"] == "keep"
+    assert result["exclude_from_learning"] is False
+    assert "synthetic_marker_ignored_for_governed_record" in result["reasons"]
+
+
+def test_classify_memory_payload_keeps_governed_task_change_with_test_tags():
+    result = classify_memory_payload(
+        {
+            "category": "task_change",
+            "source": "improvement_created",
+            "tags": [
+                "project:mnemoforge",
+                "test",
+                "entity:task_change",
+                "task_id:faeae7b2-a8c9-4487-8b80-df9a38b2818d",
+            ],
+            "content": "Task change references a live test but should remain historical evolution data.",
+        }
+    )
+
+    assert result["dataset_class"] == "canonical_knowledge"
+    assert result["recommended_action"] == "keep"
+    assert result["exclude_from_learning"] is False
+
+
 @pytest.mark.asyncio
 async def test_data_hygiene_audit_falls_back_to_memory_store_when_qdrant_scroll_fails(client, monkeypatch):
     from app.dependencies import get_qdrant
@@ -801,6 +843,100 @@ async def test_admin_can_update_data_hygiene_finding_status(client):
     assert data["policy"]["retention"] == "archive"
 
 
+def test_data_hygiene_store_resolves_open_findings_for_reclassified_record():
+    store = get_data_hygiene_store()
+    store.upsert_finding(
+        finding_id="hygiene-reclass-1",
+        store_name="qdrant_memories",
+        record_locator="memory-reclass-1",
+        dataset_class="synthetic_test",
+        recommended_action="delete",
+        exclude_from_learning=True,
+        confidence=0.95,
+        reasons=["synthetic_marker:tests"],
+        details={"category": "task", "tags": ["entity:task", "tests"]},
+    )
+
+    updated = store.resolve_open_findings_for_record(
+        store_name="qdrant_memories",
+        record_locator="memory-reclass-1",
+        reason="current_classification_keep:canonical_knowledge",
+    )
+
+    assert updated == 1
+    finding = store.get_finding("hygiene-reclass-1")
+    assert finding["status"] == "resolved"
+    assert "current_classification_keep:canonical_knowledge" in finding["reasons"]
+    assert finding["details"]["resolved_by"] == "current_classification_keep:canonical_knowledge"
+
+
+def test_resolve_governed_synthetic_false_positives_keeps_real_test_garbage_open():
+    store = get_data_hygiene_store()
+    store.upsert_finding(
+        finding_id="hygiene-governed-synth-1",
+        store_name="qdrant_memories",
+        record_locator="memory-governed-synth-1",
+        dataset_class="synthetic_test",
+        recommended_action="delete",
+        exclude_from_learning=True,
+        confidence=0.95,
+        reasons=["synthetic_marker:tests"],
+        details={
+            "category": "task",
+            "source": "improvement",
+            "tags": ["entity:task", "tests", "project:mnemoforge"],
+        },
+    )
+    store.upsert_finding(
+        finding_id="hygiene-real-synth-1",
+        store_name="qdrant_memories",
+        record_locator="memory-real-synth-1",
+        dataset_class="synthetic_test",
+        recommended_action="delete",
+        exclude_from_learning=True,
+        confidence=0.95,
+        reasons=["synthetic_marker:fixture"],
+        details={"category": "general", "source": "demo-fixture", "tags": ["fixture"]},
+    )
+
+    result = resolve_governed_synthetic_false_positives(limit=20)
+
+    assert result["updated"] == 1
+    assert result["finding_ids"] == ["hygiene-governed-synth-1"]
+    governed = store.get_finding("hygiene-governed-synth-1")
+    real = store.get_finding("hygiene-real-synth-1")
+    assert governed["status"] == "resolved"
+    assert "governed_synthetic_false_positive" in governed["reasons"]
+    assert real["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_resolve_governed_synthetic_review_noise(client):
+    store = get_data_hygiene_store()
+    store.upsert_finding(
+        finding_id="hygiene-governed-synth-api-1",
+        store_name="qdrant_memories",
+        record_locator="memory-governed-synth-api-1",
+        dataset_class="synthetic_test",
+        recommended_action="delete",
+        exclude_from_learning=True,
+        confidence=0.95,
+        reasons=["synthetic_marker:test"],
+        details={
+            "category": "task_change",
+            "source": "improvement_created",
+            "tags": ["entity:task_change", "test", "project:mnemoforge"],
+        },
+    )
+
+    resp = await client.post("/api/v1/admin/data-hygiene/review/resolve-governed-synthetic?limit=20")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["updated"] == 1
+    assert data["finding_ids"] == ["hygiene-governed-synth-api-1"]
+    assert store.get_finding("hygiene-governed-synth-api-1")["status"] == "resolved"
+
+
 @pytest.mark.asyncio
 async def test_data_hygiene_policies_and_manual_review_surface(client):
     store = get_data_hygiene_store()
@@ -992,6 +1128,81 @@ async def test_admin_can_queue_data_hygiene_remediation(client):
     job = get_job_queue().get_job(data["job_id"])
     assert job is not None
     assert job["job_type"] == "data_hygiene_apply_exclusion"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_queue_data_hygiene_remediation_by_dataset_class(client):
+    store = get_data_hygiene_store()
+    store.upsert_finding(
+        finding_id="hygiene-stale-target",
+        store_name="qdrant_memories",
+        record_locator="memory-stale-target",
+        dataset_class="stale_guidance",
+        recommended_action="exclude-from-learning",
+        exclude_from_learning=True,
+        confidence=0.88,
+        reasons=["stale_tool_guidance:memory_store->replacement:submit:store_memory"],
+        details={"category": "agent-guidance"},
+    )
+    store.upsert_finding(
+        finding_id="hygiene-telemetry-other",
+        store_name="qdrant_memories",
+        record_locator="memory-telemetry-other",
+        dataset_class="telemetry_trace",
+        recommended_action="exclude-from-learning",
+        exclude_from_learning=True,
+        confidence=0.9,
+        reasons=["telemetry_event:tool_call"],
+        details={"event_type": "tool_call"},
+    )
+
+    resp = await client.post(
+        "/api/v1/admin/data-hygiene/remediate"
+        "?recommended_action=exclude-from-learning&dataset_class=stale_guidance&store_name=qdrant_memories&limit=20"
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["recommended_action"] == "exclude-from-learning"
+    assert "details" not in data
+    assert data["details_summary"]["dataset_class"] == "stale_guidance"
+    assert data["details_summary"]["finding_count"] == 1
+    assert data["details_summary"]["sample_finding_ids"] == ["hygiene-stale-target"]
+
+    job = get_job_queue().get_job(data["job_id"])
+    assert job is not None
+    assert job["payload"]["dataset_class"] == "stale_guidance"
+    assert job["payload"]["finding_ids"] == ["hygiene-stale-target"]
+
+
+@pytest.mark.asyncio
+async def test_admin_lists_data_hygiene_remediations_compact_by_default(client):
+    store = get_data_hygiene_store()
+    job_id = await get_job_queue().submit("data_hygiene_apply_exclusion", {"finding_ids": ["a", "b"], "records": []})
+    store.queue_remediation(
+        remediation_id="hyg-rem-compact",
+        recommended_action="exclude-from-learning",
+        store_name="qdrant_memories",
+        requested_by="test",
+        job_id=job_id,
+        details={
+            "description": "Mark records as excluded from learning.",
+            "dataset_class": "stale_guidance",
+            "finding_ids": ["a", "b", "c", "d", "e", "f"],
+        },
+    )
+
+    resp = await client.get("/api/v1/admin/data-hygiene/remediations?limit=5")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    item = next(row for row in data["items"] if row["remediation_id"] == "hyg-rem-compact")
+    assert "details" not in item
+    assert item["details_summary"]["finding_count"] == 6
+    assert item["details_summary"]["sample_finding_ids"] == ["a", "b", "c", "d", "e"]
+
+    full_resp = await client.get("/api/v1/admin/data-hygiene/remediations?limit=5&detail=full")
+    assert full_resp.status_code == 200, full_resp.text
+    full_item = next(row for row in full_resp.json()["items"] if row["remediation_id"] == "hyg-rem-compact")
+    assert full_item["details"]["finding_ids"] == ["a", "b", "c", "d", "e", "f"]
 
 
 @pytest.mark.asyncio
