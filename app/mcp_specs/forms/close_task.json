@@ -5,7 +5,7 @@
   "states": ["planning", "implementation", "checkpointing", "handoff", "operator_review"],
   "mode": "transition",
   "required_fields": ["project", "task_id", "reason"],
-  "optional_fields": ["close_status", "superseded_by", "owner_agent", "session_id", "release_claim", "tags", "agent_id"],
+  "optional_fields": ["close_status", "superseded_by", "owner_agent", "session_id", "release_claim", "sync_linked_improvement", "tags", "agent_id"],
   "input_schema": {
     "type": "object",
     "properties": {
@@ -21,6 +21,7 @@
       "owner_agent": {"type": "string", "default": "codex"},
       "session_id": {"type": "string"},
       "release_claim": {"type": "boolean", "default": true},
+      "sync_linked_improvement": {"type": "boolean", "default": true},
       "tags": {"type": "array", "items": {"type": "string"}},
       "agent_id": {"type": "string", "default": "codex"}
     },

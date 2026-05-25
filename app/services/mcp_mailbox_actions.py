@@ -25,6 +25,7 @@ from app.services.public_ref_index import AmbiguousPublicRefError, is_short_publ
 
 PostCallback = Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
 GetCallback = Callable[[str, str], Awaitable[dict[str, Any]]]
+PatchCallback = Callable[[str, str, dict[str, Any] | None], Awaitable[dict[str, Any]]]
 ExecuteToolCallback = Callable[[str, dict[str, Any], str, str | None], Awaitable[str]]
 SessionIdentityCallback = Callable[[str | None], Awaitable[dict[str, str]]]
 TaskMutationGuardCallback = Callable[..., dict[str, Any] | None]
@@ -37,6 +38,7 @@ class MailboxActionDependencies:
     get_session_identity_defaults: SessionIdentityCallback
     task_mutation_guard: TaskMutationGuardCallback
     get: GetCallback | None = None
+    patch: PatchCallback | None = None
 
 
 async def build_mailbox_submit_packet(
@@ -677,6 +679,19 @@ async def mailbox_close_task(
     }
     update_payload = {key: value for key, value in update_payload.items() if value not in (None, "", [])}
     result = await dependencies.post(api_base, "/project/tasks", update_payload)
+    linked_improvement_sync: dict[str, Any] | None = None
+    linked_improvement_id = str(task.get("linked_improvement_id") or "").strip()
+    if linked_improvement_id and bool(payload.get("sync_linked_improvement", True)):
+        linked_improvement_sync = await _sync_close_task_linked_improvement(
+            api_base=api_base,
+            project=project,
+            task_id=task_id,
+            linked_improvement_id=linked_improvement_id,
+            close_status=close_status,
+            reason=reason,
+            acted_by=mailbox_actor(payload),
+            dependencies=dependencies,
+        )
     change_content = f"Closed task as {close_status}: {reason}"
     if superseded_by:
         change_content += f"\nSuperseded by: {superseded_by}"
@@ -737,6 +752,8 @@ async def mailbox_close_task(
     )
     packet["receipt"]["close_status"] = close_status
     packet["receipt"]["task_status"] = result.get("status") or "archived"
+    if linked_improvement_sync:
+        packet["receipt"]["linked_improvement_sync"] = linked_improvement_sync
     if superseded_by:
         packet["receipt"]["superseded_by"] = superseded_by
     if release_receipt:
@@ -744,6 +761,45 @@ async def mailbox_close_task(
     packet["next_safe_action"] = "Request state planning or list open tasks before selecting new work."
     packet["receipt"]["next_safe_action"] = packet["next_safe_action"]
     return packet
+
+
+async def _sync_close_task_linked_improvement(
+    *,
+    api_base: str,
+    project: str,
+    task_id: str,
+    linked_improvement_id: str,
+    close_status: str,
+    reason: str,
+    acted_by: str,
+    dependencies: MailboxActionDependencies,
+) -> dict[str, Any]:
+    if dependencies.patch is None:
+        return {
+            "status": "skipped",
+            "reason": "patch_dependency_unavailable",
+            "linked_artifact_key": f"improvement:{project}:{linked_improvement_id}",
+        }
+    try:
+        result = await dependencies.patch(
+            api_base,
+            f"/improvements/{quote(linked_improvement_id, safe='')}/resolve",
+            {
+                "acted_by": acted_by,
+                "action_source": "mailbox_submit.close_task",
+                "reason": f"Linked task {task_id} closed as {close_status}: {reason}",
+            },
+        )
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "reason": public_mailbox_error_message(exc),
+            "linked_artifact_key": f"improvement:{project}:{linked_improvement_id}",
+        }
+    return {
+        "status": str(result.get("status") or "resolved"),
+        "linked_artifact_key": f"improvement:{project}:{linked_improvement_id}",
+    }
 
 
 async def mailbox_create_improvement(

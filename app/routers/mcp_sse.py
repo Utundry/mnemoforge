@@ -7037,6 +7037,7 @@ async def _build_mailbox_submit_packet(
         session_id=session_id,
         dependencies=MailboxActionDependencies(
             get=_get,
+            patch=_patch,
             post=_post,
             execute_tool=_execute_tool,
             get_session_identity_defaults=_get_session_identity_defaults,
