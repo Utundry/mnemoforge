@@ -244,6 +244,8 @@ async def finish_task_session_action(
             task_id=task_id,
             project=project,
         )
+        if work_token_valid:
+            lease_session_id = active.session_id
 
     if active is not None and not work_token_valid and (active.owner_agent != owner_agent or active.session_id != lease_session_id):
         if not (danger_mode and danger_confirmation == "authorize_session_bypass"):

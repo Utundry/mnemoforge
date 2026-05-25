@@ -60,7 +60,15 @@ async def build_simple_public_ref_response(
             next_safe_action = result.get("next_safe_action") or "Review task context before claiming or editing."
         elif kind in {"improvement", "artifact"}:
             artifact_key = address.get("artifact_key") or f"{kind}:{project}:{local_id}"
-            result = await dependencies.get(api_base, f"/artifacts/{quote(artifact_key, safe='')}")
+            result, artifact_key = await get_artifact_by_public_ref(
+                api_base=api_base,
+                project=project,
+                kind=kind,
+                local_id=local_id,
+                artifact_key=artifact_key,
+                dependencies=dependencies,
+            )
+            normalized_ref = artifact_key
             next_safe_action = "Review this read-only artifact before choosing any mutating mailbox form."
         elif kind == "law":
             result = await dependencies.get(api_base, f"/laws/{quote(local_id, safe='')}")
@@ -113,6 +121,125 @@ async def build_simple_public_ref_response(
         },
         result=result,
     )
+
+
+async def get_artifact_by_public_ref(
+    *,
+    api_base: str,
+    project: str,
+    kind: str,
+    local_id: str,
+    artifact_key: str,
+    dependencies: PublicRefDependencies,
+) -> tuple[dict[str, Any], str]:
+    try:
+        return await dependencies.get(api_base, f"/artifacts/{quote(artifact_key, safe='')}"), artifact_key
+    except Exception:
+        if not is_short_public_id(local_id):
+            raise
+    artifact_type = str(kind or "").strip()
+    matches = await find_artifact_short_ref_matches(
+        api_base=api_base,
+        project=project,
+        artifact_type=artifact_type,
+        local_id=local_id,
+        dependencies=dependencies,
+    )
+    if not matches and artifact_type in {"task", "improvement"}:
+        matches = await find_artifact_short_ref_matches(
+            api_base=api_base,
+            project=project,
+            artifact_type="all",
+            local_id=local_id,
+            dependencies=dependencies,
+        )
+    if len(matches) != 1:
+        raise LookupError("Public artifact short id did not resolve uniquely.")
+    resolved_key = canonical_artifact_key_for_short_ref(
+        matches[0],
+        requested_type=artifact_type,
+        short_id=local_id,
+    )
+    if not resolved_key:
+        raise LookupError("Public artifact short id resolved without an artifact key.")
+    return await dependencies.get(api_base, f"/artifacts/{quote(resolved_key, safe='')}"), resolved_key
+
+
+async def find_artifact_short_ref_matches(
+    *,
+    api_base: str,
+    project: str,
+    artifact_type: str,
+    local_id: str,
+    dependencies: PublicRefDependencies,
+) -> list[dict[str, Any]]:
+    type_query = "" if artifact_type == "all" else f"&type={quote(artifact_type, safe='')}"
+    try:
+        listed = await dependencies.get(
+            api_base,
+            f"/artifacts?project={quote(project, safe='')}{type_query}&limit=100",
+        )
+    except Exception:
+        if artifact_type != "all":
+            return []
+        raise
+    items = listed.get("items") if isinstance(listed, dict) else []
+    return [
+        item
+        for item in items
+        if isinstance(item, dict)
+        and public_artifact_matches_short_id(item, short_id=local_id, artifact_type=artifact_type, project=project)
+    ]
+
+
+def is_short_public_id(value: str) -> bool:
+    text = str(value or "").strip()
+    return bool(re.fullmatch(r"[0-9a-fA-F]{6,12}", text))
+
+
+def public_artifact_matches_short_id(
+    item: dict[str, Any],
+    *,
+    short_id: str,
+    artifact_type: str,
+    project: str,
+) -> bool:
+    prefix = str(short_id or "").strip().casefold()
+    if not prefix:
+        return False
+    candidates = [
+        item.get("task_id"),
+        item.get("id"),
+        item.get("artifact_key"),
+        item.get("linked_artifact_key"),
+    ]
+    for candidate in candidates:
+        text = str(candidate or "").strip().casefold()
+        if text.startswith(prefix) or f":{prefix}" in text:
+            return True
+    return False
+
+
+def canonical_artifact_key_for_short_ref(
+    item: dict[str, Any],
+    *,
+    requested_type: str,
+    short_id: str,
+) -> str:
+    requested = str(requested_type or "").strip().casefold()
+    prefix = str(short_id or "").strip().casefold()
+    keys = [
+        str(item.get("artifact_key") or "").strip(),
+        str(item.get("linked_artifact_key") or "").strip(),
+    ]
+    if requested in {"task", "improvement"}:
+        for key in keys:
+            if key.casefold().startswith(f"{requested}:") and f":{prefix}" in key.casefold():
+                return key
+    for key in keys:
+        if f":{prefix}" in key.casefold():
+            return key
+    return ""
 
 
 def public_ref_address(args: dict[str, Any]) -> dict[str, str] | None:

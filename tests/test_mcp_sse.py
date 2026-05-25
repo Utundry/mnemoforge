@@ -498,7 +498,6 @@ class TestMcpToolExecution:
                         "project": "alpha",
                         "task_id": "task-mailbox-full-cycle",
                         "owner_agent": "codex",
-                        "session_id": "sess-mailbox-cycle",
                         "work_token": start_data["receipt"]["work_token"],
                         "summary": "Finished through mailbox.",
                         "changed_files": ["app/routers/mcp_sse.py"],
@@ -2008,6 +2007,55 @@ class TestMcpToolExecution:
         assert law["result"]["title"] == "Use mailbox refs."
         assert candidate["result"]["statement"] == "Route through mailbox."
         assert memory["result"]["content"] == "Weak models need safe data reads."
+
+    async def test_simple_get_resolves_short_improvement_refs(self, monkeypatch):
+        requested: list[str] = []
+
+        async def fake_get(api_base: str, path: str):
+            requested.append(path)
+            if path == "/artifacts/improvement%3Aalpha%3Aebcf2a91":
+                raise httpx.HTTPStatusError("not found", request=httpx.Request("GET", "http://test"), response=httpx.Response(404))
+            if path == "/artifacts?project=alpha&type=improvement&limit=100":
+                raise httpx.HTTPStatusError("unsupported type", request=httpx.Request("GET", "http://test"), response=httpx.Response(422))
+            if path == "/artifacts?project=alpha&limit=100":
+                return {
+                    "items": [
+                        {
+                            "artifact_key": "task:alpha:ebcf2a91-bcf6-4072-bfed-99b37c990a48",
+                            "linked_artifact_key": "improvement:alpha:ebcf2a91-bcf6-4072-bfed-99b37c990a48",
+                            "type": "task",
+                            "task_id": "ebcf2a91-bcf6-4072-bfed-99b37c990a48",
+                            "title": "Batch 6 finish_task conflict",
+                        }
+                    ]
+                }
+            if path == "/artifacts/improvement%3Aalpha%3Aebcf2a91-bcf6-4072-bfed-99b37c990a48":
+                return {
+                    "artifact_key": "improvement:alpha:ebcf2a91-bcf6-4072-bfed-99b37c990a48",
+                    "title": "Batch 6 finish_task conflict",
+                    "status": "open",
+                }
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+
+        result = await mcp_sse._execute_tool(
+            "get",
+            {"project": "alpha", "ref": "improvement:alpha:ebcf2a91", "state": "planning"},
+            "http://test",
+        )
+        data = json.loads(result)
+
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["data_ref"] == "improvement:alpha:ebcf2a91-bcf6-4072-bfed-99b37c990a48"
+        assert data["receipt"]["requested_ref"] == "improvement:alpha:ebcf2a91"
+        assert data["result"]["title"] == "Batch 6 finish_task conflict"
+        assert requested == [
+            "/artifacts/improvement%3Aalpha%3Aebcf2a91",
+            "/artifacts?project=alpha&type=improvement&limit=100",
+            "/artifacts?project=alpha&limit=100",
+            "/artifacts/improvement%3Aalpha%3Aebcf2a91-bcf6-4072-bfed-99b37c990a48",
+        ]
 
     async def test_simple_help_state_get_submit_aliases_wrap_mailbox_surface(self, monkeypatch):
         async def fake_pull_context(api_base: str, args: dict):
