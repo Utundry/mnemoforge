@@ -128,6 +128,28 @@ class TestMcpToolExecution:
         assert "inputSummary" in result["tools"][0]
         assert result["tools"][0]["inputSchema"]["type"] == "object"
 
+    async def test_simple_tool_build_info_is_diagnostic_only(self, monkeypatch):
+        monkeypatch.setenv("MNEMOFORGE_GIT_COMMIT", "abc1234")
+        monkeypatch.setenv("MNEMOFORGE_BUILD_TAG", "test-tag")
+        monkeypatch.delenv("MNEMOFORGE_EXPOSE_BUILD_INFO", raising=False)
+
+        normal = json.loads(await mcp_sse._execute_tool("help", {"project": "alpha"}, "http://test"))
+        assert "server_build" not in normal
+
+        diagnostic = json.loads(
+            await mcp_sse._execute_tool("help", {"project": "alpha", "diagnostic": True}, "http://test")
+        )
+        assert diagnostic["server_build"]["service"] == "mnemoforge"
+        assert diagnostic["server_build"]["git_commit"] == "abc1234"
+        assert diagnostic["server_build"]["build_tag"] == "test-tag"
+
+    async def test_simple_tool_build_info_can_be_enabled_by_env(self, monkeypatch):
+        monkeypatch.setenv("MNEMOFORGE_GIT_COMMIT", "def5678")
+        monkeypatch.setenv("MNEMOFORGE_EXPOSE_BUILD_INFO", "true")
+
+        data = json.loads(await mcp_sse._execute_tool("state", {"project": "alpha"}, "http://test"))
+        assert data["server_build"]["git_commit"] == "def5678"
+
     async def test_tools_list_compact_can_request_full_schemas(self):
         response = await mcp_sse._handle(
             {

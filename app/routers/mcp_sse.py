@@ -119,6 +119,7 @@ from app.services.mcp_work_session_actions import (
     WorkSessionActionDependencies,
     execute_work_session_action,
 )
+from app.services.server_build_info import public_server_build_info, server_build_diagnostics_enabled
 from app.services.mcp_checkpoint_draft_actions import (
     CheckpointDraftActionDependencies,
     checkpoint_draft_recommended_next_tool,
@@ -968,11 +969,18 @@ def _tool_lifecycle_annotations(tool_name: str) -> dict[str, Any]:
     }
 
 
-def _annotate_structured_tool_payload(tool_name: str, data: dict[str, Any]) -> dict[str, Any]:
+def _annotate_structured_tool_payload(
+    tool_name: str,
+    data: dict[str, Any],
+    *,
+    include_server_build: bool = False,
+) -> dict[str, Any]:
     if not isinstance(data, dict):
         return data
     enriched = deepcopy(data)
     enriched.update(_tool_lifecycle_annotations(tool_name))
+    if include_server_build or server_build_diagnostics_enabled():
+        enriched["server_build"] = public_server_build_info()
     for key in ("tools", "recommended_tools", "canonical_surface"):
         items = enriched.get(key)
         if not isinstance(items, list):
@@ -7035,22 +7043,22 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
 
     if name == "help":
         data = await _build_simple_help_payload(args, session_id=session_id)
-        data = _annotate_structured_tool_payload(name, data)
+        data = _annotate_structured_tool_payload(name, data, include_server_build=_wants_route_diagnostic(args))
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     if name == "state":
         data = await _build_simple_state_payload(args, session_id=session_id)
-        data = _annotate_structured_tool_payload(name, data)
+        data = _annotate_structured_tool_payload(name, data, include_server_build=_wants_route_diagnostic(args))
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     if name == "get":
         data = await _build_simple_get_payload(api_base, args, session_id=session_id)
-        data = _annotate_structured_tool_payload(name, data)
+        data = _annotate_structured_tool_payload(name, data, include_server_build=_wants_route_diagnostic(args))
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     if name in {"put", "submit"}:
         data = await _build_simple_submit_payload(api_base, args, session_id=session_id, public_tool_name=name)
-        data = _annotate_structured_tool_payload(name, data)
+        data = _annotate_structured_tool_payload(name, data, include_server_build=_wants_route_diagnostic(args))
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     if name == "ask_project":

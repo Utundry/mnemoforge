@@ -121,6 +121,13 @@ def main() -> int:
     repository = _resolve_repository(args.repository)
     tag = _resolve_tag(args.tag)
     image_ref = f"{repository}:{tag}"
+    git_sha = ""
+    if args.tag_current_git_sha:
+        try:
+            git_sha = _resolve_current_git_sha(project_root)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
 
     if args.check:
         print(f"Public release checks passed for {image_ref}")
@@ -133,6 +140,12 @@ def main() -> int:
         str(args.dockerfile),
         "-t",
         image_ref,
+        "--build-arg",
+        f"MNEMOFORGE_GIT_COMMIT={git_sha or 'unknown'}",
+        "--build-arg",
+        f"MNEMOFORGE_BUILD_TAG={tag}",
+        "--build-arg",
+        f"MNEMOFORGE_IMAGE_REPOSITORY={repository}",
         str(args.context),
     ]
     rc = _run(build_cmd, dry_run=args.dry_run)
@@ -147,11 +160,6 @@ def main() -> int:
 
     immutable_ref = ""
     if args.tag_current_git_sha:
-        try:
-            git_sha = _resolve_current_git_sha(project_root)
-        except RuntimeError as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
         immutable_ref = f"{repository}:{git_sha}"
         tag_cmd = ["docker", "tag", image_ref, immutable_ref]
         rc = _run(tag_cmd, dry_run=args.dry_run)

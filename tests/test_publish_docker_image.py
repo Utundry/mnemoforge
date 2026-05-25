@@ -93,7 +93,24 @@ def test_main_can_publish_latest_and_current_git_sha(monkeypatch, tmp_path: Path
 
     assert helper.main() == 0
     assert calls == [
-        (["docker", "build", "-f", "Dockerfile", "-t", "caveboy/mnemoforge:latest", "."], False),
+        (
+            [
+                "docker",
+                "build",
+                "-f",
+                "Dockerfile",
+                "-t",
+                "caveboy/mnemoforge:latest",
+                "--build-arg",
+                "MNEMOFORGE_GIT_COMMIT=abc1234",
+                "--build-arg",
+                "MNEMOFORGE_BUILD_TAG=latest",
+                "--build-arg",
+                "MNEMOFORGE_IMAGE_REPOSITORY=caveboy/mnemoforge",
+                ".",
+            ],
+            False,
+        ),
         (["docker", "push", "caveboy/mnemoforge:latest"], False),
         (["docker", "tag", "caveboy/mnemoforge:latest", "caveboy/mnemoforge:abc1234"], False),
         (["docker", "push", "caveboy/mnemoforge:abc1234"], False),

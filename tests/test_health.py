@@ -19,6 +19,8 @@ async def test_health(client):
     assert "integrity" in data
     assert "data_hygiene" in data
     assert "storage_trust" in data
+    assert data["build"]["service"] == "mnemoforge"
+    assert "started_at" in data["build"]
     assert data["qdrant"]["reachable"] is True
     assert data["ollama"]["reachable"] is True
     assert "reachable" in data["lmstudio"]

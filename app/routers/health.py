@@ -7,6 +7,7 @@ from app.dependencies import OllamaDep, QdrantDep
 from app.services.data_hygiene_service import get_data_hygiene_store
 from app.services.data_integrity_service import get_data_integrity_store
 from app.services.lmstudio_service import LMStudioService
+from app.services.server_build_info import public_server_build_info
 from app.services.storage_trust_service import build_storage_trust_report
 
 router = APIRouter(tags=["health"])
@@ -268,6 +269,7 @@ async def health(qdrant: QdrantDep, ollama: OllamaDep):
     return {
         "status": status,
         "started_at": _STARTED_AT,
+        "build": public_server_build_info(),
         "qdrant": {"reachable": qdrant_ok},
         "ollama": {"reachable": ollama_ok},
         "lmstudio": lmstudio,

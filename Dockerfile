@@ -2,6 +2,10 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
+ARG MNEMOFORGE_GIT_COMMIT=unknown
+ARG MNEMOFORGE_BUILD_TAG=unknown
+ARG MNEMOFORGE_IMAGE_REPOSITORY=unknown
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -17,7 +21,15 @@ COPY README.md SETUP.md CLIENT_SETUP.md STATUS.md .env.public.example ./
 RUN mkdir -p qdrant_data
 
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    MNEMOFORGE_GIT_COMMIT=$MNEMOFORGE_GIT_COMMIT \
+    MNEMOFORGE_BUILD_TAG=$MNEMOFORGE_BUILD_TAG \
+    MNEMOFORGE_IMAGE_REPOSITORY=$MNEMOFORGE_IMAGE_REPOSITORY
+
+LABEL org.opencontainers.image.title="mnemoforge" \
+      org.opencontainers.image.revision=$MNEMOFORGE_GIT_COMMIT \
+      org.opencontainers.image.version=$MNEMOFORGE_BUILD_TAG \
+      org.opencontainers.image.source="https://github.com/Utundry/mnemoforge"
 
 EXPOSE 8000
 
