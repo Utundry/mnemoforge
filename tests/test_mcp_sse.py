@@ -1691,6 +1691,76 @@ class TestMcpToolExecution:
         assert calls[2][0:2] == ("POST", "/project/tasks/task-obsolete/changes")
         assert calls[2][2]["change_type"] == "status_change"
 
+    async def test_mailbox_submit_close_task_resolves_short_task_id(self, monkeypatch):
+        from app.services.public_ref_index import get_public_ref_index_store
+
+        get_public_ref_index_store().clear()
+        calls: list[tuple[str, str, dict | None]] = []
+        full_id = "bf3ee20c-d404-4e49-91c5-6e547f1077dc"
+
+        async def fake_get(api_base: str, path: str):
+            calls.append(("GET", path, None))
+            if path == "/artifacts?project=alpha&type=task&limit=100":
+                return {
+                    "items": [
+                        {
+                            "artifact_key": f"task:alpha:{full_id}",
+                            "linked_artifact_key": f"improvement:alpha:{full_id}",
+                            "type": "task",
+                            "task_id": full_id,
+                            "title": "Resolved report task",
+                            "status": "open",
+                        }
+                    ]
+                }
+            if path == f"/project/tasks/{full_id}?project=alpha":
+                return {
+                    "id": "memory-task-1",
+                    "task_id": full_id,
+                    "project": "alpha",
+                    "title": "Resolved report task",
+                    "description": "No longer needed.",
+                    "agent_id": "codex",
+                    "status": "planning",
+                    "source": "test",
+                    "tags": ["existing"],
+                }
+            raise AssertionError(path)
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            calls.append(("POST", path, payload))
+            if path == "/project/tasks":
+                return {"id": "memory-task-1", **payload}
+            if path == f"/project/tasks/{full_id}/changes":
+                return {"id": "change-1", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "close_task",
+                "payload": {
+                    "project": "alpha",
+                    "task_id": "bf3ee20c",
+                    "reason": "Resolved issue report.",
+                    "close_status": "obsolete",
+                    "release_claim": False,
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["artifact_key"] == f"task:alpha:{full_id}"
+        assert calls[0] == ("GET", "/artifacts?project=alpha&type=task&limit=100", None)
+        assert calls[1] == ("GET", f"/project/tasks/{full_id}?project=alpha", None)
+        assert calls[2][2]["task_id"] == full_id
+
     async def test_mailbox_submit_create_improvement_bootstraps_task_id(self, monkeypatch):
         from uuid import UUID
 
@@ -2103,6 +2173,9 @@ class TestMcpToolExecution:
         assert memory["result"]["content"] == "Weak models need safe data reads."
 
     async def test_simple_get_resolves_short_improvement_refs(self, monkeypatch):
+        from app.services.public_ref_index import get_public_ref_index_store
+
+        get_public_ref_index_store().clear()
         requested: list[str] = []
 
         async def fake_get(api_base: str, path: str):
@@ -2149,6 +2222,55 @@ class TestMcpToolExecution:
             "/artifacts?project=alpha&type=improvement&limit=100",
             "/artifacts?project=alpha&limit=100",
             "/artifacts/improvement%3Aalpha%3Aebcf2a91-bcf6-4072-bfed-99b37c990a48",
+        ]
+
+    async def test_simple_get_short_ref_uses_index_before_list_fallback(self, monkeypatch):
+        from app.services.public_ref_index import get_public_ref_index_store
+
+        store = get_public_ref_index_store()
+        store.clear()
+        full_id = "de609b8f-462f-4bf0-a0fb-6f40c51b54b7"
+        store.upsert_artifact(
+            {
+                "artifact_key": f"improvement:alpha:{full_id}",
+                "linked_artifact_key": f"task:alpha:{full_id}",
+                "title": "Indexed task",
+                "status": "open",
+            }
+        )
+        requested: list[str] = []
+
+        async def fake_get(api_base: str, path: str):
+            requested.append(path)
+            if path == "/artifacts/improvement%3Aalpha%3Ade609b8f":
+                raise httpx.HTTPStatusError("not found", request=httpx.Request("GET", "http://test"), response=httpx.Response(404))
+            if path == f"/artifacts/improvement%3Aalpha%3A{full_id}":
+                return {
+                    "artifact_key": f"improvement:alpha:{full_id}",
+                    "linked_artifact_key": f"task:alpha:{full_id}",
+                    "title": "Indexed task",
+                    "status": "open",
+                }
+            if path.startswith("/artifacts?"):
+                raise AssertionError("short ref should not scan artifacts when index is valid")
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+
+        result = await mcp_sse._execute_tool(
+            "get",
+            {"project": "alpha", "ref": "improvement:alpha:de609b8f", "state": "planning"},
+            "http://test",
+        )
+        data = json.loads(result)
+
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["data_ref"] == f"improvement:alpha:{full_id}"
+        assert data["receipt"]["ref_source"] == "public_ref_index"
+        assert requested == [
+            "/artifacts/improvement%3Aalpha%3Ade609b8f",
+            f"/artifacts/improvement%3Aalpha%3A{full_id}",
+            f"/artifacts/improvement%3Aalpha%3A{full_id}",
         ]
 
     async def test_simple_help_state_get_submit_aliases_wrap_mailbox_surface(self, monkeypatch):

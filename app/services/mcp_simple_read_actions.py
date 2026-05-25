@@ -6,6 +6,15 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
+from app.services.public_ref_index import (
+    AmbiguousPublicRefError,
+    PublicRefNotFoundError,
+    canonical_artifact_key_for_short_ref,
+    get_public_ref_index_store,
+    is_short_public_id,
+    public_artifact_matches_short_id,
+)
+
 
 GetCallback = Callable[[str, str], Awaitable[Any]]
 PostCallback = Callable[[str, str, dict[str, Any]], Awaitable[Any]]
@@ -44,8 +53,21 @@ async def build_simple_public_ref_response(
     local_id = address.get("local_id") or ""
     requested_ref = str(args.get("ref") or "").strip()
     normalized_ref = address.get("artifact_key") or f"{kind}:{project}:{local_id}"
+    ref_source = ""
     try:
         if kind == "task":
+            ref_source = "direct"
+            if is_short_public_id(local_id):
+                resolution = await resolve_public_artifact_short_ref(
+                    api_base=api_base,
+                    project=project,
+                    artifact_type="task",
+                    local_id=local_id,
+                    dependencies=dependencies,
+                )
+                local_id = resolution["local_id"]
+                normalized_ref = resolution["artifact_key"]
+                ref_source = resolution["source"]
             result = await dependencies.get_task_context(
                 api_base,
                 {
@@ -57,26 +79,34 @@ async def build_simple_public_ref_response(
                     "limit": int(args.get("limit") or 10),
                 },
             )
+            if isinstance(result, dict):
+                result.setdefault("artifact_key", normalized_ref)
+                result.setdefault("public_ref_source", ref_source)
             next_safe_action = result.get("next_safe_action") or "Review task context before claiming or editing."
         elif kind in {"improvement", "artifact"}:
             artifact_key = address.get("artifact_key") or f"{kind}:{project}:{local_id}"
-            result, artifact_key = await get_artifact_by_public_ref(
+            result, artifact_key, ref_source = await get_artifact_by_public_ref(
                 api_base=api_base,
                 project=project,
-                kind=kind,
+                kind=address.get("artifact_type") or kind,
                 local_id=local_id,
                 artifact_key=artifact_key,
                 dependencies=dependencies,
             )
             normalized_ref = artifact_key
+            if isinstance(result, dict):
+                result.setdefault("public_ref_source", ref_source)
             next_safe_action = "Review this read-only artifact before choosing any mutating mailbox form."
         elif kind == "law":
+            ref_source = "direct"
             result = await dependencies.get(api_base, f"/laws/{quote(local_id, safe='')}")
             next_safe_action = "Review this read-only law before proposing revisions or candidates."
         elif kind == "rule_candidate":
+            ref_source = "direct"
             result = await dependencies.get(api_base, f"/laws/candidates/{quote(local_id, safe='')}")
             next_safe_action = "Review this read-only rule candidate before any promotion, revision, or review action."
         elif kind == "memory":
+            ref_source = "direct"
             result = await dependencies.get(api_base, f"/memories/{quote(local_id, safe='')}")
             next_safe_action = "Review this read-only memory before creating new facts or updates."
         else:
@@ -93,6 +123,20 @@ async def build_simple_public_ref_response(
                     "next_safe_action": "Use mailbox_state for available forms, or ask_project/project_work for natural read-only lookup.",
                 },
             )
+    except AmbiguousPublicRefError as exc:
+        return _public_ref_envelope(
+            args=args,
+            project=project,
+            normalized_ref=normalized_ref,
+            requested_ref=requested_ref,
+            kind=kind,
+            receipt={
+                "status": "ambiguous_ref",
+                "message": "Public ref short id matched multiple artifacts.",
+                "matches": compact_public_ref_matches(exc.matches),
+                "next_safe_action": "Call get again with a longer id prefix or a full public ref from matches.",
+            },
+        )
     except Exception as exc:
         return _public_ref_envelope(
             args=args,
@@ -117,6 +161,7 @@ async def build_simple_public_ref_response(
             "status": "accepted",
             "message": "Public mailbox reference resolved through a read-only handler.",
             "resource_kind": kind,
+            "ref_source": ref_source,
             "next_safe_action": next_safe_action,
         },
         result=result,
@@ -131,13 +176,52 @@ async def get_artifact_by_public_ref(
     local_id: str,
     artifact_key: str,
     dependencies: PublicRefDependencies,
-) -> tuple[dict[str, Any], str]:
+) -> tuple[dict[str, Any], str, str]:
     try:
-        return await dependencies.get(api_base, f"/artifacts/{quote(artifact_key, safe='')}"), artifact_key
+        result = await dependencies.get(api_base, f"/artifacts/{quote(artifact_key, safe='')}")
+        if isinstance(result, dict):
+            get_public_ref_index_store().upsert_artifact(result)
+        return result, artifact_key, "direct"
     except Exception:
         if not is_short_public_id(local_id):
             raise
-    artifact_type = str(kind or "").strip()
+    resolution = await resolve_public_artifact_short_ref(
+        api_base=api_base,
+        project=project,
+        artifact_type=str(kind or "").strip(),
+        local_id=local_id,
+        dependencies=dependencies,
+    )
+    resolved_key = resolution["artifact_key"]
+    result = await dependencies.get(api_base, f"/artifacts/{quote(resolved_key, safe='')}")
+    if isinstance(result, dict):
+        get_public_ref_index_store().upsert_artifact(result)
+    return result, resolved_key, resolution["source"]
+
+
+async def resolve_public_artifact_short_ref(
+    *,
+    api_base: str,
+    project: str,
+    artifact_type: str,
+    local_id: str,
+    dependencies: PublicRefDependencies,
+) -> dict[str, str]:
+    store = get_public_ref_index_store()
+    try:
+        resolution = store.resolve(project=project, requested_type=artifact_type, short_id=local_id)
+        try:
+            await dependencies.get(api_base, f"/artifacts/{quote(resolution.artifact_key, safe='')}")
+            return {
+                "artifact_key": resolution.artifact_key,
+                "local_id": resolution.local_id,
+                "source": resolution.source,
+            }
+        except Exception:
+            store.remove(resolution.artifact_key)
+    except PublicRefNotFoundError:
+        pass
+
     matches = await find_artifact_short_ref_matches(
         api_base=api_base,
         project=project,
@@ -154,15 +238,21 @@ async def get_artifact_by_public_ref(
             dependencies=dependencies,
         )
     if len(matches) != 1:
-        raise LookupError("Public artifact short id did not resolve uniquely.")
+        if matches:
+            raise AmbiguousPublicRefError(matches)
+        raise PublicRefNotFoundError("Public artifact short id did not resolve.")
     resolved_key = canonical_artifact_key_for_short_ref(
         matches[0],
-        requested_type=artifact_type,
+        requested_type=str(artifact_type or "").strip(),
         short_id=local_id,
     )
     if not resolved_key:
-        raise LookupError("Public artifact short id resolved without an artifact key.")
-    return await dependencies.get(api_base, f"/artifacts/{quote(resolved_key, safe='')}"), resolved_key
+        raise PublicRefNotFoundError("Public artifact short id resolved without an artifact key.")
+    return {
+        "artifact_key": resolved_key,
+        "local_id": resolved_key.split(":", 2)[2],
+        "source": "artifact_list_fallback",
+    }
 
 
 async def find_artifact_short_ref_matches(
@@ -184,62 +274,27 @@ async def find_artifact_short_ref_matches(
             return []
         raise
     items = listed.get("items") if isinstance(listed, dict) else []
+    get_public_ref_index_store().upsert_artifacts([item for item in items if isinstance(item, dict)])
     return [
         item
         for item in items
         if isinstance(item, dict)
-        and public_artifact_matches_short_id(item, short_id=local_id, artifact_type=artifact_type, project=project)
+        and public_artifact_matches_short_id(item, short_id=local_id)
     ]
 
 
-def is_short_public_id(value: str) -> bool:
-    text = str(value or "").strip()
-    return bool(re.fullmatch(r"[0-9a-fA-F]{6,12}", text))
-
-
-def public_artifact_matches_short_id(
-    item: dict[str, Any],
-    *,
-    short_id: str,
-    artifact_type: str,
-    project: str,
-) -> bool:
-    prefix = str(short_id or "").strip().casefold()
-    if not prefix:
-        return False
-    candidates = [
-        item.get("task_id"),
-        item.get("id"),
-        item.get("artifact_key"),
-        item.get("linked_artifact_key"),
-    ]
-    for candidate in candidates:
-        text = str(candidate or "").strip().casefold()
-        if text.startswith(prefix) or f":{prefix}" in text:
-            return True
-    return False
-
-
-def canonical_artifact_key_for_short_ref(
-    item: dict[str, Any],
-    *,
-    requested_type: str,
-    short_id: str,
-) -> str:
-    requested = str(requested_type or "").strip().casefold()
-    prefix = str(short_id or "").strip().casefold()
-    keys = [
-        str(item.get("artifact_key") or "").strip(),
-        str(item.get("linked_artifact_key") or "").strip(),
-    ]
-    if requested in {"task", "improvement"}:
-        for key in keys:
-            if key.casefold().startswith(f"{requested}:") and f":{prefix}" in key.casefold():
-                return key
-    for key in keys:
-        if f":{prefix}" in key.casefold():
-            return key
-    return ""
+def compact_public_ref_matches(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for item in matches[:10]:
+        compact.append(
+            {
+                "artifact_key": item.get("artifact_key"),
+                "linked_artifact_key": item.get("linked_artifact_key"),
+                "title": item.get("title"),
+                "status": item.get("status"),
+            }
+        )
+    return compact
 
 
 def public_ref_address(args: dict[str, Any]) -> dict[str, str] | None:

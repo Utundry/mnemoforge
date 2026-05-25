@@ -15,6 +15,12 @@ from app.services.mcp_mailbox import (
     mailbox_form_state_names,
 )
 from app.services.mcp_tool_contracts import build_report_task_checkpoint_payload
+from app.services.mcp_simple_read_actions import (
+    PublicRefDependencies,
+    compact_public_ref_matches,
+    resolve_public_artifact_short_ref,
+)
+from app.services.public_ref_index import AmbiguousPublicRefError, is_short_public_id
 
 
 PostCallback = Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -600,6 +606,46 @@ async def mailbox_close_task(
             "Use release_task_claim for lease-only cleanup, or retry through the MCP server.",
         )
     task_id = str(payload["task_id"]).strip()
+    if is_short_public_id(task_id):
+        async def _unused_get_task_context(_api_base: str, _args: dict[str, Any]) -> dict[str, Any]:
+            return {}
+
+        try:
+            resolution = await resolve_public_artifact_short_ref(
+                api_base=api_base,
+                project=project,
+                artifact_type="task",
+                local_id=task_id,
+                dependencies=PublicRefDependencies(
+                    get=dependencies.get,
+                    get_task_context=_unused_get_task_context,
+                    public_error_message=public_mailbox_error_message,
+                ),
+            )
+            task_id = resolution["local_id"]
+        except AmbiguousPublicRefError as exc:
+            return {
+                "state": state,
+                "project": project,
+                "receipt": {
+                    "status": "ambiguous_ref",
+                    "form_id": form.id,
+                    "message": "Task short id matched multiple artifacts.",
+                    "matches": compact_public_ref_matches(exc.matches),
+                    "next_safe_action": "Submit close_task again with a longer task_id prefix or full task_id.",
+                },
+            }
+        except Exception as exc:
+            return {
+                "state": state,
+                "project": project,
+                "receipt": {
+                    "status": "not_found",
+                    "form_id": form.id,
+                    "message": public_mailbox_error_message(exc),
+                    "next_safe_action": "Use get or list open tasks to verify the task id, then submit close_task again.",
+                },
+            }
     close_status = str(payload.get("close_status") or "obsolete").strip().lower() or "obsolete"
     allowed_close_statuses = {"obsolete", "duplicate", "superseded", "cancelled", "not_planned"}
     if close_status not in allowed_close_statuses:
