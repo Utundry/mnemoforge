@@ -23,6 +23,10 @@ from app.services.data_integrity_service import (
     reconcile_completed_remediations,
     run_integrity_audit,
 )
+from app.services.data_portability_service import (
+    build_portable_export_package,
+    build_portable_export_plan,
+)
 from app.services.data_hygiene_service import (
     build_ai_hygiene_resolution_plan,
     build_operator_playbook,
@@ -853,6 +857,36 @@ async def queue_integrity_remediation(
 async def data_hygiene_status(_: None = Depends(_admin_guard)) -> dict[str, Any]:
     _sync_data_hygiene_remediations_best_effort()
     return get_data_hygiene_store().overview()
+
+
+@router.get("/data-portability/export/plan")
+async def data_portability_export_plan(
+    project: str | None = Query(None),
+    row_limit_per_table: int = Query(1000, ge=1, le=10000),
+    include_test_stores: bool = Query(False),
+    _: None = Depends(_admin_guard),
+) -> dict[str, Any]:
+    return build_portable_export_plan(
+        project=project,
+        row_limit_per_table=row_limit_per_table,
+        include_test_stores=include_test_stores,
+    )
+
+
+@router.get("/data-portability/export")
+async def data_portability_export(
+    project: str | None = Query(None),
+    row_limit_per_table: int = Query(1000, ge=1, le=10000),
+    include_rows: bool = Query(True),
+    include_test_stores: bool = Query(False),
+    _: None = Depends(_admin_guard),
+) -> dict[str, Any]:
+    return build_portable_export_package(
+        project=project,
+        row_limit_per_table=row_limit_per_table,
+        include_rows=include_rows,
+        include_test_stores=include_test_stores,
+    )
 
 
 @router.get("/data-hygiene/policies")
