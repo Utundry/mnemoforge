@@ -106,6 +106,34 @@ async def test_list_artifacts_accepts_status_query_alias(client_with_unified_art
 
 
 @pytest.mark.asyncio
+async def test_list_artifacts_filters_by_query(client_with_unified_artifacts) -> None:
+    client, _fake_queue = client_with_unified_artifacts
+
+    for title in ("HTTP download export task", "Unrelated cleanup task"):
+        create = await client.post(
+            "/api/v1/improvements",
+            json={
+                "title": title,
+                "description": "Query filter regression fixture.",
+                "project": "proj-router-query",
+                "agent_id": "architect",
+                "importance_score": 0.8,
+                "tags": ["query-filter"],
+            },
+        )
+        assert create.status_code == 201, create.text
+
+    listed = await client.get(
+        "/api/v1/artifacts",
+        params={"project": "proj-router-query", "query": "HTTP download", "limit": 50},
+    )
+    assert listed.status_code == 200, listed.text
+    titles = [item["title"] for item in listed.json()["items"]]
+    assert any("HTTP download" in title for title in titles)
+    assert all("Unrelated cleanup" not in title for title in titles)
+
+
+@pytest.mark.asyncio
 async def test_resolve_artifact_survives_best_effort_followup_failure(
     client_with_unified_artifacts,
     monkeypatch,

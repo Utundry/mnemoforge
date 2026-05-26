@@ -218,6 +218,8 @@ class McpRouteSpec(BaseModel):
     examples: list[str] = Field(default_factory=list)
     arg_bonus: list[str] = Field(default_factory=list)
     bonus_terms: list[str] = Field(default_factory=list)
+    structural_arg: str = ""
+    payload_template: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(..., min_length=1)
 
 

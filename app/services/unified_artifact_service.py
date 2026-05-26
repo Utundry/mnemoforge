@@ -47,6 +47,29 @@ def _matches_datetime_range(
     return True
 
 
+def _matches_artifact_query(item: UnifiedArtifactRecord, query: str) -> bool:
+    tokens = [
+        token
+        for token in str(query or "").casefold().split()
+        if token and token not in {"about", "with", "task", "tasks", "improvement", "improvements", "artifact", "artifacts"}
+    ]
+    if not tokens:
+        return True
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            item.artifact_key,
+            item.linked_artifact_key,
+            item.task_id,
+            item.title,
+            item.description,
+            item.topic_path,
+            " ".join(item.tags or []),
+        )
+    ).casefold()
+    return all(token in haystack for token in tokens)
+
+
 class UnifiedArtifactService:
     """Единый фасад для доступа к improvements и tasks."""
 
@@ -175,6 +198,7 @@ class UnifiedArtifactService:
         project: str,
         status: str | None = None,
         type_: str | None = None,
+        query: str | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         updated_after: datetime | None = None,
@@ -252,6 +276,8 @@ class UnifiedArtifactService:
                     before=updated_before,
                 )
             ]
+        if query:
+            items = [item for item in items if _matches_artifact_query(item, query)]
 
         # Сортировать по updated_at (новые первыми)
         items.sort(key=lambda x: x.updated_at, reverse=True)

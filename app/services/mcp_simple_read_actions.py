@@ -381,10 +381,12 @@ async def build_simple_get_query_response(
     if artifact_list_type and project:
         status = artifact_list_status_filter(query)
         type_query = "" if artifact_list_type == "all" else f"&type={quote(artifact_list_type, safe='')}"
+        topic_query = artifact_topic_query(query, artifact_list_type)
         status_query = f"&status={quote(status, safe='')}" if status else ""
+        search_query = f"&query={quote(topic_query, safe='')}" if topic_query else ""
         data = await dependencies.get(
             api_base,
-            f"/artifacts?project={quote(project, safe='')}{status_query}&limit={limit}{type_query}",
+            f"/artifacts?project={quote(project, safe='')}{status_query}&limit={limit}{type_query}{search_query}",
         )
         if not isinstance(data, dict):
             data = await dependencies.query_project_expert(
@@ -520,9 +522,54 @@ def explicit_artifact_list_type(query: str) -> str:
         return "all"
     if asks_improvements:
         return "improvement"
+    if asks_tasks:
+        return "task"
     if asks_work_items:
         return "all"
     return ""
+
+
+def artifact_topic_query(query: str, artifact_list_type: str) -> str:
+    text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
+    stop_terms = {
+        "find",
+        "search",
+        "show",
+        "list",
+        "lookup",
+        "look",
+        "up",
+        "read",
+        "get",
+        "details",
+        "detail",
+        "about",
+        "for",
+        "with",
+        "by",
+        "task",
+        "tasks",
+        "improvement",
+        "improvements",
+        "work",
+        "item",
+        "items",
+        "artifact",
+        "artifacts",
+        "open",
+        "active",
+        "unresolved",
+        "pending",
+        "backlog",
+        "done",
+        "closed",
+        "resolved",
+        "archived",
+    }
+    words = [word for word in text.split() if word not in stop_terms]
+    if not words or " ".join(words) == artifact_list_type:
+        return ""
+    return " ".join(words)
 
 
 def artifact_list_status_filter(query: str) -> str:

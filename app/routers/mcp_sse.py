@@ -1813,11 +1813,56 @@ def _selected_catalog_route(
     min_score: float = 0.22,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     candidates = _route_catalog_scores(text, catalog, args)
+    if args:
+        for route in catalog:
+            structural_arg = str(route.get("structural_arg") or "").strip()
+            if structural_arg and bool(args.get(structural_arg)):
+                structural_candidate = {
+                    "intent_type": route["intent_type"],
+                    "tool": route["tool"],
+                    "score": 1.0,
+                    "matched_example": f"arg:{structural_arg}",
+                }
+                remaining = [item for item in candidates if item.get("intent_type") != route["intent_type"]]
+                return route, [structural_candidate, *remaining][:3]
     if not candidates or float(candidates[0].get("score") or 0.0) < min_score:
         return None, candidates[:3]
     best = candidates[0]
     route = next(item for item in catalog if item["intent_type"] == best["intent_type"])
     return route, candidates[:3]
+
+
+def _render_route_payload_template(
+    template: dict[str, Any],
+    *,
+    args: dict[str, Any],
+    project: str,
+    intent: str,
+    limit: int,
+) -> dict[str, Any]:
+    rendered: dict[str, Any] = {}
+    context = {
+        "project": project,
+        "intent": intent,
+        "limit": limit,
+    }
+    for key, raw_value in template.items():
+        value = raw_value
+        if isinstance(raw_value, str) and raw_value.startswith("{") and raw_value.endswith("}"):
+            token = raw_value[1:-1]
+            parts = token.split(":")
+            name = parts[0]
+            if name == "limit":
+                default_limit = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else limit
+                max_limit = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 200
+                value = min(max(1, int(args.get("limit") or default_limit)), max_limit)
+            elif name in context:
+                value = context[name]
+            else:
+                value = args.get(name)
+        if value not in (None, "", []):
+            rendered[key] = value
+    return rendered
 
 
 def _route_needs_llm_disambiguation(candidates: list[dict[str, Any]]) -> bool:
@@ -2642,7 +2687,7 @@ async def _ask_project_select_route(args: dict[str, Any]) -> dict[str, Any]:
     if not question:
         return lexical_route
     task_id_like = _extract_task_id_like_from_text(question)
-    if task_id_like:
+    if task_id_like or bool(lexical_route.get("structural_match")):
         lexical_route["scorer"] = {
             "backend_requested": "auto",
             "backend_used": "lexical",
@@ -3170,6 +3215,17 @@ def _project_context_route(
             reason=catalog_route["reason"],
             matched_example=route_candidates[0].get("matched_example", ""),
         )
+        payload_template = catalog_route.get("payload_template") if isinstance(catalog_route.get("payload_template"), dict) else {}
+        if payload_template:
+            route["payload"] = _render_route_payload_template(
+                payload_template,
+                args=args,
+                project=project,
+                intent=intent,
+                limit=limit,
+            )
+        if catalog_route.get("structural_arg") and args.get(str(catalog_route.get("structural_arg"))):
+            route["structural_match"] = True
 
     if task_id and not task_id_is_full:
         route.update(

@@ -4,6 +4,27 @@
   "purpose": "Declarative project_context route examples and scoring hints.",
   "routes": [
     {
+      "intent_type": "artifact_lookup",
+      "tool": "list_artifacts",
+      "mutating": false,
+      "examples": [
+        "find task about topic",
+        "search artifacts about topic",
+        "show improvement about topic",
+        "short topic phrase"
+      ],
+      "arg_bonus": ["artifact_lookup"],
+      "bonus_terms": ["task", "tasks", "improvement", "improvements", "artifact", "artifacts"],
+      "structural_arg": "artifact_lookup",
+      "payload_template": {
+        "project": "{project}",
+        "type": "{artifact_type}",
+        "query": "{intent}",
+        "limit": "{limit:50:200}"
+      },
+      "reason": "Read-only topic lookup maps to unified artifact search."
+    },
+    {
       "intent_type": "task_details",
       "tool": "pull_task_context",
       "mutating": false,

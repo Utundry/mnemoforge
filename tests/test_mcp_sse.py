@@ -9,6 +9,7 @@ from app import dependencies
 from app.main import _should_suppress_asyncio_transport_error
 from app.routers import mcp_sse
 from app.services.mcp_mailbox_actions import MailboxActionDependencies, mailbox_finish_task, mailbox_start_task
+from app.services.mcp_simple_read_actions import explicit_artifact_list_type
 from mcp import server as mcp_stdio
 
 
@@ -1171,6 +1172,32 @@ class TestMcpToolExecution:
 
         assert route["guardrail"] == ""
         assert route["facade"] in {"project_context", "project_work"}
+
+    async def test_ask_project_terse_topic_lookup_stays_read_only_artifact_search(self, monkeypatch):
+        async def fail_llm(args):
+            raise AssertionError("Terse topic lookup must not require LLM routing")
+
+        monkeypatch.setattr(mcp_sse, "_ask_project_llm_route", fail_llm)
+        route = await mcp_sse._ask_project_select_route(
+            {
+                "project": "mnemoforge",
+                "question": "HTTP download",
+                "response_format": "json",
+            }
+        )
+
+        assert route["facade"] == "project_context"
+        assert route["structural_match"] is True
+        assert route["payload"]["artifact_lookup"] is True
+        assert "allow_mutation" not in route["payload"]
+
+        context_route = mcp_sse._project_context_route(route["payload"])
+        assert context_route["tool"] == "list_artifacts"
+        assert context_route["mutating"] is False
+        assert context_route["payload"]["query"] == "HTTP download"
+
+    def test_get_find_task_query_maps_to_task_artifact_list(self):
+        assert explicit_artifact_list_type("find task about HTTP download") == "task"
 
     def test_project_context_tool_is_thematic_context_facade(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "project_context")
