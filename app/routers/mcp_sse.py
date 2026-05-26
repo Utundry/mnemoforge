@@ -1844,6 +1844,7 @@ def _render_route_payload_template(
     context = {
         "project": project,
         "intent": intent,
+        "topic_intent": _route_topic_intent(intent),
         "limit": limit,
     }
     for key, raw_value in template.items():
@@ -1863,6 +1864,14 @@ def _render_route_payload_template(
         if value not in (None, "", []):
             rendered[key] = value
     return rendered
+
+
+def _route_topic_intent(intent: str) -> str:
+    text = str(intent or "").strip()
+    normalized = re.sub(r"[_\-/\.]+", " ", text).casefold().strip()
+    if normalized in {"list artifacts", "list artifact", "artifacts", "artifact list"}:
+        return ""
+    return text
 
 
 def _route_needs_llm_disambiguation(candidates: list[dict[str, Any]]) -> bool:
@@ -2595,6 +2604,10 @@ def _format_route_answer(data: dict[str, Any]) -> str:
         lines.append(f"task_status={_diagnostic_value(first.get('status'))}")
     if first.get("artifact_key"):
         lines.append(f"artifact_key={_diagnostic_value(first.get('artifact_key'))}")
+    if first.get("matched_topic_tags"):
+        lines.append(f"matched_topic_tags={_diagnostic_value(first.get('matched_topic_tags'))}")
+    if first.get("match_reason"):
+        lines.append(f"why_match={_diagnostic_value(first.get('match_reason'))}")
     if first.get("work_token"):
         lines.append(f"work_token={_diagnostic_value(first.get('work_token'))}")
     if first.get("lease_id"):

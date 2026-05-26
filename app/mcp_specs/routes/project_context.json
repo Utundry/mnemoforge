@@ -19,7 +19,7 @@
       "payload_template": {
         "project": "{project}",
         "type": "{artifact_type}",
-        "query": "{intent}",
+        "query": "{topic_intent}",
         "limit": "{limit:50:200}"
       },
       "reason": "Read-only topic lookup maps to unified artifact search."

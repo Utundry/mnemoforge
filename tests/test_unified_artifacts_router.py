@@ -153,25 +153,18 @@ async def test_list_artifacts_uses_topic_aliases_and_ranking(client_with_unified
     diagnostic = await client.post(
         "/api/v1/improvements",
         json={
-            "title": "Fix HTTP download routing regression",
-            "description": "Diagnostic task for an HTTP download search bug and weak-agent retest.",
+            "title": "Explain artifact lookup matches and prevent weak-model search spirals",
+            "description": (
+                "Diagnostic task for an HTTP download search bug: explain artifact lookup "
+                "matches so weak agents do not spiral while searching for tasks."
+            ),
             "project": "proj-router-alias",
             "agent_id": "architect",
             "importance_score": 0.8,
-            "tags": ["#diagnostic-task", "#routing-regression"],
+            "tags": ["#diagnostic-task", "#routing-regression", "#topic-tag-lookup"],
         },
     )
     assert diagnostic.status_code == 201, diagnostic.text
-    diagnostic_id = diagnostic.json()["id"]
-    resolved = await client.patch(
-        f"/api/v1/improvements/{diagnostic_id}/resolve",
-        json={
-            "acted_by": "test",
-            "action_source": "test",
-            "reason": "Resolved diagnostic fixture.",
-        },
-    )
-    assert resolved.status_code == 200, resolved.text
 
     listed = await client.get(
         "/api/v1/artifacts",
@@ -182,6 +175,8 @@ async def test_list_artifacts_uses_topic_aliases_and_ranking(client_with_unified
     assert items
     assert items[0]["title"] == "Scripted portable data export and import-preview workflows"
     assert items[0]["status"] == "open"
+    assert "#http-download" in items[0]["matched_topic_tags"]
+    assert "Matched topic aliases" in items[0]["match_reason"]
 
 
 @pytest.mark.asyncio

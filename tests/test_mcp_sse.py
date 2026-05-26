@@ -1199,6 +1199,36 @@ class TestMcpToolExecution:
     def test_get_find_task_query_maps_to_task_artifact_list(self):
         assert explicit_artifact_list_type("find task about HTTP download") == "task"
 
+    def test_artifact_lookup_answer_explains_topic_alias_match(self):
+        answer = mcp_sse._format_route_answer(
+            {
+                "facade": "project_context",
+                "executed": True,
+                "selected_route": {"tool": "list_artifacts", "intent_type": "artifact_lookup", "mutating": False},
+                "result": {
+                    "items": [
+                        {
+                            "task_id": "493065dd-6719-431b-a91a-4a080204d5b4",
+                            "title": "Scripted portable data export and import-preview workflows",
+                            "status": "open",
+                            "artifact_key": "task:mnemoforge:493065dd-6719-431b-a91a-4a080204d5b4",
+                            "matched_topic_tags": ["#http-download", "#data-portability"],
+                            "match_reason": "Matched topic aliases #http-download, #data-portability.",
+                        }
+                    ]
+                },
+            }
+        )
+
+        assert "matched_topic_tags=#http-download; #data-portability" in answer
+        assert "why_match=Matched topic aliases" in answer
+
+    def test_route_payload_template_suppresses_tool_like_artifact_query(self):
+        route = mcp_sse._project_context_route({"project": "mnemoforge", "intent": "list_artifacts", "artifact_lookup": True})
+
+        assert route["tool"] == "list_artifacts"
+        assert "query" not in route["payload"]
+
     def test_project_context_tool_is_thematic_context_facade(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "project_context")
         schema = tool["inputSchema"]

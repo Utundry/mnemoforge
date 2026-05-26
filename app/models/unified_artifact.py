@@ -77,6 +77,9 @@ class UnifiedArtifactRecord:
     task_capture_pending_count: Optional[int] = None
     task_capture_promoted_count: Optional[int] = None
     task_statement_incomplete: Optional[bool] = None
+    query_score: Optional[float] = None
+    match_reason: Optional[str] = None
+    matched_topic_tags: list[str] = field(default_factory=list)
 
     # Связанные сущности
     linked_artifact_key: Optional[str] = None  # "task:mnemoforge:def" или "improvement:mnemoforge:abc"

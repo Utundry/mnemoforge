@@ -95,6 +95,18 @@ def _query_alias_terms(query: str, spec: dict) -> set[str]:
     return terms
 
 
+def _query_topic_tags(query: str, spec: dict) -> list[str]:
+    text = str(query or "").casefold()
+    tags: list[str] = []
+    for group in spec.get("alias_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        triggers = [str(trigger or "").casefold() for trigger in group.get("triggers") or []]
+        if any(trigger and trigger in text for trigger in triggers):
+            tags.extend(str(tag or "").strip() for tag in group.get("topic_tags") or [] if str(tag or "").strip())
+    return list(dict.fromkeys(tags))
+
+
 def _normalize_topic_tag(value: str) -> str:
     return str(value or "").strip().casefold().lstrip("#")
 
@@ -145,6 +157,20 @@ def _artifact_query_score(item: UnifiedArtifactRecord, query: str) -> float:
     if any(term and term in haystack for term in diagnostic_terms):
         score += float(weights.get("diagnostic_penalty") or -8.0)
     return score
+
+
+def _artifact_query_match_reason(item: UnifiedArtifactRecord, query: str, score: float) -> tuple[str, list[str]]:
+    spec = _artifact_lookup_spec()
+    topic_tags = _query_topic_tags(query, spec)
+    if topic_tags:
+        return (
+            f"Matched topic aliases {', '.join(topic_tags[:4])}; ranked by subject relevance, status, and diagnostic-noise penalty.",
+            topic_tags,
+        )
+    tokens = _query_tokens(query, spec)
+    if tokens:
+        return (f"Matched query terms: {', '.join(tokens[:5])}.", [])
+    return (f"Ranked by artifact relevance score {score:.2f}.", [])
 
 
 class UnifiedArtifactService:
@@ -358,6 +384,11 @@ class UnifiedArtifactService:
             scored_items = [(item, _artifact_query_score(item, query)) for item in items]
             scored_items = [(item, score) for item, score in scored_items if score > 0]
             scored_items.sort(key=lambda pair: (pair[1], pair[0].updated_at.timestamp()), reverse=True)
+            for item, score in scored_items:
+                reason, topic_tags = _artifact_query_match_reason(item, query, score)
+                item.query_score = round(float(score), 3)
+                item.match_reason = reason
+                item.matched_topic_tags = topic_tags
             items = [item for item, _score in scored_items]
 
         # Сортировать по updated_at (новые первыми)

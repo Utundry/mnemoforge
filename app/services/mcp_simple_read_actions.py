@@ -669,6 +669,8 @@ def compact_artifact_list_results(data: dict[str, Any], *, limit: int) -> dict[s
             "task_id": item.get("task_id"),
             "linked_artifact_key": item.get("linked_artifact_key"),
             "linked_status": item.get("linked_status"),
+            "match_reason": item.get("match_reason"),
+            "matched_topic_tags": item.get("matched_topic_tags"),
         }
         compact_items.append({key: value for key, value in compact.items() if value not in (None, "", [])})
     return {

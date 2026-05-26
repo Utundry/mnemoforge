@@ -72,8 +72,19 @@
     "regression",
     "routing",
     "misrouting",
+    "artifact lookup",
+    "explain artifact lookup",
+    "lookup matches",
+    "match explanation",
+    "task discovery",
     "search bug",
+    "search spiral",
+    "search spirals",
+    "topic-tag lookup",
     "guarded mutation",
+    "prevent weak-model",
+    "weak-model",
+    "weak model",
     "weak-agent retest"
   ],
   "weights": {
@@ -83,6 +94,6 @@
     "title_multiplier": 2.0,
     "description_multiplier": 1.0,
     "tag_multiplier": 1.2,
-    "diagnostic_penalty": -8.0
+    "diagnostic_penalty": -24.0
   }
 }
