@@ -2470,6 +2470,97 @@ class TestMcpToolExecution:
         assert candidate["result"]["statement"] == "Route through mailbox."
         assert memory["result"]["content"] == "Weak models need safe data reads."
 
+    async def test_simple_get_resolves_short_memory_ref_from_sqlite_store(self, monkeypatch):
+        from app.services.memory_store import get_memory_store
+
+        full_id = "0211928f-7238-4214-9ec9-ad99ff1fdfd0"
+        await get_memory_store().upsert(
+            full_id,
+            "memory",
+            "Root cause analysis: agent jumped to implementation without presenting plan.",
+            {
+                "project": "mnemoforge",
+                "memory_type": "experience",
+                "tags": ["workflow", "guardrail"],
+                "source": "mailbox_submit.store_memory",
+            },
+        )
+        requested: list[str] = []
+
+        async def fake_get(api_base: str, path: str):
+            requested.append(path)
+            if path == f"/memories/{full_id}":
+                return {
+                    "id": full_id,
+                    "content": "Root cause analysis: agent jumped to implementation without presenting plan.",
+                    "memory_type": "experience",
+                    "category": "memory",
+                    "project": "mnemoforge",
+                }
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "mnemoforge", "ref": "memory:mnemoforge:0211928f", "state": "planning"},
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "accepted"
+        assert result["receipt"]["resource_kind"] == "memory"
+        assert result["receipt"]["data_ref"] == f"memory:mnemoforge:{full_id}"
+        assert result["receipt"]["ref_source"] == "memory_store_prefix"
+        assert result["result"]["id"] == full_id
+        assert requested == [f"/memories/{full_id}"]
+
+    async def test_simple_get_find_memory_short_id_beats_task_id_lookup(self, monkeypatch):
+        from app.services.memory_store import get_memory_store
+
+        full_id = "0211928f-7238-4214-9ec9-ad99ff1fdfd0"
+        await get_memory_store().upsert(
+            full_id,
+            "memory",
+            "Root cause analysis: agent jumped to implementation without presenting plan.",
+            {"project": "mnemoforge", "memory_type": "experience"},
+        )
+
+        async def fake_get(api_base: str, path: str):
+            if path == f"/memories/{full_id}":
+                return {
+                    "id": full_id,
+                    "content": "Root cause analysis: agent jumped to implementation without presenting plan.",
+                    "memory_type": "experience",
+                    "category": "memory",
+                    "project": "mnemoforge",
+                }
+            raise AssertionError(path)
+
+        async def forbidden_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("explicit memory id lookup should not fall back to semantic memory search")
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("explicit memory id lookup should not route through task/project lookup")
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", forbidden_post)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "mnemoforge", "query": "find memory 0211928f", "state": "planning", "diagnostic": True},
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "accepted"
+        assert result["receipt"]["resource_kind"] == "memory"
+        assert result["simple_interface"]["route"] == "memory_ref_lookup"
+        assert result["result"]["id"] == full_id
+
     async def test_simple_get_resolves_short_improvement_refs(self, monkeypatch):
         from app.services.public_ref_index import get_public_ref_index_store
 

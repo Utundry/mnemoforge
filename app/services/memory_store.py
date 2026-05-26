@@ -126,6 +126,37 @@ class MemoryContentStore:
             ).fetchone()
         return _decode(row) if row else None
 
+    async def find_by_id_prefix(
+        self,
+        prefix: str,
+        *,
+        project: str | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Find memories by a public id prefix, optionally scoped by project metadata."""
+        text = str(prefix or "").strip().casefold()
+        if not text:
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM memory_content
+                WHERE lower(memory_id) LIKE ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (f"{text}%", int(limit)),
+            ).fetchall()
+        decoded = [_decode(row) for row in rows]
+        if not project:
+            return decoded
+        scoped: list[dict] = []
+        for row in decoded:
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            if str(metadata.get("project") or "").strip() == project:
+                scoped.append(row)
+        return scoped
+
     async def get_many(self, memory_ids: list[str]) -> dict[str, dict]:
         """Bulk fetch. Returns {memory_id: {content, metadata, ...}}."""
         if not memory_ids:

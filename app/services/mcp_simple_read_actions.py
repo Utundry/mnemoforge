@@ -14,6 +14,7 @@ from app.services.public_ref_index import (
     is_short_public_id,
     public_artifact_matches_short_id,
 )
+from app.services.memory_store import get_memory_store
 
 
 GetCallback = Callable[[str, str], Awaitable[Any]]
@@ -108,7 +109,17 @@ async def build_simple_public_ref_response(
             next_safe_action = "Review this read-only rule candidate before any promotion, revision, or review action."
         elif kind == "memory":
             ref_source = "direct"
-            result = await dependencies.get(api_base, f"/memories/{quote(local_id, safe='')}")
+            if is_short_public_id(local_id):
+                memory_resolution = await resolve_public_memory_short_ref(project=project, local_id=local_id)
+                local_id = memory_resolution["memory_id"]
+                normalized_ref = f"memory:{project}:{local_id}"
+                ref_source = memory_resolution["source"]
+            result = await get_memory_by_public_id(
+                api_base=api_base,
+                project=project,
+                memory_id=local_id,
+                dependencies=dependencies,
+            )
             next_safe_action = "Review this read-only memory before creating new facts or updates."
         else:
             return _public_ref_envelope(
@@ -284,6 +295,65 @@ async def find_artifact_short_ref_matches(
     ]
 
 
+async def resolve_public_memory_short_ref(*, project: str, local_id: str) -> dict[str, str]:
+    matches = await get_memory_store().find_by_id_prefix(local_id, project=project, limit=20)
+    if len(matches) != 1:
+        if matches:
+            raise AmbiguousPublicRefError(compact_memory_ref_matches(matches))
+        raise PublicRefNotFoundError("Public memory short id did not resolve.")
+    return {"memory_id": str(matches[0].get("memory_id") or ""), "source": "memory_store_prefix"}
+
+
+async def get_memory_by_public_id(
+    *,
+    api_base: str,
+    project: str,
+    memory_id: str,
+    dependencies: PublicRefDependencies,
+) -> dict[str, Any]:
+    try:
+        result = await dependencies.get(api_base, f"/memories/{quote(memory_id, safe='')}")
+        return result if isinstance(result, dict) else {"id": memory_id, "value": result}
+    except Exception:
+        row = await get_memory_store().get(memory_id)
+        if not row:
+            raise
+        return memory_store_row_to_public_memory(row, project=project)
+
+
+def memory_store_row_to_public_memory(row: dict[str, Any], *, project: str) -> dict[str, Any]:
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    return {
+        "id": row.get("memory_id"),
+        "content": row.get("content"),
+        "category": row.get("category"),
+        "memory_type": metadata.get("memory_type"),
+        "project": metadata.get("project") or project,
+        "tags": metadata.get("tags") or [],
+        "importance_score": metadata.get("importance_score"),
+        "created_at": metadata.get("timestamp") or row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "source": metadata.get("source"),
+    }
+
+
+def compact_memory_ref_matches(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for row in matches[:10]:
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        compact.append(
+            {
+                "ref": f"memory:{metadata.get('project') or ''}:{row.get('memory_id')}",
+                "id": row.get("memory_id"),
+                "category": row.get("category"),
+                "memory_type": metadata.get("memory_type"),
+                "project": metadata.get("project"),
+                "content": str(row.get("content") or "")[:160],
+            }
+        )
+    return compact
+
+
 def compact_public_ref_matches(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
     compact: list[dict[str, Any]] = []
     for item in matches[:10]:
@@ -362,6 +432,72 @@ async def build_simple_get_query_response(
     project = str(args.get("project") or args.get("project_id") or "").strip()
     limit = int(args.get("limit") or 10)
     state = str(args.get("state") or "planning")
+    memory_lookup_id = explicit_memory_lookup_id(query)
+    if memory_lookup_id:
+        if not project:
+            project = "mnemoforge"
+        try:
+            if is_short_public_id(memory_lookup_id):
+                memory_resolution = await resolve_public_memory_short_ref(project=project, local_id=memory_lookup_id)
+                memory_id = memory_resolution["memory_id"]
+                ref_source = memory_resolution["source"]
+            else:
+                memory_id = memory_lookup_id
+                ref_source = "direct"
+            result = await get_memory_by_public_id(
+                api_base=api_base,
+                project=project,
+                memory_id=memory_id,
+                dependencies=PublicRefDependencies(
+                    get=dependencies.get,
+                    get_task_context=lambda _api_base, _args: {},
+                    public_error_message=lambda exc: str(exc),
+                ),
+            )
+            return {
+                "state": state,
+                "project": project,
+                "receipt": {
+                    "status": "accepted",
+                    "message": "Explicit memory id query resolved through memory lookup.",
+                    "resource_kind": "memory",
+                    "ref_source": ref_source,
+                    "data_ref": f"memory:{project}:{memory_id}",
+                    "requested_ref": query,
+                    "next_safe_action": "Review this read-only memory before creating new facts or updates.",
+                },
+                "result": result,
+                "simple_interface": {"tool": "get", "mode": "query", "route": "memory_ref_lookup"},
+                "next_safe_action": "Review this read-only memory before creating new facts or updates.",
+                "details_available": True,
+            }
+        except AmbiguousPublicRefError as exc:
+            return {
+                "state": state,
+                "project": project,
+                "receipt": {
+                    "status": "ambiguous_ref",
+                    "message": "Public memory short id matched multiple memories.",
+                    "matches": exc.matches,
+                    "next_safe_action": "Call get again with a longer memory id prefix or a full memory ref from matches.",
+                },
+                "next_safe_action": "Call get again with a longer memory id prefix or a full memory ref from matches.",
+                "details_available": True,
+            }
+        except Exception as exc:
+            return {
+                "state": state,
+                "project": project,
+                "receipt": {
+                    "status": "not_found",
+                    "message": str(exc),
+                    "resource_kind": "memory",
+                    "next_safe_action": "Verify the memory id or search memories with a descriptive query.",
+                },
+                "next_safe_action": "Verify the memory id or search memories with a descriptive query.",
+                "details_available": True,
+            }
+
     artifact_list_type = explicit_artifact_list_type(query)
     if artifact_list_type and not project:
         return {
@@ -525,10 +661,10 @@ async def build_simple_get_query_response(
 
 def query_uses_project_expert(query: str, *, extract_task_id_like: TaskIdDetector) -> bool:
     text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
-    if extract_task_id_like(query):
-        return True
     if explicit_memory_lookup(text):
         return False
+    if extract_task_id_like(query):
+        return True
     return any(term in text for term in _PROJECT_QUERY_TERMS)
 
 
@@ -553,6 +689,8 @@ def explicit_artifact_list_type(query: str) -> str:
 def terse_topic_artifact_query(query: str) -> bool:
     text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold().strip()
     if not text or explicit_memory_lookup(text):
+        return False
+    if any(term in text for term in ("memory", "memories", "fact", "facts", "stored", "context")):
         return False
     if any(term in text for term in _PROJECT_QUERY_TERMS):
         return False
@@ -631,6 +769,21 @@ def explicit_memory_lookup(text: str) -> bool:
             "\u043f\u043e\u0438\u0441\u043a \u0432 \u043f\u0430\u043c\u044f\u0442",
         )
     )
+
+
+def explicit_memory_lookup_id(query: str) -> str:
+    text = str(query or "")
+    normalized = re.sub(r"[_\-/\.]+", " ", text).casefold()
+    if not explicit_memory_lookup(normalized):
+        return ""
+    uuid_match = re.search(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+        text,
+    )
+    if uuid_match:
+        return uuid_match.group(0)
+    short_match = re.search(r"\b[0-9a-fA-F]{6,12}\b", text)
+    return short_match.group(0) if short_match else ""
 
 
 def compact_memory_search_results(results: Any) -> list[dict[str, Any]]:
