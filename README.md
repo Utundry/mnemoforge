@@ -1,4 +1,6 @@
-# Mnemoforge
+# SloplessCode
+
+Formerly Mnemoforge.
 
 **Operational continuity infrastructure for AI coding agents.**
 
