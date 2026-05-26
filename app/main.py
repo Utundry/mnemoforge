@@ -198,6 +198,52 @@ async def _warmup_local_embedding_services(ollama_svc: OllamaService) -> None:
         logger.info("LM Studio warmup skipped: LM Studio is not enabled in the local LLM provider order")
 
 
+async def _ensure_qdrant_ready(qdrant_svc: QdrantService) -> None:
+    """
+    Wait for Qdrant to answer before finishing startup.
+
+    Docker Compose only guarantees container start order, not readiness. A short
+    retry window avoids failing the whole app when Qdrant is still initializing.
+    """
+    if settings.qdrant_in_memory:
+        await qdrant_svc.ensure_collection()
+        return
+
+    attempts = max(1, int(os.getenv("QDRANT_STARTUP_RETRIES", "30")))
+    delay_seconds = max(0.1, float(os.getenv("QDRANT_STARTUP_RETRY_SECONDS", "2.0")))
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            await qdrant_svc.ensure_collection()
+            if attempt > 1:
+                logger.info("Qdrant became ready after %d attempt(s)", attempt)
+            return
+        except Exception as exc:
+            from app.core.exceptions import QdrantServiceError
+
+            if isinstance(exc, QdrantServiceError):
+                raise
+
+            last_error = exc
+            if attempt >= attempts:
+                break
+            logger.warning(
+                "Qdrant startup attempt %d/%d failed; retrying in %.1fs: %s",
+                attempt,
+                attempts,
+                delay_seconds,
+                exc,
+            )
+            await asyncio.sleep(delay_seconds)
+
+    assert last_error is not None
+    raise RuntimeError(
+        f"Qdrant did not become ready after {attempts} attempt(s); "
+        f"check QDRANT_HOST={settings.qdrant_host!r} and QDRANT_PORT={settings.qdrant_port}"
+    ) from last_error
+
+
 async def _enqueue_startup_docs_refresh(
     queue,
     project_id: str,
@@ -379,7 +425,7 @@ async def lifespan(app: FastAPI):
         )
     set_qdrant_client(client)
     qdrant_svc = QdrantService(client)
-    await qdrant_svc.ensure_collection()
+    await _ensure_qdrant_ready(qdrant_svc)
 
     # Init Ollama service object; warmup is local-only and optional.
     ollama_svc = OllamaService()

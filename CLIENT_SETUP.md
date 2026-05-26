@@ -1,6 +1,6 @@
-# MnemoForge Client Setup
+# SloplessCode Client Setup
 
-This guide is for a client machine that does not run the MnemoForge server. It only connects to an already running MnemoForge server over the network.
+This guide is for a client machine that does not run the SloplessCode server. It only connects to an already running SloplessCode server over the network.
 
 ## Requirements
 
@@ -36,14 +36,14 @@ mkdir <CLIENT_HOME>
 ```
 
 ```bash
-mkdir -p ~/mnemoforge-client
-scp user@<SERVER_IP>:/path/to/mnemoforge/mcp/server.py ~/mnemoforge-client/
+mkdir -p ~/sloplesscode-client
+scp user@<SERVER_IP>:/path/to/sloplesscode/mcp/server.py ~/sloplesscode-client/
 ```
 
 Option B: clone the full repository:
 
 ```bash
-git clone https://github.com/Utundry/mnemoforge.git mnemoforge-client
+git clone https://github.com/Utundry/sloplesscode.git sloplesscode-client
 ```
 
 ## 3. Install The Python Dependency
@@ -68,7 +68,7 @@ source .venv/bin/activate
 pip install httpx
 ```
 
-## 4. Register MnemoForge In Claude Code
+## 4. Register SloplessCode In Claude Code
 
 Find the `claude` executable:
 
@@ -88,7 +88,7 @@ Windows:
 ```powershell
 claude mcp add -s user `
   -e "MEMORY_SERVER_URL=http://<SERVER_IP>:8000" `
-  mnemoforge `
+  sloplesscode `
   -- "<CLIENT_HOME>\.venv\Scripts\python.exe" "<CLIENT_HOME>\server.py"
 ```
 
@@ -97,8 +97,8 @@ Linux or macOS:
 ```bash
 claude mcp add -s user \
   -e "MEMORY_SERVER_URL=http://<SERVER_IP>:8000" \
-  mnemoforge \
-  -- ~/mnemoforge-client/.venv/bin/python ~/mnemoforge-client/server.py
+  sloplesscode \
+  -- ~/sloplesscode-client/.venv/bin/python ~/sloplesscode-client/server.py
 ```
 
 If the server requires an API key, add the expected environment variable or client header according to your MCP client configuration. For SSE clients, send `X-Api-Key: <your key>`.
@@ -161,7 +161,7 @@ Client A (Windows)              Client B (Linux)
         +---------- HTTP ---------------+
                           |
                    <SERVER_IP>:8000
-                   MnemoForge API
+                   SloplessCode API
                           |
                        Qdrant
                  optional LLM providers

@@ -3004,7 +3004,7 @@ class TestMcpToolExecution:
                 "facade": "ask_project",
                 "question": args["question"],
                 "selected_expert_route": {"facade": "project_work"},
-                "result_text": "Mnemoforge answer\nAnswer: project_work executed route list_open_tasks.",
+                "result_text": "SloplessCode answer\nAnswer: project_work executed route list_open_tasks.",
             }
 
         async def forbidden_post(api_base: str, path: str, payload: dict):
@@ -3815,7 +3815,7 @@ class TestMcpToolExecution:
             "http://test",
         )
 
-        assert text.startswith("Mnemoforge answer\n")
+        assert text.startswith("SloplessCode answer\n")
         assert "Answer: Next useful project action is First task." in text
         assert "task_id=task-1" in text
         assert "title=First task" in text
@@ -4173,7 +4173,7 @@ class TestMcpToolExecution:
             "http://test",
         )
 
-        assert text.startswith("Mnemoforge answer\n")
+        assert text.startswith("SloplessCode answer\n")
         assert "Answer: No mutation was executed." in text
         assert "executed=false" in text
         assert "mutation_executed=false" in text
@@ -4191,7 +4191,7 @@ class TestMcpToolExecution:
             "http://test",
         )
 
-        assert text.startswith("Mnemoforge route diagnostic\n")
+        assert text.startswith("SloplessCode route diagnostic\n")
         assert "executed=false" in text
         assert "guardrail_triggered=true" in text
         assert "confirmation_required=true" in text
@@ -4542,7 +4542,7 @@ class TestMcpToolExecution:
             "http://test",
         )
 
-        assert answer.startswith("Mnemoforge answer\n")
+        assert answer.startswith("SloplessCode answer\n")
         assert "project_rules executed route list_project_laws" in answer
         assert "Use Docker test contour" in answer
         assert "route_telemetry" not in answer
@@ -5013,7 +5013,7 @@ class TestMcpToolExecution:
             "http://test",
         )
 
-        assert text.startswith("Mnemoforge route diagnostic\n")
+        assert text.startswith("SloplessCode route diagnostic\n")
         assert "facade=project_context" in text
         assert "route.tool=list_artifacts" in text
         assert "route.intent_type=task_lookup" in text
@@ -5031,7 +5031,7 @@ class TestMcpToolExecution:
         async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
             calls.append((tool_name, args))
             return (
-                "Mnemoforge answer\n"
+                "SloplessCode answer\n"
                 "Answer: Found task 382e7306-cb61-46ee-8398-bc0a9bdfd9ef.\n"
                 "task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef"
             )
@@ -5043,7 +5043,7 @@ class TestMcpToolExecution:
             "http://test",
         )
 
-        assert text.startswith("Mnemoforge answer\n")
+        assert text.startswith("SloplessCode answer\n")
         assert "task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef" in text
         assert calls[0][0] == "project_context"
         assert calls[0][1]["response_format"] == "answer"
@@ -5075,7 +5075,7 @@ class TestMcpToolExecution:
         async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
             calls.append((tool_name, args))
             return (
-                "Mnemoforge answer\n"
+                "SloplessCode answer\n"
                 "Answer: Found task f6c44417-48b0-40fb-944c-3194fc20fad6.\n"
                 "task_id=f6c44417-48b0-40fb-944c-3194fc20fad6"
             )
@@ -5102,7 +5102,7 @@ class TestMcpToolExecution:
 
         async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
             calls.append((tool_name, args))
-            return "Mnemoforge answer\nAnswer: Project readiness route executed."
+            return "SloplessCode answer\nAnswer: Project readiness route executed."
 
         monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
         text = await original_execute(
@@ -5121,7 +5121,7 @@ class TestMcpToolExecution:
 
         async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
             calls.append((tool_name, args))
-            return "Mnemoforge answer\nAnswer: project_work executed route list_open_tasks."
+            return "SloplessCode answer\nAnswer: project_work executed route list_open_tasks."
 
         monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
         text = await original_execute(
@@ -5141,7 +5141,7 @@ class TestMcpToolExecution:
 
         async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
             calls.append((tool_name, args))
-            return "Mnemoforge answer\nAnswer: project_work executed route list_open_tasks."
+            return "SloplessCode answer\nAnswer: project_work executed route list_open_tasks."
 
         monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
         text = await original_execute(
@@ -5160,7 +5160,7 @@ class TestMcpToolExecution:
 
         async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
             calls.append((tool_name, args))
-            return "Mnemoforge answer\nAnswer: project_work executed route list_open_tasks."
+            return "SloplessCode answer\nAnswer: project_work executed route list_open_tasks."
 
         monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
         text = await original_execute(
@@ -5179,7 +5179,7 @@ class TestMcpToolExecution:
 
         async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
             calls.append((tool_name, args))
-            return "Mnemoforge answer\nAnswer: project_verify executed route get_task_execution_context."
+            return "SloplessCode answer\nAnswer: project_verify executed route get_task_execution_context."
 
         monkeypatch.setattr(
             mcp_sse,
@@ -5210,7 +5210,7 @@ class TestMcpToolExecution:
 
         async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
             return (
-                "Mnemoforge answer\n"
+                "SloplessCode answer\n"
                 "Answer: Next useful project action is First task.\n"
                 "task_id=task-1"
             )
@@ -5226,7 +5226,7 @@ class TestMcpToolExecution:
             "http://test",
         )
 
-        assert text.startswith("Mnemoforge answer\n")
+        assert text.startswith("SloplessCode answer\n")
         assert text.rstrip().endswith("ROUTINE_REDUCTION_OK = yes")
 
     async def test_ask_project_mutating_request_stays_guarded(self, monkeypatch):
@@ -5235,7 +5235,7 @@ class TestMcpToolExecution:
 
         async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
             calls.append((tool_name, args))
-            return "Mnemoforge answer\nAnswer: No mutation was executed."
+            return "SloplessCode answer\nAnswer: No mutation was executed."
 
         monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
         text = await original_execute(
@@ -5252,7 +5252,7 @@ class TestMcpToolExecution:
         original_execute = mcp_sse._execute_tool
 
         async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
-            return "Mnemoforge answer\nAnswer: Found task 382e7306."
+            return "SloplessCode answer\nAnswer: Found task 382e7306."
 
         monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
         text = await original_execute(
@@ -5261,7 +5261,7 @@ class TestMcpToolExecution:
             "http://test",
         )
 
-        assert text.startswith("Mnemoforge ask_project diagnostic\n")
+        assert text.startswith("SloplessCode ask_project diagnostic\n")
         assert "selected_facade=project_context" in text
         assert "response_format=diagnostic" in text
         assert "Question contains a full or partial task id" in text
@@ -5320,7 +5320,7 @@ class TestMcpToolExecution:
             "http://test",
         )
 
-        assert text.startswith("Mnemoforge answer\n")
+        assert text.startswith("SloplessCode answer\n")
         assert "Answer: Found task 382e7306-cb61-46ee-8398-bc0a9bdfd9ef." in text
         assert "task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef" in text
         assert "title=Add shared semantic or LLM route matching" in text

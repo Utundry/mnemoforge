@@ -1,6 +1,6 @@
-# Mnemoforge Setup
+# SloplessCode Setup
 
-This guide describes the public alpha setup path for running Mnemoforge from a fresh clone.
+This guide describes the public alpha setup path for running SloplessCode from a fresh clone.
 
 ## Requirements
 
@@ -15,8 +15,8 @@ This guide describes the public alpha setup path for running Mnemoforge from a f
 Clone the repository, generate a local `.env`, and start the user-facing Compose stack:
 
 ```powershell
-git clone https://github.com/Utundry/mnemoforge.git
-cd mnemoforge
+git clone https://github.com/Utundry/sloplesscode.git
+cd sloplesscode
 python scripts/configure_public.py --non-interactive
 docker compose --env-file .env.user -f docker-compose.user.yml up -d
 ```
@@ -36,7 +36,7 @@ After restarting Docker Desktop or recreating the stack, allow up to 120 seconds
 The published image is used by `docker-compose.user.yml` and is also available directly as:
 
 ```powershell
-docker pull caveboy/mnemoforge:latest
+docker pull caveboy/sloplesscode:latest
 ```
 
 For contributor development, use the source-building stack:
@@ -81,7 +81,7 @@ The checked-in `.mcp.json` is a localhost example without secrets:
 ```json
 {
   "mcpServers": {
-    "mnemoforge": {
+    "sloplesscode": {
       "type": "sse",
       "url": "http://localhost:8000/mcp/sse"
     }
@@ -112,7 +112,7 @@ python scripts/mcp_smoke.py --server http://localhost:8000
 Inspect service logs:
 
 ```powershell
-docker compose --env-file .env.user -f docker-compose.user.yml logs mnemoforge --tail 120
+docker compose --env-file .env.user -f docker-compose.user.yml logs sloplesscode --tail 120
 docker compose --env-file .env.user -f docker-compose.user.yml logs qdrant --tail 120
 ```
 
@@ -130,7 +130,7 @@ Run release artifact checks before publishing:
 
 ```powershell
 python scripts/audit_release_artifacts.py
-python -m scripts.publish_docker_image --repository caveboy/mnemoforge --tag latest --check
+python -m scripts.publish_docker_image --repository caveboy/sloplesscode --tag latest --check
 ```
 
 ## Troubleshooting
@@ -150,8 +150,8 @@ python -m scripts.publish_docker_image --repository caveboy/mnemoforge --tag lat
 
 ## Author And Contact
 
-MnemoForge is created and maintained by Nikolai Laptev.
+SloplessCode is created and maintained by Nikolai Laptev.
 
 - Email: `caveboy@yandex.ru`
-- Docker Hub: `caveboy/mnemoforge`
-- GitHub repository: `Utundry/mnemoforge`
+- Docker Hub: `caveboy/sloplesscode`
+- GitHub repository: `Utundry/sloplesscode`

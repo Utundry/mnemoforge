@@ -28,7 +28,7 @@ def _env_first(*names: str, max_length: int = 160) -> str:
 def public_server_build_info() -> dict[str, str]:
     """Return safe build metadata for diagnostics without exposing host paths or secrets."""
     data = {
-        "service": "mnemoforge",
+        "service": "SloplessCode",
         "started_at": _STARTED_AT,
         "git_commit": _env_first("MNEMOFORGE_GIT_COMMIT", "GIT_COMMIT", "SOURCE_COMMIT", "COMMIT_SHA", max_length=64),
         "build_tag": _env_first("MNEMOFORGE_BUILD_TAG", "DOCKER_IMAGE_TAG", "BUILD_TAG", max_length=80),

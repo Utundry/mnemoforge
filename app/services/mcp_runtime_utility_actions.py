@@ -43,7 +43,7 @@ async def execute_runtime_utility_action(
         ollama_status = "ok" if infra.get("ollama", {}).get("reachable") else "fail"
 
         lines = [
-            f"mnemoforge status: {data.get('status','?')} | uptime: {data.get('uptime_seconds',0)//60}m",
+            f"SloplessCode status: {data.get('status','?')} | uptime: {data.get('uptime_seconds',0)//60}m",
             f"Qdrant: {qdrant_status}  Ollama: {ollama_status}  "
             f"embedding: {infra.get('embedding_model','?')} ({infra.get('embedding_dimensions','?')}d)",
             f"Models: {', '.join(models) or 'none'}",

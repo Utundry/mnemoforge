@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     cleanup_min_importance: float = Field(0.2, alias="CLEANUP_MIN_IMPORTANCE")
     cleanup_max_age_days: int = Field(30, alias="CLEANUP_MAX_AGE_DAYS")
     self_project_id: str = Field("mnemoforge", alias="SELF_PROJECT_ID")
+    public_project_alias: str = Field("sloplesscode", alias="PUBLIC_PROJECT_ALIAS")
     runtime_kind: str = Field("auto", alias="MNEMOFORGE_RUNTIME_KIND")
     runtime_owner_guard: bool = Field(True, alias="MNEMOFORGE_RUNTIME_OWNER_GUARD")
     runtime_owner_allow_takeover: bool = Field(False, alias="MNEMOFORGE_RUNTIME_OWNER_ALLOW_TAKEOVER")

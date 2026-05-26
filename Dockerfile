@@ -26,10 +26,11 @@ ENV PYTHONUNBUFFERED=1 \
     MNEMOFORGE_BUILD_TAG=$MNEMOFORGE_BUILD_TAG \
     MNEMOFORGE_IMAGE_REPOSITORY=$MNEMOFORGE_IMAGE_REPOSITORY
 
-LABEL org.opencontainers.image.title="mnemoforge" \
+LABEL org.opencontainers.image.title="SloplessCode" \
       org.opencontainers.image.revision=$MNEMOFORGE_GIT_COMMIT \
       org.opencontainers.image.version=$MNEMOFORGE_BUILD_TAG \
-      org.opencontainers.image.source="https://github.com/Utundry/mnemoforge"
+      org.opencontainers.image.source="https://github.com/Utundry/sloplesscode" \
+      org.opencontainers.image.description="SloplessCode (formerly Mnemoforge)"
 
 EXPOSE 8000
 

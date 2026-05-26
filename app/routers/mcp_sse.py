@@ -2528,7 +2528,7 @@ def _format_route_diagnostic(data: dict[str, Any]) -> str:
     executed = bool(data.get("executed"))
     guardrail_triggered = bool(selected.get("mutating")) and not executed
     lines = [
-        "Mnemoforge route diagnostic",
+        "SloplessCode route diagnostic",
         f"facade={_diagnostic_value(data.get('facade'))}",
         f"project={_diagnostic_value(data.get('project'))}",
         f"intent={_diagnostic_value(data.get('intent'))}",
@@ -2566,7 +2566,7 @@ def _format_route_answer(data: dict[str, Any]) -> str:
     preferred_task_id = _extract_task_id_like_from_text(str(data.get("intent") or ""))
     first = _first_route_result_item(result, preferred_task_id=preferred_task_id)
     intent_type = str(selected.get("intent_type") or "")
-    lines = ["Mnemoforge answer"]
+    lines = ["SloplessCode answer"]
 
     if selected.get("mutating") and not data.get("executed"):
         lines.append("Answer: No mutation was executed. Review the guarded route before allowing changes.")
@@ -2777,7 +2777,7 @@ async def _ask_project_select_route(args: dict[str, Any]) -> dict[str, Any]:
 def _format_ask_project_diagnostic(data: dict[str, Any]) -> str:
     route = data.get("selected_expert_route") if isinstance(data.get("selected_expert_route"), dict) else {}
     lines = [
-        "Mnemoforge ask_project diagnostic",
+        "SloplessCode ask_project diagnostic",
         f"project={_diagnostic_value(data.get('project'))}",
         f"question={_diagnostic_value(data.get('question'))}",
         f"selected_facade={_diagnostic_value(route.get('facade'))}",
@@ -4962,7 +4962,7 @@ TOOLS = [
         "name": "ask_project",
         "description": (
             "Human-facing read-only project expert facade. Ask a natural project question; "
-            "Mnemoforge chooses the thematic facade, route, and response format."
+            "SloplessCode chooses the thematic facade, route, and response format."
         ),
         "inputSchema": {
             "type": "object",

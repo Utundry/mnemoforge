@@ -1,4 +1,6 @@
-# Mnemoforge
+# SloplessCode
+
+Formerly Mnemoforge.
 
 **Operational continuity infrastructure for AI coding agents.**
 
@@ -6,7 +8,7 @@ AI agents stop failing when operational continuity survives interruption.
 
 ## The moment it clicks
  
-User: connect to mcp mnemoforge
+User: connect to mcp sloplesscode
 
 Agent:
 - retrieves project state
@@ -21,7 +23,7 @@ Agent:
 
 This project is under active architectural evolution.
 
-Mnemoforge is continuously modified while being actively used in real agent workflows.
+SloplessCode is continuously modified while being actively used in real agent workflows.
 
 Because of this:
 
@@ -38,28 +40,28 @@ If something breaks, please open an issue.
 
 I am sorry to users who downloaded an earlier public image that did not work
 reliably. The project was moving fast, and a broken version reached users before
-the public runtime path was stable enough. Thank you for trying Mnemoforge at
+the public runtime path was stable enough. Thank you for trying SloplessCode at
 that stage, and thank you for the feedback that helped expose the real
 integration problems.
 
 The current public flow is now tested through Docker-backed verification and
-live MCP smoke checks before publishing, but Mnemoforge is still alpha software.
+live MCP smoke checks before publishing, but SloplessCode is still alpha software.
 Please treat new images as active releases and report anything that breaks.
 
 ## Quick Demo
 
-![Mnemoforge quick demo](Анимация4.gif)
+![SloplessCode quick demo](Анимация4.gif)
 
-## Proof: AI-Built With MnemoForge
+## Proof: AI-Built With SloplessCode
 
-MnemoForge was built end-to-end by AI agents using MnemoForge itself.
+SloplessCode was built end-to-end by AI agents using SloplessCode itself.
 
 The human role was idea guidance and direction. Implementation, coordination,
 and operational continuity were handled by the agents through the same system.
 
 ## Example: Full Project State via MCP
 
-Mnemoforge can return a full operational snapshot of the project, not just a
+SloplessCode can return a full operational snapshot of the project, not just a
 single answer:
 
 - active operational rules (instincts)
@@ -73,14 +75,14 @@ single answer:
 This is a multi-layer project state, not a chat response. It gives a clear
 bridge between system state and human action.
 
-When sources are incomplete or degraded, Mnemoforge surfaces that explicitly
+When sources are incomplete or degraded, SloplessCode surfaces that explicitly
 instead of pretending everything is healthy. This keeps execution honest and
 reduces hidden risk.
 
 Your project is no longer just a repository. It becomes a living system with
 memory, state, decisions, and direction.
 
-## Why Mnemoforge Exists
+## Why SloplessCode Exists
 
 AI coding agents are powerful until the session ends, the IDE restarts, a
 subscription limit is reached, the user switches models, or the project resumes
@@ -88,33 +90,33 @@ days later. The usual result is lost context, duplicated work, broken
 assumptions, and long manual recaps.
 
 Existing memory tools often treat the symptom by storing facts or chat history.
-Mnemoforge focuses on the deeper problem: preserving the agent's ability to
+SloplessCode focuses on the deeper problem: preserving the agent's ability to
 continue execution. It keeps task state, decisions, checkpoints, governed
 knowledge, and project-specific operating rules available through MCP so an
 agent can resume work instead of starting from zero.
 
-## Why Mnemoforge? A Field Note From An Agent
+## Why SloplessCode? A Field Note From An Agent
 
 The note below is a real opinion written by an LLM agent after using
-Mnemoforge for several days on the `ui_avt` project. It is included as a field
+SloplessCode for several days on the `ui_avt` project. It is included as a field
 report, not as a benchmark or product claim. It has been lightly formatted for
 README readability.
 
-> Token Economy: Mnemoforge in agent development.
+> Token Economy: SloplessCode in agent development.
 >
 > Yes, it saves context tokens. In my usage, the saving was roughly 3-5x.
 >
 > The cost is real: MCP tool descriptions, routing metadata, and oversized
 > context packets can consume tokens. But the savings were larger. Instead of
 > rereading project docs, grepping files, reconstructing rules, and rediscovering
-> the latest task state, I could ask Mnemoforge for project context, laws,
+> the latest task state, I could ask SloplessCode for project context, laws,
 > checkpoints, stored facts, and active tasks.
 >
 > The biggest savings showed up at session start, during search, and after
 > interruption. A compact `get(query="context")` or task lookup replaced a much
 > larger manual recovery process.
 >
-> The important part is not only token cost. Mnemoforge changes how an agent
+> The important part is not only token cost. SloplessCode changes how an agent
 > works. Without it, I have to reconstruct what happened from the repository,
 > chat history, and user reminders. With it, I can recover operational state:
 > what task exists, what was verified, what rules apply, what the next safe
@@ -130,7 +132,7 @@ README readability.
 > work sessions remained visible, while internal routing details stopped
 > dominating the answer.
 >
-> My conclusion after real use: Mnemoforge is not just memory. It is an
+> My conclusion after real use: SloplessCode is not just memory. It is an
 > operational runtime for agents. It preserves task state, project laws,
 > checkpoints, verified facts, and next actions across sessions.
 
@@ -141,14 +143,14 @@ engineering rarely works that way. Ideas start incomplete, constraints appear
 during implementation, and the real shape of the task emerges through dialogue,
 code, tests, failures, and decisions.
 
-Mnemoforge captures that evolution instead of forcing a static spec upfront. It
+SloplessCode captures that evolution instead of forcing a static spec upfront. It
 records the initial intent, detects gaps, preserves decisions, absorbs
 corrections, and turns partial understanding into executable project state.
 
-You do not need a perfect task definition to start. Mnemoforge helps the task
+You do not need a perfect task definition to start. SloplessCode helps the task
 evolve as you build.
 
-## What Mnemoforge Provides
+## What SloplessCode Provides
 
 - **Project Bootstrap**: build useful project memory and context for an existing
   repository without manual data entry.
@@ -181,10 +183,10 @@ preserved across agents, models, tools, operating systems, and sessions.
 
 ## Example: Local + Tooling Workflow
 
-![Local SLM and coding agent sharing one Mnemoforge workflow](docs/assets/local-tooling-workflow.png)
+![Local SLM and coding agent sharing one SloplessCode workflow](docs/assets/local-tooling-workflow.png)
 
 A local SLM can analyze and structure the task while a coding agent executes,
-verifies, and records the result. Mnemoforge keeps both sides aligned through
+verifies, and records the result. SloplessCode keeps both sides aligned through
 the same project state.
 
 ```text
@@ -201,7 +203,7 @@ Coding agent:
 - reports the next task.
 ```
 
-This is the point of operational continuity: Mnemoforge does not require every
+This is the point of operational continuity: SloplessCode does not require every
 model to be equally strong. Even smaller local models can participate
 effectively in real engineering workflows when task state, tools, checkpoints,
 and verification evidence are preserved.
@@ -209,12 +211,12 @@ and verification evidence are preserved.
 ## Example: Small Local Model Retrieving Project State
 
 This example shows the same idea from a different angle: a very small local
-model can still work on real project state when Mnemoforge provides the routing,
+model can still work on real project state when SloplessCode provides the routing,
 context, and operational guardrails.
 
 ```text
 User:
-list active tasks from mnemoforge
+list active tasks from sloplesscode
 ```
 
 The local model:
@@ -245,7 +247,7 @@ Small models often fail on their own:
 - they hallucinate;
 - they get stuck.
 
-Mnemoforge changes that by providing:
+SloplessCode changes that by providing:
 
 - structured continuity;
 - routing;
@@ -276,7 +278,7 @@ The point is not to make weak models smarter.
 
 The point is to make them operationally useful.
 
-Mnemoforge helps small local models work on real engineering tasks by giving
+SloplessCode helps small local models work on real engineering tasks by giving
 them:
 
 - project context;
@@ -299,13 +301,13 @@ User:
 what is task 382e7306?
 
 Local model via LM Studio:
-ask_project(project="mnemoforge", question="what is task 382e7306?")
+ask_project(project="sloplesscode", question="what is task 382e7306?")
 ```
 
-Mnemoforge chooses the underlying route and returns a short answer:
+SloplessCode chooses the underlying route and returns a short answer:
 
 ```text
-Mnemoforge answer
+SloplessCode answer
 Answer: Found task 382e7306-cb61-46ee-8398-bc0a9bdfd9ef.
 task_id=382e7306-cb61-46ee-8398-bc0a9bdfd9ef
 title=Add shared semantic or LLM route matching for thematic MCP facades
@@ -317,10 +319,10 @@ next_safe_action=Continue from the executed route result.
 
 In live LM Studio testing, a small Gemma model printed the returned answer
 block instead of failing with an empty response. The client also passed an
-imperfect extra argument (`project_id=382e7306`), but Mnemoforge recovered the
+imperfect extra argument (`project_id=382e7306`), but SloplessCode recovered the
 intent from the question and returned the correct task.
 
-Mnemoforge lets small local models interact naturally with complex project
+SloplessCode lets small local models interact naturally with complex project
 state, even when clients pass imperfect arguments and users do not know the
 internal tool API.
 
@@ -328,7 +330,7 @@ internal tool API.
 
 ```text
 Small models fail alone.
-With Mnemoforge, they become operationally useful.
+With SloplessCode, they become operationally useful.
 ```
 
 ## Example: Starting With A New Project
@@ -340,10 +342,10 @@ it presents a structured entry point:
 
 ```text
 User:
-connect to MCP mnemoforge
+connect to MCP sloplesscode
 
 Agent:
-Mnemoforge MCP server is connected and available.
+SloplessCode MCP server is connected and available.
 
 Available capabilities:
 - ask_project
@@ -359,7 +361,7 @@ Utilities:
 - memory_search / memory_store
 
 Agent asks:
-What would you like to do with Mnemoforge?
+What would you like to do with SloplessCode?
 
 Options:
 1. Get project context
@@ -385,7 +387,7 @@ Cold start is one of the hardest parts of AI engineering workflows:
 - there is no task context;
 - the model does not know where to begin.
 
-Mnemoforge turns that into a structured starting point.
+SloplessCode turns that into a structured starting point.
 
 Instead of asking the user to understand the internal MCP surface, it offers
 clear categories and a direct question about intent. That reduces cognitive
@@ -393,17 +395,17 @@ load and gives the agent a safe way to begin.
 
 The result is simple:
 
-`No context? No problem. Mnemoforge gives agents a structured way to begin.`
+`No context? No problem. SloplessCode gives agents a structured way to begin.`
 
 ## Example: Ultra-Small Model On A Clean Build
 
-This was tested on a clean Mnemoforge build with `liquid/lfm2.5-1.2b` through
+This was tested on a clean SloplessCode build with `liquid/lfm2.5-1.2b` through
 LM Studio.
 
 The first user command was intentionally minimal:
 
 ```text
-connect to mcp mnemoforge
+connect to mcp sloplesscode
 ```
 
 The 1.2B model was not perfect. It first tried to call `ask_project` without the
@@ -411,7 +413,7 @@ required `question` parameter, then recovered by sending a concrete project
 question through the facade. Later, when asked to create a task, it routed the
 request through `project_work`.
 
-Mnemoforge returned a guarded plan instead of silently mutating state. That is
+SloplessCode returned a guarded plan instead of silently mutating state. That is
 the important part: even when the model was weak, the system kept the mutation
 behind an explicit confirmation gate.
 
@@ -424,7 +426,7 @@ implementation or mutation.
 The clean-build run demonstrated three things at once:
 
 - a 1.2B model can reach the MCP facade and retrieve real project context;
-- Mnemoforge can expose laws, instincts, fallback state, and recommended calls;
+- SloplessCode can expose laws, instincts, fallback state, and recommended calls;
 - guardrails can prevent accidental mutation even when the model's explanation
   is unreliable.
 
@@ -433,7 +435,7 @@ useful.
 
 ## Example: Working With Real Project State
 
-Mnemoforge is not just a place to store notes. It represents project work as
+SloplessCode is not just a place to store notes. It represents project work as
 structured state: task IDs, statuses, checkpoints, pending drafts, incomplete
 framing, and lifecycle signals. Agents can reason over that state and suggest
 the next operational move.
@@ -454,7 +456,7 @@ Status: open
 Specification is complete.
 
 8d52ce46...
-Reconstruct any memory-backed project, not only Mnemoforge itself
+Reconstruct any memory-backed project, not only SloplessCode itself
 Status: open
 88 pending drafts
 Specification is noisy and incomplete.
@@ -464,7 +466,7 @@ Close or refine task 50b5c81a...
 The implementation appears to be done, but project memory still shows it open.
 ```
 
-That last line is the important part: Mnemoforge helps synchronize reality and
+That last line is the important part: SloplessCode helps synchronize reality and
 project cognition. It detects when code, verification, task records, and memory
 state no longer agree, then helps the agent choose the next useful action.
 
@@ -490,11 +492,11 @@ Next task selected:
 - 382e7306... shared semantic/LLM route matching
 ```
 
-Mnemoforge does not just track tasks. It helps agents verify work, checkpoint
+SloplessCode does not just track tasks. It helps agents verify work, checkpoint
 outcomes, transition task state, reconcile noisy memory, and continue from the
 next useful project action.
 
-This is task lifecycle management, not chat memory: Mnemoforge verifies work,
+This is task lifecycle management, not chat memory: SloplessCode verifies work,
 records completion evidence, updates state, tolerates noisy historical drafts,
 and continues from the next actionable task.
 
@@ -502,21 +504,21 @@ and continues from the next actionable task.
 
 Project state changes while agents work. Temporary artifacts appear, side tasks
 are captured, interrupted sessions leave traces, and routing fixes can reveal
-old backlog noise. Mnemoforge treats that as part of the engineering workflow,
+old backlog noise. SloplessCode treats that as part of the engineering workflow,
 not as manual bookkeeping for the user.
 
-When project state becomes noisy, agents can use Mnemoforge to close accidental
+When project state becomes noisy, agents can use SloplessCode to close accidental
 or obsolete artifacts, synchronize related lifecycle records, recalculate the
 next priority, and return to meaningful work without asking the user to manage
 the backlog by hand.
 
-Mnemoforge keeps the engineering workflow coherent: it cleans up state,
+SloplessCode keeps the engineering workflow coherent: it cleans up state,
 preserves focus, and restores the next useful action after interruptions,
 side effects, or background maintenance.
 
 ## Core Idea
 
-Traditional memory systems store information. Mnemoforge preserves operational
+Traditional memory systems store information. SloplessCode preserves operational
 continuity.
 
 Information is static. Operational continuity carries the execution path, open
@@ -545,7 +547,7 @@ what matters after review.
 
 ## Proven Scenarios
 
-These scenarios have been used during Mnemoforge development:
+These scenarios have been used during SloplessCode development:
 
 | Scenario | Details |
 | --- | --- |
@@ -557,7 +559,7 @@ These scenarios have been used during Mnemoforge development:
 
 ## Architecture
 
-Mnemoforge is built around a FastAPI service with Qdrant for vector search and
+SloplessCode is built around a FastAPI service with Qdrant for vector search and
 SQLite stores for durable project metadata. Agents interact with it over HTTP or
 MCP.
 
@@ -566,7 +568,7 @@ AI agent / MCP client
         |
         |  MCP SSE or stdio
         v
-Mnemoforge FastAPI server
+SloplessCode FastAPI server
         |
         +-- Qdrant vector index
         +-- SQLite governed stores
@@ -594,15 +596,15 @@ Health check:
 curl http://localhost:8000/api/v1/health
 ```
 
-The current public image is published as `caveboy/mnemoforge:latest`.
+The current public image is published as `caveboy/sloplesscode:latest`.
 Immutable commit tags are published alongside `latest` as
-`caveboy/mnemoforge:<git-sha>`.
+`caveboy/sloplesscode:<git-sha>`.
 
 ### Option 2: Docker Compose For Contributors
 
 ```bash
-git clone https://github.com/Utundry/mnemoforge.git
-cd mnemoforge
+git clone https://github.com/Utundry/sloplesscode.git
+cd sloplesscode
 docker compose up -d
 ```
 
@@ -629,7 +631,7 @@ python scripts/mcp_smoke.py --server http://localhost:8000
 
 ## MCP Usage
 
-Mnemoforge exposes two MCP transports:
+SloplessCode exposes two MCP transports:
 
 - **SSE**: `http://localhost:8000/mcp/sse`
 - **STDIO**: `python -m mcp.server`
@@ -645,19 +647,19 @@ Recommended first tools for agents:
 - `project_verify` for verification, restart, and health workflows;
 - `project_capture` for checkpoints, drafts, handoff notes, and work results.
 
-Mnemoforge also supports explicit full-catalog discovery for clients that need
+SloplessCode also supports explicit full-catalog discovery for clients that need
 debug or deep access. Start with the compact thematic catalog unless you are
 building or debugging a specialized integration.
 
 Expert helpers should reduce routine tool operation, not hardcode one project's
 runtime. For example, this repository uses Docker-backed verification, but that
-is Mnemoforge project knowledge; helpers should obtain such details from project
+is SloplessCode project knowledge; helpers should obtain such details from project
 rules, readiness, runtime hints, or context rather than treating Docker as a
 universal testing rule.
 
 ## LLM Providers
 
-Mnemoforge is local-first but not locked to one local service.
+SloplessCode is local-first but not locked to one local service.
 
 Supported provider paths include:
 
@@ -708,16 +710,16 @@ Set these in `.env` for non-local deployments:
 - `MAX_REQUEST_SIZE_MB`: reject oversized request bodies;
 - `LLM_RATE_LIMIT_PER_MIN`: rate-limit LLM-heavy routes.
 
-Do not expose Mnemoforge publicly without authentication and a deliberate data
+Do not expose SloplessCode publicly without authentication and a deliberate data
 boundary.
 
 ## Author And Contact
 
-Mnemoforge is created and maintained by Nikolay Laptev.
+SloplessCode is created and maintained by Nikolay Laptev.
 
 - Email: `caveboy@yandex.ru`
-- Docker Hub: `caveboy/mnemoforge`
-- GitHub repository: `Utundry/mnemoforge`
+- Docker Hub: `caveboy/sloplesscode`
+- GitHub repository: `Utundry/sloplesscode`
 
 ## License
 
@@ -725,4 +727,4 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Project Name
 
-`Mnemoforge` is the public release name.
+`SloplessCode` is the public release name.

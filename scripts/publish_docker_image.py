@@ -85,7 +85,7 @@ def _run(cmd: list[str], *, dry_run: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build and optionally push a public Docker Hub image.")
-    parser.add_argument("--repository", help="Docker Hub repository, for example user/mnemoforge.")
+    parser.add_argument("--repository", help="Docker Hub repository, for example user/sloplesscode.")
     parser.add_argument("--tag", help="Image tag to publish. Defaults to latest.")
     parser.add_argument("--context", default=".", help="Build context directory.")
     parser.add_argument("--dockerfile", default="Dockerfile", help="Path to Dockerfile.")

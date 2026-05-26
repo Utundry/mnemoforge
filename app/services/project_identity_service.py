@@ -133,6 +133,10 @@ def get_project_identity_store() -> ProjectIdentityStore:
         self_project = _clean_project_id(settings.self_project_id)
         if self_project and _STORE.resolve(self_project) == self_project:
             _STORE.upsert_alias(alias=self_project, project_id=self_project, reason="self_project_id")
+        public_alias = _clean_project_id(settings.public_project_alias)
+        for alias in {public_alias, "sloplesscode", "mnemoforge"}:
+            if alias and alias != self_project:
+                _STORE.upsert_alias(alias=alias, project_id=self_project or alias, reason="public rename alias")
     return _STORE
 
 

@@ -10,8 +10,8 @@ services:
       QDRANT_LOG_LEVEL: warn
     restart: unless-stopped
 
-  mnemoforge:
-    image: caveboy/mnemoforge:latest
+  sloplesscode:
+    image: caveboy/sloplesscode:latest
     ports:
       - "${MNEMOFORGE_HTTP_PORT:-8000}:8000"
     depends_on:
@@ -20,7 +20,7 @@ services:
       - ${MNEMOFORGE_USER_ENV_FILE:-.env.user}
     environment:
       MNEMOFORGE_RUNTIME_KIND: docker
-      MNEMOFORGE_DOCKER_SERVICE: mnemoforge
+      MNEMOFORGE_DOCKER_SERVICE: sloplesscode
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
       SERVER_HOST: 0.0.0.0

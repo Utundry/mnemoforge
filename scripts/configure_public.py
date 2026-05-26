@@ -107,7 +107,7 @@ def render_user_env(args: argparse.Namespace, *, interactive: bool, output_name:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate a first-user MnemoForge .env file.")
+    parser = argparse.ArgumentParser(description="Generate a first-user SloplessCode .env file.")
     parser.add_argument("--output", default=".env.user", help="Output env file. Defaults to .env.user.")
     parser.add_argument("--template", default=".env.public.example", help="Public env template path.")
     parser.add_argument("--force", action="store_true", help="Overwrite an existing output file.")

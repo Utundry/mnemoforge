@@ -1,14 +1,14 @@
-# MnemoForge Status
+# SloplessCode Status
 
 Current release target: `GitHub alpha`
 
 ## Positioning
 
-MnemoForge is a local-first knowledge and coordination substrate for coding agents.
+SloplessCode is a local-first knowledge and coordination substrate for coding agents.
 
-Release name note: `MnemoForge` is the public-facing name. `mnemoforge` remains
-the development project id in existing task history and some compatibility
-metadata.
+Release name note: `SloplessCode` is the public-facing name. `mnemoforge` remains
+the legacy runtime/project id for compatibility, and `sloplesscode` is accepted as
+the public alias.
 
 Current focus:
 - governed project knowledge
