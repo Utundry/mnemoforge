@@ -1,6 +1,8 @@
 # SloplessCode
 
-Formerly Mnemoforge.
+Formerly Mnemoforge. 
+
+Mnemoforge is not related to Mnemosyne OS. 
 
 **Operational continuity infrastructure for AI coding agents.**
 
