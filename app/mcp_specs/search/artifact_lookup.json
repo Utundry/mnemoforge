@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "purpose": "Declarative aliases and ranking weights for public task/artifact lookup.",
+  "stop_terms": [
+    "about",
+    "with",
+    "for",
+    "by",
+    "find",
+    "search",
+    "show",
+    "list",
+    "lookup",
+    "read",
+    "get",
+    "task",
+    "tasks",
+    "improvement",
+    "improvements",
+    "artifact",
+    "artifacts"
+  ],
+  "alias_groups": [
+    {
+      "id": "http_data_portability",
+      "topic_tags": [
+        "#http-download",
+        "#http-upload",
+        "#file-transfer",
+        "#data-portability",
+        "#backup-restore",
+        "#import-preview"
+      ],
+      "triggers": [
+        "http download",
+        "download http",
+        "http upload",
+        "upload http",
+        "http data transfer",
+        "file download",
+        "file upload"
+      ],
+      "terms": [
+        "portable",
+        "data",
+        "export",
+        "import",
+        "upload",
+        "download",
+        "http",
+        "container",
+        "package",
+        "preview"
+      ]
+    }
+  ],
+  "status_weights": {
+    "open": 5.0,
+    "active": 4.0,
+    "paused": 1.0,
+    "done": -3.0,
+    "archived": -4.0
+  },
+  "type_weights": {
+    "task": 1.0,
+    "improvement": 0.5
+  },
+  "diagnostic_penalty_terms": [
+    "#diagnostic-task",
+    "#routing-regression",
+    "diagnostic",
+    "regression",
+    "routing",
+    "misrouting",
+    "search bug",
+    "guarded mutation",
+    "weak-agent retest"
+  ],
+  "weights": {
+    "exact_token": 4.0,
+    "alias_token": 1.5,
+    "phrase": 7.0,
+    "title_multiplier": 2.0,
+    "description_multiplier": 1.0,
+    "tag_multiplier": 1.2,
+    "diagnostic_penalty": -8.0
+  }
+}

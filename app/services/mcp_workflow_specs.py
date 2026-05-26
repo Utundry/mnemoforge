@@ -124,6 +124,14 @@ def load_route_catalog_spec(facade: str, *, spec_root: Path = DEFAULT_SPEC_ROOT)
     return spec
 
 
+@lru_cache(maxsize=16)
+def load_named_json_spec(relative_path: str, *, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
+    relative = Path(str(relative_path or "").strip())
+    if relative.is_absolute() or ".." in relative.parts:
+        raise WorkflowSpecError(f"Named spec path must stay inside spec root: {relative_path}")
+    return _load_json(spec_root / relative)
+
+
 def load_tool_family_registry(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> McpToolFamilyRegistry:
     path = spec_root / "discovery" / "tool_families.json"
     spec = McpToolFamilyRegistry.model_validate(_load_json(path))

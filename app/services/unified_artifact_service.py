@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
@@ -19,6 +20,7 @@ from app.services.improvements_store import get_improvements_store
 from app.services.project_identity_service import project_lookup_ids, resolve_project_id
 from app.services.project_task_service import _task_capture_summary_map
 from app.services.project_tasks_store import get_project_tasks_store
+from app.services.mcp_workflow_specs import load_named_json_spec
 
 logger = logging.getLogger(__name__)
 
@@ -47,27 +49,102 @@ def _matches_datetime_range(
     return True
 
 
-def _matches_artifact_query(item: UnifiedArtifactRecord, query: str) -> bool:
-    tokens = [
+def _artifact_lookup_spec() -> dict:
+    try:
+        return load_named_json_spec("search/artifact_lookup.json")
+    except Exception as exc:
+        logger.warning("Artifact lookup spec unavailable: %s", exc)
+        return {}
+
+
+def _query_tokens(query: str, spec: dict) -> list[str]:
+    stop_terms = {str(term).casefold() for term in spec.get("stop_terms") or []}
+    return [
         token
-        for token in str(query or "").casefold().split()
-        if token and token not in {"about", "with", "task", "tasks", "improvement", "improvements", "artifact", "artifacts"}
+        for token in re.findall(r"[\w]+", str(query or "").casefold(), flags=re.UNICODE)
+        if token and token not in stop_terms
     ]
-    if not tokens:
-        return True
-    haystack = " ".join(
-        str(value or "")
-        for value in (
-            item.artifact_key,
-            item.linked_artifact_key,
-            item.task_id,
-            item.title,
-            item.description,
-            item.topic_path,
-            " ".join(item.tags or []),
-        )
-    ).casefold()
-    return all(token in haystack for token in tokens)
+
+
+def _artifact_text_parts(item: UnifiedArtifactRecord) -> dict[str, str]:
+    tags = " ".join(
+        str(tag or "").casefold().replace("#", "").replace("_", "-")
+        for tag in item.tags or []
+    )
+    return {
+        "title": str(item.title or "").casefold(),
+        "description": str(item.description or "").casefold(),
+        "tags": tags,
+        "refs": " ".join(
+            str(value or "")
+            for value in (item.artifact_key, item.linked_artifact_key, item.task_id, item.topic_path)
+        ).casefold(),
+    }
+
+
+def _query_alias_terms(query: str, spec: dict) -> set[str]:
+    text = str(query or "").casefold()
+    terms: set[str] = set()
+    for group in spec.get("alias_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        triggers = [str(trigger or "").casefold() for trigger in group.get("triggers") or []]
+        if any(trigger and trigger in text for trigger in triggers):
+            terms.update(str(term or "").casefold() for term in group.get("terms") or [] if str(term or "").strip())
+            terms.update(_normalize_topic_tag(term) for term in group.get("topic_tags") or [] if str(term or "").strip())
+    return terms
+
+
+def _normalize_topic_tag(value: str) -> str:
+    return str(value or "").strip().casefold().lstrip("#")
+
+
+def _artifact_query_score(item: UnifiedArtifactRecord, query: str) -> float:
+    spec = _artifact_lookup_spec()
+    weights = spec.get("weights") if isinstance(spec.get("weights"), dict) else {}
+    tokens = _query_tokens(query, spec)
+    alias_terms = _query_alias_terms(query, spec)
+    if not tokens and not alias_terms:
+        return 1.0
+
+    parts = _artifact_text_parts(item)
+    haystack = " ".join(parts.values())
+    score = 0.0
+    exact_weight = float(weights.get("exact_token") or 4.0)
+    alias_weight = float(weights.get("alias_token") or 1.5)
+    title_multiplier = float(weights.get("title_multiplier") or 2.0)
+    description_multiplier = float(weights.get("description_multiplier") or 1.0)
+    tag_multiplier = float(weights.get("tag_multiplier") or 1.2)
+
+    for token in tokens:
+        if token in parts["title"]:
+            score += exact_weight * title_multiplier
+        elif token in parts["description"] or token in parts["refs"]:
+            score += exact_weight * description_multiplier
+        elif token in parts["tags"]:
+            score += exact_weight * tag_multiplier
+
+    for token in alias_terms:
+        if token in parts["title"]:
+            score += alias_weight * title_multiplier
+        elif token in parts["description"] or token in parts["refs"]:
+            score += alias_weight * description_multiplier
+        elif token in parts["tags"]:
+            score += alias_weight * tag_multiplier
+
+    phrase = " ".join(tokens)
+    if phrase and phrase in haystack:
+        score += float(weights.get("phrase") or 7.0)
+
+    status_weights = spec.get("status_weights") if isinstance(spec.get("status_weights"), dict) else {}
+    type_weights = spec.get("type_weights") if isinstance(spec.get("type_weights"), dict) else {}
+    score += float(status_weights.get(str(item.status or ""), 0.0) or 0.0)
+    score += float(type_weights.get(str(item.type or ""), 0.0) or 0.0)
+
+    diagnostic_terms = [str(term or "").casefold() for term in spec.get("diagnostic_penalty_terms") or []]
+    if any(term and term in haystack for term in diagnostic_terms):
+        score += float(weights.get("diagnostic_penalty") or -8.0)
+    return score
 
 
 class UnifiedArtifactService:
@@ -209,6 +286,7 @@ class UnifiedArtifactService:
         canonical_project = resolve_project_id(project)
         lookup_projects = project_lookup_ids(canonical_project)
         items: list[UnifiedArtifactRecord] = []
+        fetch_limit = max(limit, 100) if query else limit
 
         # Преобразовать unified status в тип-специфичный
         improvement_status = None
@@ -227,7 +305,7 @@ class UnifiedArtifactService:
                     await self._improvements_store.list(
                         project=lookup_project,
                         status=improvement_status,
-                        limit=limit,
+                        limit=fetch_limit,
                     )
                 )
             for imp in improvements:
@@ -245,7 +323,7 @@ class UnifiedArtifactService:
                     self._tasks_store.list_tasks(
                         project=lookup_project,
                         status=task_status,
-                        limit=limit,
+                        limit=fetch_limit,
                     )
                 )
             for task in tasks:
@@ -277,10 +355,14 @@ class UnifiedArtifactService:
                 )
             ]
         if query:
-            items = [item for item in items if _matches_artifact_query(item, query)]
+            scored_items = [(item, _artifact_query_score(item, query)) for item in items]
+            scored_items = [(item, score) for item, score in scored_items if score > 0]
+            scored_items.sort(key=lambda pair: (pair[1], pair[0].updated_at.timestamp()), reverse=True)
+            items = [item for item, _score in scored_items]
 
         # Сортировать по updated_at (новые первыми)
-        items.sort(key=lambda x: x.updated_at, reverse=True)
+        if not query:
+            items.sort(key=lambda x: x.updated_at, reverse=True)
 
         # Ограничить количество
         items = items[:limit]

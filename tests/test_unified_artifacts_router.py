@@ -134,6 +134,57 @@ async def test_list_artifacts_filters_by_query(client_with_unified_artifacts) ->
 
 
 @pytest.mark.asyncio
+async def test_list_artifacts_uses_topic_aliases_and_ranking(client_with_unified_artifacts) -> None:
+    client, _fake_queue = client_with_unified_artifacts
+
+    subject = await client.post(
+        "/api/v1/improvements",
+        json={
+            "title": "Scripted portable data export and import-preview workflows",
+            "description": "Cross-platform project data portability with backup restore packages.",
+            "project": "proj-router-alias",
+            "agent_id": "architect",
+            "importance_score": 0.9,
+            "tags": ["#data-portability", "#import-preview"],
+        },
+    )
+    assert subject.status_code == 201, subject.text
+
+    diagnostic = await client.post(
+        "/api/v1/improvements",
+        json={
+            "title": "Fix HTTP download routing regression",
+            "description": "Diagnostic task for an HTTP download search bug and weak-agent retest.",
+            "project": "proj-router-alias",
+            "agent_id": "architect",
+            "importance_score": 0.8,
+            "tags": ["#diagnostic-task", "#routing-regression"],
+        },
+    )
+    assert diagnostic.status_code == 201, diagnostic.text
+    diagnostic_id = diagnostic.json()["id"]
+    resolved = await client.patch(
+        f"/api/v1/improvements/{diagnostic_id}/resolve",
+        json={
+            "acted_by": "test",
+            "action_source": "test",
+            "reason": "Resolved diagnostic fixture.",
+        },
+    )
+    assert resolved.status_code == 200, resolved.text
+
+    listed = await client.get(
+        "/api/v1/artifacts",
+        params={"project": "proj-router-alias", "query": "HTTP download", "type": "task", "limit": 10},
+    )
+    assert listed.status_code == 200, listed.text
+    items = listed.json()["items"]
+    assert items
+    assert items[0]["title"] == "Scripted portable data export and import-preview workflows"
+    assert items[0]["status"] == "open"
+
+
+@pytest.mark.asyncio
 async def test_resolve_artifact_survives_best_effort_followup_failure(
     client_with_unified_artifacts,
     monkeypatch,

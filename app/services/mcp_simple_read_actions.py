@@ -450,6 +450,27 @@ async def build_simple_get_query_response(
         }
     if not project:
         project = "mnemoforge"
+    if not uses_project_expert and terse_topic_artifact_query(query):
+        data = await dependencies.get(
+            api_base,
+            f"/artifacts?project={quote(project, safe='')}&query={quote(query, safe='')}&limit={limit}",
+        )
+        if isinstance(data, dict) and data.get("items"):
+            return {
+                "state": state,
+                "project": project,
+                "receipt": {
+                    "status": "accepted",
+                    "message": "Terse topic query resolved through artifact search.",
+                    "resource_kind": "artifact_list",
+                    "count": len(data.get("items") or []),
+                    "next_safe_action": "Use get with a returned artifact ref for more detail, or refine the query.",
+                },
+                "result": compact_artifact_list_results(data, limit=limit),
+                "simple_interface": {"tool": "get", "mode": "query", "route": "artifact_topic_lookup"},
+                "next_safe_action": "Use get with a returned artifact ref for more detail, or refine the query.",
+                "details_available": True,
+            }
     if not uses_project_expert:
         results = await dependencies.post(
             api_base,
@@ -527,6 +548,18 @@ def explicit_artifact_list_type(query: str) -> str:
     if asks_work_items:
         return "all"
     return ""
+
+
+def terse_topic_artifact_query(query: str) -> bool:
+    text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold().strip()
+    if not text or explicit_memory_lookup(text):
+        return False
+    if any(term in text for term in _PROJECT_QUERY_TERMS):
+        return False
+    if any(term in text for term in ("create", "record", "save", "write", "delete", "close", "finish")):
+        return False
+    words = text.split()
+    return 1 <= len(words) <= 5
 
 
 def artifact_topic_query(query: str, artifact_list_type: str) -> str:
