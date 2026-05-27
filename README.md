@@ -4,6 +4,13 @@ Formerly Mnemoforge.
 
 Mnemoforge is not related to Mnemosyne OS. 
 
+### Project Rename
+**Mnemoforge** is now **SloplessCode**.
+
+The rename was made to avoid naming collision with an unrelated internal tool in another project. 
+
+All functionality, goals and vision remain exactly the same.
+
 **Operational continuity infrastructure for AI coding agents.**
 
 AI agents stop failing when operational continuity survives interruption.
@@ -22,6 +29,8 @@ Agent:
 
 
 ## Work In Progress
+
+This is a pragmatic, efficiency-first tool. It is not meant to be beautiful or elegant — it is meant to work reliably.
 
 This project is under active architectural evolution.
 
