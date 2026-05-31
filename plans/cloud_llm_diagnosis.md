@@ -38,43 +38,6 @@ GLM_MIRROR_INTERVAL_HOURS=0
 
 ### Шаг 2: Проверить и обновить API-ключи
 
-Каждый ключ нужно проверить через прямой API-запрос из контейнера:
-
-**DeepSeek:**
-```bash
-curl -s https://api.deepseek.com/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer sk-05a8839400214a94b2333c4e772c046e" \
-  -d '{"model":"deepseek-chat","messages":[{"role":"user","content":"test"}],"max_tokens":1}' \
-  | head -c 200
-```
-
-Если ключ невалиден, заменить на новый в `.env`:
-```ini
-DEEPSEEK_API_KEY=sk-новый_ключ
-```
-
-**GLM (Zhipu AI):**
-```bash
-curl -s https://api.z.ai/api/coding/paas/v4/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: 06e8491acef64b19914c2af799325508.aIppnQ457JMEbR6D" \
-  -d '{"model":"glm-4.7","messages":[{"role":"user","content":"test"}],"max_tokens":1}' \
-  | head -c 200
-```
-
-Если нужно активировать GLM, исправить в `CLOUD_LLM_MODEL_PROFILES`:
-```json
-{"glm-4.7": {"provider":"glm","model":"glm-4.7","enabled":true}}
-```
-
-**Gemini:**
-```bash
-curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIzaSyDfzhFWIsekJFOszzuVlzenc-75ONQ16gY" \
-  -H "Content-Type: application/json" \
-  -d '{"contents":[{"parts":[{"text":"test"}]}]}' \
-  | head -c 200
-```
 
 Модель `gemini-3-flash-preview` не существует. Актуальная: `gemini-2.0-flash` или `gemini-2.5-flash-preview-04-17`.
 Если нужно использовать Gemini, обновить:
