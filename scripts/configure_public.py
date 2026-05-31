@@ -152,7 +152,7 @@ def main() -> int:
     port = next((line.split("=", 1)[1] for line in text.splitlines() if line.startswith("MNEMOFORGE_HTTP_PORT=")), "8000")
     env_file = next((line.split("=", 1)[1] for line in text.splitlines() if line.startswith("MNEMOFORGE_USER_ENV_FILE=")), ".env.user")
     print(f"Wrote {output_path}")
-    print("Start MnemoForge with:")
+    print("Start SloplessCode with:")
     print(f"  docker compose --env-file {env_file} -f docker-compose.user.yml up -d")
     print("Check health with:")
     print(f"  curl http://localhost:{port}/api/v1/health")

@@ -432,6 +432,25 @@ async def build_simple_get_query_response(
     project = str(args.get("project") or args.get("project_id") or "").strip()
     limit = int(args.get("limit") or 10)
     state = str(args.get("state") or "planning")
+    if explicit_project_alias_lookup(query):
+        project_id = project or explicit_project_alias_project(query)
+        suffix = f"?project_id={quote(project_id, safe='')}" if project_id else ""
+        data = await dependencies.get(api_base, f"/project/identity/aliases{suffix}")
+        return {
+            "state": state,
+            "project": project_id,
+            "receipt": {
+                "status": "accepted",
+                "message": "Project identity aliases resolved through the public read surface.",
+                "resource_kind": "project_aliases",
+                "count": len(data.get("aliases") or []) if isinstance(data, dict) else 0,
+                "next_safe_action": "Use these aliases as compatibility names; do not rewrite stored refs without rename_project/apply review.",
+            },
+            "result": compact_project_alias_results(data),
+            "simple_interface": {"tool": "get", "mode": "query", "route": "project_aliases"},
+            "next_safe_action": "Use these aliases as compatibility names; do not rewrite stored refs without rename_project/apply review.",
+            "details_available": True,
+        }
     memory_lookup_id = explicit_memory_lookup_id(query)
     if memory_lookup_id:
         if not project:
@@ -715,6 +734,8 @@ def artifact_topic_query(query: str, artifact_list_type: str) -> str:
         "details",
         "detail",
         "about",
+        "all",
+        "and",
         "for",
         "with",
         "by",
@@ -732,6 +753,8 @@ def artifact_topic_query(query: str, artifact_list_type: str) -> str:
         "unresolved",
         "pending",
         "backlog",
+        "latest",
+        "recent",
         "done",
         "closed",
         "resolved",
@@ -784,6 +807,48 @@ def explicit_memory_lookup_id(query: str) -> str:
         return uuid_match.group(0)
     short_match = re.search(r"\b[0-9a-fA-F]{6,12}\b", text)
     return short_match.group(0) if short_match else ""
+
+
+def explicit_project_alias_lookup(query: str) -> bool:
+    text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
+    return (
+        "alias" in text
+        or "aliases" in text
+        or "project aliases" in text
+        or "project name" in text
+        or "project identity" in text
+    ) and any(term in text for term in _READ_LOOKUP_TERMS)
+
+
+def explicit_project_alias_project(query: str) -> str:
+    text = str(query or "")
+    match = re.search(r"\b(?:for|of)\s+([A-Za-z0-9_.-]{2,128})\b", text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    value = match.group(1).strip(" .,:;")
+    stop_values = {"project", "aliases", "alias", "identity", "name", "names"}
+    return "" if value.casefold() in stop_values else value
+
+
+def compact_project_alias_results(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {"aliases": []}
+    aliases = data.get("aliases") if isinstance(data.get("aliases"), list) else []
+    compact_aliases = []
+    for item in aliases[:50]:
+        if not isinstance(item, dict):
+            continue
+        compact_aliases.append(
+            {
+                key: item.get(key)
+                for key in ("alias", "project_id", "status", "reason")
+                if item.get(key) not in (None, "", [])
+            }
+        )
+    return {
+        "aliases": compact_aliases,
+        "count": len(compact_aliases),
+    }
 
 
 def compact_memory_search_results(results: Any) -> list[dict[str, Any]]:

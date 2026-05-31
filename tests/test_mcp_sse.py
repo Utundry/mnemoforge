@@ -2561,6 +2561,56 @@ class TestMcpToolExecution:
         assert result["simple_interface"]["route"] == "memory_ref_lookup"
         assert result["result"]["id"] == full_id
 
+    async def test_simple_get_query_lists_project_aliases_without_artifact_search(self, monkeypatch):
+        requested: list[str] = []
+
+        async def fake_get(api_base: str, path: str):
+            requested.append(path)
+            if path == "/project/identity/aliases?project_id=sloplesscode":
+                return {
+                    "project_id": "mnemoforge",
+                    "aliases": [
+                        {
+                            "alias": "mnemoforge",
+                            "project_id": "mnemoforge",
+                            "status": "active",
+                            "reason": "self_project_id",
+                        },
+                        {
+                            "alias": "sloplesscode",
+                            "project_id": "mnemoforge",
+                            "status": "active",
+                            "reason": "public rename alias",
+                        },
+                    ],
+                }
+            raise AssertionError(path)
+
+        async def forbidden_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("alias lookup must stay read-only")
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("explicit alias lookup must not route through project expert")
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", forbidden_post)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "sloplesscode", "query": "list project aliases", "state": "planning", "diagnostic": True},
+                "http://test",
+            )
+        )
+
+        assert requested == ["/project/identity/aliases?project_id=sloplesscode"]
+        assert result["receipt"]["status"] == "accepted"
+        assert result["receipt"]["resource_kind"] == "project_aliases"
+        assert result["receipt"]["count"] == 2
+        assert result["simple_interface"]["route"] == "project_aliases"
+        assert result["result"]["aliases"][1]["alias"] == "sloplesscode"
+
     async def test_simple_get_resolves_short_improvement_refs(self, monkeypatch):
         from app.services.public_ref_index import get_public_ref_index_store
 

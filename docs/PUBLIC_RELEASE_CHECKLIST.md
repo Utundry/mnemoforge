@@ -1,13 +1,15 @@
 # Public Release Checklist
 
 Status: active
-Project: `mnemoforge`
+Project: `sloplesscode`
+
+Internal compatibility id: `mnemoforge`
 
 Use this checklist before publishing a GitHub alpha or Docker Hub image.
 
 ## Before Packaging
 
-1. Confirm the release uses `SELF_PROJECT_ID=mnemoforge`.
+1. Confirm the release keeps `SELF_PROJECT_ID=mnemoforge` for compatibility and exposes `PUBLIC_PROJECT_ALIAS=sloplesscode`.
 2. Use `.env.public.example` as the public template.
 3. Keep `API_KEY` empty in the template and require operators to set it before network exposure.
 4. Keep experimental modules disabled by default:
@@ -49,10 +51,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps
 1. Build and inspect the image locally before pushing.
 2. Keep the repository and tag explicit and separate.
 3. Push only after the readiness checks pass.
-4. Publish under Docker Hub namespace `caveboy/mnemoforge`.
+4. Publish under Docker Hub namespace `caveboy/sloplesscode`.
 
 ```bash
-python scripts/publish_docker_image.py --repository caveboy/mnemoforge --tag latest --push --tag-current-git-sha
+python scripts/publish_docker_image.py --repository caveboy/sloplesscode --tag latest --push --tag-current-git-sha
 ```
 
 ## Public FAQ
@@ -65,7 +67,7 @@ No. Public releases must use synthetic or redacted data only.
 
 No. Public users should start from `.env.public.example`; `.env.example` may contain internal development options.
 
-**Is MnemoForge stable enough for production?**
+**Is SloplessCode stable enough for production?**
 
 Not yet. The current target is a GitHub alpha with local-first defaults and documented usage conditions.
 
