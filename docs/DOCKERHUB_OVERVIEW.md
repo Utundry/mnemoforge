@@ -26,6 +26,15 @@ The goal is simple: an agent should not start from zero every time a session is
 reset. It should be able to ask the system what happened, what matters, and what
 the next safe action is.
 
+## Relevant Categories
+
+- Machine learning & AI
+- Developer tools
+- Databases & storage
+- API management
+- MCP tooling for AI coding agents
+- Local-first project memory and operational continuity
+
 ## Quick Start
 
 The recommended user path is Docker Compose from the repository:
@@ -94,4 +103,3 @@ you should still keep backups and report regressions.
 - Docker Hub: `caveboy/sloplesscode`
 - Compatibility Docker Hub image: `caveboy/mnemoforge`
 - Maintainer: Nikolay Laptev, `caveboy@yandex.ru`
-
