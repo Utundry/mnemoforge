@@ -21,6 +21,33 @@ def test_project_identity_store_resolves_aliases():
         pis.sqlite3.connect = original_connect
 
 
+def test_project_identity_store_resolves_transitive_rename_aliases():
+    original_connect = pis.sqlite3.connect
+    pis.sqlite3.connect = lambda *args, **kwargs: original_connect(":memory:", check_same_thread=False)
+    try:
+        store = ProjectIdentityStore(Path("qdrant_data") / "project_identity_test.db")
+        store.upsert_alias(alias="mnemoforge", project_id="mnemoforge", reason="canonical")
+        store.upsert_alias(alias="supermemory", project_id="mnemoforge", reason="old working name")
+        store._conn.execute(
+            """
+            INSERT INTO project_identity_aliases (alias, project_id, status, reason, created_at, updated_at)
+            VALUES ('sloplesscode', 'supermemory', 'active', 'public rename', 1, 1)
+            """
+        )
+        store._conn.commit()
+
+        assert store.resolve("sloplesscode") == "mnemoforge"
+        assert store.resolve("supermemory") == "mnemoforge"
+        assert store.aliases_for("sloplesscode") == ["mnemoforge", "sloplesscode", "supermemory"]
+
+        aliases = store.list_aliases("sloplesscode")
+        assert {item["alias"] for item in aliases} == {"mnemoforge", "sloplesscode", "supermemory"}
+        assert {store.resolve(item["project_id"]) for item in aliases} == {"mnemoforge"}
+    finally:
+        store.close()
+        pis.sqlite3.connect = original_connect
+
+
 def test_project_identity_store_seeds_public_alias(monkeypatch):
     original_connect = pis.sqlite3.connect
     pis.sqlite3.connect = lambda *args, **kwargs: original_connect(":memory:", check_same_thread=False)

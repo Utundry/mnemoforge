@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 from typing import Optional
 
 from app.config import settings
@@ -33,7 +33,7 @@ class ProjectIdentityStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._lock = Lock()
+        self._lock = RLock()
         with self._lock:
             self._conn.executescript(_CREATE_SQL)
             self._conn.commit()
@@ -42,6 +42,30 @@ class ProjectIdentityStore:
         with self._lock:
             self._conn.close()
 
+    def _resolve_unlocked(self, project_id: str | None) -> str:
+        clean = _clean_project_id(project_id) or settings.self_project_id
+        seen: set[str] = set()
+        current = clean
+        for _ in range(16):
+            if not current or current in seen:
+                break
+            seen.add(current)
+            row = self._conn.execute(
+                """
+                SELECT project_id
+                FROM project_identity_aliases
+                WHERE alias = ? AND status = 'active'
+                """,
+                (current,),
+            ).fetchone()
+            if not row:
+                return current
+            next_project = str(row["project_id"])
+            if not next_project or next_project == current:
+                return current
+            current = next_project
+        return current or clean
+
     def upsert_alias(self, *, alias: str, project_id: str, reason: str = "", status: str = "active") -> dict:
         clean_alias = _clean_project_id(alias)
         clean_project = _clean_project_id(project_id)
@@ -49,6 +73,7 @@ class ProjectIdentityStore:
             raise ValueError("alias and project_id are required")
         now = time.time()
         with self._lock:
+            canonical_project = self._resolve_unlocked(clean_project)
             self._conn.execute(
                 """
                 INSERT INTO project_identity_aliases (alias, project_id, status, reason, created_at, updated_at)
@@ -59,28 +84,19 @@ class ProjectIdentityStore:
                     reason = excluded.reason,
                     updated_at = excluded.updated_at
                 """,
-                (clean_alias, clean_project, status or "active", reason or "", now, now),
+                (clean_alias, canonical_project, status or "active", reason or "", now, now),
             )
             self._conn.commit()
         return {
             "alias": clean_alias,
-            "project_id": clean_project,
+            "project_id": canonical_project,
             "status": status or "active",
             "reason": reason or "",
         }
 
     def resolve(self, project_id: str | None) -> str:
-        clean = _clean_project_id(project_id) or settings.self_project_id
         with self._lock:
-            row = self._conn.execute(
-                """
-                SELECT project_id
-                FROM project_identity_aliases
-                WHERE alias = ? AND status = 'active'
-                """,
-                (clean,),
-            ).fetchone()
-        return str(row["project_id"]) if row else clean
+            return self._resolve_unlocked(project_id)
 
     def aliases_for(self, project_id: str | None, *, include_self: bool = True) -> list[str]:
         canonical = self.resolve(project_id)
@@ -90,13 +106,14 @@ class ProjectIdentityStore:
                 """
                 SELECT alias
                 FROM project_identity_aliases
-                WHERE project_id = ? AND status = 'active'
+                WHERE status = 'active'
                 ORDER BY alias
                 """,
-                (canonical,),
             ).fetchall()
         for row in rows:
             alias = str(row["alias"])
+            if self._resolve_unlocked(alias) != canonical:
+                continue
             if alias and alias not in aliases:
                 aliases.append(alias)
         original = _clean_project_id(project_id)
@@ -105,22 +122,24 @@ class ProjectIdentityStore:
         return aliases
 
     def list_aliases(self, project_id: str | None = None) -> list[dict]:
-        clauses: list[str] = ["status = 'active'"]
-        params: list[str] = []
-        if project_id:
-            clauses.append("project_id = ?")
-            params.append(self.resolve(project_id))
+        canonical = self.resolve(project_id) if project_id else ""
         with self._lock:
             rows = self._conn.execute(
-                f"""
+                """
                 SELECT alias, project_id, status, reason, created_at, updated_at
                 FROM project_identity_aliases
-                WHERE {' AND '.join(clauses)}
+                WHERE status = 'active'
                 ORDER BY project_id, alias
                 """,
-                params,
             ).fetchall()
-        return [dict(row) for row in rows]
+            items = [dict(row) for row in rows]
+            if canonical:
+                items = [
+                    item for item in items
+                    if self._resolve_unlocked(item.get("project_id")) == canonical
+                    or self._resolve_unlocked(item.get("alias")) == canonical
+                ]
+        return items
 
 
 _STORE: Optional[ProjectIdentityStore] = None
