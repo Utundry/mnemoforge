@@ -39,6 +39,10 @@ The published image is used by `docker-compose.user.yml` and is also available d
 docker pull caveboy/sloplesscode:latest
 ```
 
+During the rename transition, the same image is also tagged as
+`caveboy/mnemoforge:latest` so older deployments can keep working while new
+clean-machine installs validate the SloplessCode image.
+
 For contributor development, use the source-building stack:
 
 ```powershell

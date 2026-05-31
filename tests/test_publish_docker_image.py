@@ -54,6 +54,15 @@ def test_resolve_repository_rejects_tagged_value():
         raise AssertionError("expected ValueError")
 
 
+def test_resolve_alias_repositories_deduplicates_primary_and_duplicates():
+    aliases = helper._resolve_alias_repositories(
+        ["caveboy/sloplesscode", "caveboy/mnemoforge", "caveboy/mnemoforge"],
+        primary_repository="caveboy/sloplesscode",
+    )
+
+    assert aliases == ["caveboy/mnemoforge"]
+
+
 def test_resolve_tag_rejects_whitespace():
     try:
         helper._resolve_tag("bad tag")
@@ -106,6 +115,8 @@ def test_main_can_publish_latest_and_current_git_sha(monkeypatch, capsys):
             "publish_docker_image.py",
             "--repository",
             "caveboy/sloplesscode",
+            "--alias-repository",
+            "caveboy/mnemoforge",
             "--tag",
             "latest",
             "--push",
@@ -134,7 +145,14 @@ def test_main_can_publish_latest_and_current_git_sha(monkeypatch, capsys):
             False,
         ),
         (["docker", "push", "caveboy/sloplesscode:latest"], False),
+        (["docker", "tag", "caveboy/sloplesscode:latest", "caveboy/mnemoforge:latest"], False),
+        (["docker", "push", "caveboy/mnemoforge:latest"], False),
         (["docker", "tag", "caveboy/sloplesscode:latest", "caveboy/sloplesscode:abc1234"], False),
         (["docker", "push", "caveboy/sloplesscode:abc1234"], False),
+        (["docker", "tag", "caveboy/sloplesscode:latest", "caveboy/mnemoforge:abc1234"], False),
+        (["docker", "push", "caveboy/mnemoforge:abc1234"], False),
     ]
-    assert "Immutable: caveboy/sloplesscode:abc1234" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Alias: caveboy/mnemoforge:latest" in output
+    assert "Immutable: caveboy/sloplesscode:abc1234" in output
+    assert "Alias immutable: caveboy/mnemoforge:abc1234" in output

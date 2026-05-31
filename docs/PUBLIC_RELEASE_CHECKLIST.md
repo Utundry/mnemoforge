@@ -51,10 +51,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps
 1. Build and inspect the image locally before pushing.
 2. Keep the repository and tag explicit and separate.
 3. Push only after the readiness checks pass.
-4. Publish under Docker Hub namespace `caveboy/sloplesscode`.
+4. Publish the primary public image under `caveboy/sloplesscode`.
+5. During the rename transition, publish the same image under compatibility alias `caveboy/mnemoforge`.
 
 ```bash
-python scripts/publish_docker_image.py --repository caveboy/sloplesscode --tag latest --push --tag-current-git-sha
+python scripts/publish_docker_image.py --repository caveboy/sloplesscode --alias-repository caveboy/mnemoforge --tag latest --push --tag-current-git-sha
 ```
 
 ## Public FAQ

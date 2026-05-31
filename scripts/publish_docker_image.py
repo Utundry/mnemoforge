@@ -49,6 +49,16 @@ def _resolve_repository(value: str | None) -> str:
     return repository
 
 
+def _resolve_alias_repositories(values: list[str] | None, *, primary_repository: str) -> list[str]:
+    aliases: list[str] = []
+    for value in values or []:
+        repository = _resolve_repository(value)
+        if repository == primary_repository or repository in aliases:
+            continue
+        aliases.append(repository)
+    return aliases
+
+
 def _resolve_tag(value: str | None) -> str:
     tag = str(value or os.environ.get("DOCKER_IMAGE_TAG") or "latest").strip()
     if not tag:
@@ -86,6 +96,12 @@ def _run(cmd: list[str], *, dry_run: bool) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build and optionally push a public Docker Hub image.")
     parser.add_argument("--repository", help="Docker Hub repository, for example user/sloplesscode.")
+    parser.add_argument(
+        "--alias-repository",
+        action="append",
+        default=[],
+        help="Additional Docker Hub repository to tag and optionally push with the same image, for compatibility aliases.",
+    )
     parser.add_argument("--tag", help="Image tag to publish. Defaults to latest.")
     parser.add_argument("--context", default=".", help="Build context directory.")
     parser.add_argument("--dockerfile", default="Dockerfile", help="Path to Dockerfile.")
@@ -119,6 +135,7 @@ def main() -> int:
         return 1
 
     repository = _resolve_repository(args.repository)
+    alias_repositories = _resolve_alias_repositories(args.alias_repository, primary_repository=repository)
     tag = _resolve_tag(args.tag)
     image_ref = f"{repository}:{tag}"
     git_sha = ""
@@ -158,6 +175,18 @@ def main() -> int:
         if rc != 0:
             return rc
 
+    alias_refs = [f"{alias_repository}:{tag}" for alias_repository in alias_repositories]
+    for alias_ref in alias_refs:
+        tag_cmd = ["docker", "tag", image_ref, alias_ref]
+        rc = _run(tag_cmd, dry_run=args.dry_run)
+        if rc != 0:
+            return rc
+        if args.push:
+            push_cmd = ["docker", "push", alias_ref]
+            rc = _run(push_cmd, dry_run=args.dry_run)
+            if rc != 0:
+                return rc
+
     immutable_ref = ""
     if args.tag_current_git_sha:
         immutable_ref = f"{repository}:{git_sha}"
@@ -170,10 +199,25 @@ def main() -> int:
             rc = _run(push_cmd, dry_run=args.dry_run)
             if rc != 0:
                 return rc
+        for alias_repository in alias_repositories:
+            alias_immutable_ref = f"{alias_repository}:{git_sha}"
+            tag_cmd = ["docker", "tag", image_ref, alias_immutable_ref]
+            rc = _run(tag_cmd, dry_run=args.dry_run)
+            if rc != 0:
+                return rc
+            if args.push:
+                push_cmd = ["docker", "push", alias_immutable_ref]
+                rc = _run(push_cmd, dry_run=args.dry_run)
+                if rc != 0:
+                    return rc
 
     print(f"Ready: {image_ref}")
+    for alias_ref in alias_refs:
+        print(f"Alias: {alias_ref}")
     if immutable_ref:
         print(f"Immutable: {immutable_ref}")
+        for alias_repository in alias_repositories:
+            print(f"Alias immutable: {alias_repository}:{git_sha}")
     return 0
 
 

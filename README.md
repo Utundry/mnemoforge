@@ -597,8 +597,9 @@ curl http://localhost:8000/api/v1/health
 ```
 
 The current public image is published as `caveboy/sloplesscode:latest`.
-Immutable commit tags are published alongside `latest` as
-`caveboy/sloplesscode:<git-sha>`.
+During the rename transition, the same image is also published as
+`caveboy/mnemoforge:latest` for compatibility. Immutable commit tags are
+published alongside `latest` for both repositories.
 
 ### Option 2: Docker Compose For Contributors
 
