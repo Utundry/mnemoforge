@@ -695,10 +695,15 @@ For public or shared deployments:
 - prefer `docker-compose.user.yml` for a simple non-dev runtime;
 - generate `.env.user` with `python scripts/configure_public.py`;
 - set `API_KEY` when the server is reachable outside localhost;
-- do not publish live `qdrant_data`;
+- do not publish live `system_data` or legacy `qdrant_data`;
 - start from `.env.public.example`;
 - keep experimental modules disabled unless you are actively testing them;
 - use the safe demo dataset in [demo/](demo/) for examples.
+
+SloplessCode treats SQLite/JSON stores as source-of-truth system data and
+Qdrant as rebuildable semantic indexing data. User Docker Compose keeps them in
+separate volumes: `sloplesscode_system_data` for system memory and
+`mnemoforge_qdrant_data` for the Qdrant index during the rename transition.
 
 Contributor setup and test commands live in [SETUP.md](SETUP.md). Container and
 remote MCP validation notes live in [docs/CONTAINER_STATUS.md](docs/CONTAINER_STATUS.md).

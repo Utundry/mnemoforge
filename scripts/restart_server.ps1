@@ -254,15 +254,26 @@ function Assert-LocalRuntimeCanOwnDb {
   )
   if ($AllowSharedDb -or $env:MNEMOFORGE_ALLOW_SHARED_DB_RUNTIME -eq "1") { return }
 
-  $ownerPath = Join-Path $RepoRoot "qdrant_data\runtime_owner.json"
+  $dataRoot = $env:SLOPLESSCODE_DATA_DIR
+  if ([string]::IsNullOrWhiteSpace($dataRoot)) { $dataRoot = $env:MNEMOFORGE_DATA_DIR }
+  if ([string]::IsNullOrWhiteSpace($dataRoot)) {
+    $systemData = Join-Path $RepoRoot "system_data"
+    if (Test-Path -LiteralPath $systemData -PathType Container) {
+      $dataRoot = $systemData
+    } else {
+      $dataRoot = Join-Path $RepoRoot "qdrant_data"
+    }
+  }
+
+  $ownerPath = Join-Path $dataRoot "runtime_owner.json"
   $owner = Read-JsonFile -Path $ownerPath
   if ((Test-RuntimeOwnerActive -Owner $owner) -and "$($owner.runtime_kind)" -ne "host") {
-    throw "Refusing to start host runtime: qdrant_data is actively owned by $($owner.owner_id). Stop that runtime or pass -AllowSharedDb for an explicit unsafe override."
+    throw "Refusing to start host runtime: system data root is actively owned by $($owner.owner_id). Stop that runtime or pass -AllowSharedDb for an explicit unsafe override."
   }
 
   $services = @(Get-RunningComposeServices)
   if ($services -contains "memory-server-dev") {
-    throw "Refusing to start host runtime: Docker service memory-server-dev is running and uses the same qdrant_data directory. Stop it or pass -AllowSharedDb for an explicit unsafe override."
+    throw "Refusing to start host runtime: Docker service memory-server-dev is running and may use the same system data root. Stop it or pass -AllowSharedDb for an explicit unsafe override."
   }
 }
 

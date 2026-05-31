@@ -9,9 +9,10 @@ from threading import Event, Lock, Thread
 from uuid import uuid4
 
 from app.models.task_lease import TaskLeaseClaimResult, TaskLeaseRecord
+from app.services.system_data_root import data_path
 
 
-_DB_PATH = Path("qdrant_data") / "task_leases.db"
+_DB_PATH = data_path("task_leases.db")
 DEFAULT_LEASE_TTL_SECONDS = 15 * 60
 _WORK_TOKEN_BYTES = 32
 _WORK_TOKEN_PREVIEW_LEN = 8

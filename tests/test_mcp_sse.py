@@ -140,7 +140,7 @@ class TestMcpToolExecution:
         diagnostic = json.loads(
             await mcp_sse._execute_tool("help", {"project": "alpha", "diagnostic": True}, "http://test")
         )
-        assert diagnostic["server_build"]["service"] == "mnemoforge"
+        assert diagnostic["server_build"]["service"] == "SloplessCode"
         assert diagnostic["server_build"]["git_commit"] == "abc1234"
         assert diagnostic["server_build"]["build_tag"] == "test-tag"
 

@@ -7,8 +7,9 @@ from threading import Lock
 from typing import Iterable, Optional
 
 from app.models.project_task import ProjectTaskChangeRecord, ProjectTaskRecord
+from app.services.system_data_root import data_path
 
-_DB_PATH = Path("qdrant_data") / "project_tasks.db"
+_DB_PATH = data_path("project_tasks.db")
 
 _CREATE_TASKS_SQL = """
 CREATE TABLE IF NOT EXISTS project_tasks (

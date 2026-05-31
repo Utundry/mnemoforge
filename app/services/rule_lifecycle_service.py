@@ -38,9 +38,10 @@ from app.services.law_service import (
     update_project_law_status,
 )
 from app.services.stenographer_service import get_stenographer_store
+from app.services.system_data_root import data_path
 
 
-_DB_PATH = Path("qdrant_data") / "rule_lifecycle.db"
+_DB_PATH = data_path("rule_lifecycle.db")
 _PROJECTOR_KEY = "stenographer_rule_candidates"
 
 _CREATE_SQL = """

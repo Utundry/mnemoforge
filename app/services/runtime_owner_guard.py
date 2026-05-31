@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from app.services.system_data_root import get_system_data_root
+
 
 class RuntimeOwnershipError(RuntimeError):
     pass
@@ -98,7 +100,7 @@ class RuntimeOwnershipHandle:
 
 def acquire_runtime_ownership(
     *,
-    data_dir: Path = Path("qdrant_data"),
+    data_dir: Path | None = None,
     runtime_kind: str = "auto",
     enabled: bool = True,
     allow_takeover: bool = False,
@@ -107,7 +109,7 @@ def acquire_runtime_ownership(
     if not enabled:
         return None
 
-    data_dir = Path(data_dir)
+    data_dir = Path(data_dir) if data_dir is not None else get_system_data_root()
     owner_path = data_dir / "runtime_owner.json"
     kind = _detect_runtime_kind(runtime_kind)
     hostname = socket.gethostname()
@@ -130,7 +132,7 @@ def acquire_runtime_ownership(
         if existing_owner and existing_owner != owner_id and not _is_stale(existing, stale_seconds=stale_seconds):
             if not allow_takeover:
                 raise RuntimeOwnershipError(
-                    "qdrant_data is already owned by another active runtime: "
+                    f"{data_dir} is already owned by another active runtime: "
                     f"{existing_owner}. Stop that runtime or set "
                     "MNEMOFORGE_RUNTIME_OWNER_ALLOW_TAKEOVER=true for an explicit takeover."
                 )

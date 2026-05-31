@@ -17,9 +17,10 @@ from app.models.stenographer import (
     WorkSessionRecord,
     WorkSessionState,
 )
+from app.services.system_data_root import data_path
 
 
-_DB_PATH = Path("qdrant_data") / "stenographer.db"
+_DB_PATH = data_path("stenographer.db")
 _VALID_SPAN_KINDS = set(re.findall(r"\w+", STENOGRAPHER_KIND_PATTERN.split("^(", 1)[1].split(")$", 1)[0]))
 _VALID_TERMINAL_STATUSES = WORK_SESSION_TERMINAL_STATUSES
 _COMPLETED_CLOSEOUT_KINDS = ("verification", "changed_files", "next_step")

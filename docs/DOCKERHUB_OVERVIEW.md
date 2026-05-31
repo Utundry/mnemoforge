@@ -86,9 +86,16 @@ Do not run destructive volume cleanup commands unless you have a backup:
 - avoid `docker system prune --volumes`
 - do not delete the local data directory or named volume
 
-The historical data directory name is `qdrant_data`, but it now contains the
-whole SloplessCode system data root, not only Qdrant vector data. Treat it as
-your project/system memory.
+SloplessCode separates source-of-truth system data from Qdrant semantic index
+data:
+
+- `sloplesscode_system_data` stores SQLite/JSON project memory, tasks, laws,
+  aliases, checkpoints, and lifecycle state.
+- `mnemoforge_qdrant_data` stores Qdrant semantic index files for compatibility
+  with the rename transition.
+
+Qdrant is treated as rebuildable semantic indexing data; system data is the
+critical backup target.
 
 ## Alpha Status
 

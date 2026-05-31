@@ -26,9 +26,11 @@ from pathlib import Path
 from threading import Lock
 from typing import Optional
 
+from app.services.system_data_root import data_path
+
 logger = logging.getLogger(__name__)
 
-_DB_PATH = Path("qdrant_data") / "skills.db"
+_DB_PATH = data_path("skills.db")
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS skill_meta (

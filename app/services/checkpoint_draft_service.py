@@ -15,9 +15,10 @@ from app.models.project_task import ProjectTaskChangeCreate
 from app.services.memory_scribe_service import draft_task_checkpoint, evaluate_scribe_quality
 from app.services.project_task_service import add_task_change
 from app.services.stenographer_service import get_stenographer_store
+from app.services.system_data_root import data_path
 
 
-_DB_PATH = Path("qdrant_data") / "checkpoint_drafts.db"
+_DB_PATH = data_path("checkpoint_drafts.db")
 _ALLOWED_PATCH_FIELDS = {
     "summary",
     "blockers",

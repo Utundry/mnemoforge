@@ -8,8 +8,9 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from app.services.system_data_root import data_path
 
-_DB_PATH = Path("qdrant_data") / "public_ref_index.db"
+_DB_PATH = data_path("public_ref_index.db")
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS public_ref_index (

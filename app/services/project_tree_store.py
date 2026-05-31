@@ -18,9 +18,11 @@ from threading import Lock
 from typing import Optional
 from uuid import UUID, uuid4
 
+from app.services.system_data_root import data_path
+
 logger = logging.getLogger(__name__)
 
-_DB_PATH = Path("qdrant_data") / "project_tree.db"
+_DB_PATH = data_path("project_tree.db")
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS tree_nodes (

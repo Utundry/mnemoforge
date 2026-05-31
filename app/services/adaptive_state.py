@@ -16,6 +16,8 @@ from threading import Lock
 from time import time
 from typing import Optional
 
+from app.services.system_data_root import data_path
+
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS behavior_patterns (
     agent_id     TEXT NOT NULL,
@@ -174,6 +176,6 @@ _store: Optional[AdaptiveStateStore] = None
 def get_adaptive_store(db_path: Path | None = None) -> AdaptiveStateStore:
     global _store
     if _store is None:
-        path = db_path or Path("qdrant_data") / "adaptive_state.db"
+        path = db_path or data_path("adaptive_state.db")
         _store = AdaptiveStateStore(path)
     return _store

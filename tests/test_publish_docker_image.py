@@ -32,6 +32,7 @@ def test_validate_dockerignore_flags_missing_rules():
     missing = helper._validate_dockerignore(tmp_path)
 
     assert ".venv/" in missing
+    assert "system_data/" in missing
     assert "qdrant_data/" in missing
     assert "logs/" in missing
 

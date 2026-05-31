@@ -691,6 +691,8 @@ def explicit_artifact_list_type(query: str) -> str:
     text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
     if not any(term in text for term in _READ_LOOKUP_TERMS):
         return ""
+    if any(term in text for term in ("open tasks", "active tasks", "open work", "active work", "list open", "list active")):
+        return ""
     asks_improvements = any(term in text for term in _IMPROVEMENT_QUERY_TERMS)
     asks_tasks = any(term in text for term in _TASK_QUERY_TERMS)
     asks_work_items = any(term in text for term in ("work items", "work item", "artifacts", "artifact"))

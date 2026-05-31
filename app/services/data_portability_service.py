@@ -7,9 +7,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+from app.services.system_data_root import get_system_data_root
 
 PORTABLE_EXPORT_FORMAT_VERSION = "mnemoforge.portable-export.v1"
-DEFAULT_DATA_ROOT = Path("qdrant_data")
+DEFAULT_DATA_ROOT = get_system_data_root(create=False)
 TEST_STORE_PATH_MARKERS = {
     ".pytest_cache",
     ".pytest-tmp",

@@ -59,6 +59,7 @@ htmlcov/
 *.sublime-workspace
 
 # Project specific
+system_data/
 qdrant_data/
 backups/
 logs/

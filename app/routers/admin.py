@@ -71,6 +71,7 @@ from app.services.qdrant_rebuild_service import (
     reindex_sqlite_backed_qdrant,
 )
 from app.services.storage_trust_service import build_storage_trust_report
+from app.services.system_data_root import get_system_data_root
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -310,8 +311,7 @@ async def tail_log(
 
 
 def _list_dbs() -> list[dict[str, Any]]:
-    root = _repo_root()
-    db_dir = root / "qdrant_data"
+    db_dir = get_system_data_root()
     if not db_dir.exists():
         return []
     items: list[dict[str, Any]] = []
@@ -331,7 +331,7 @@ def _resolve_db_path(db_name: str) -> Path:
     allowed = {d["name"] for d in _list_dbs()}
     if db_name not in allowed:
         raise HTTPException(status_code=404, detail="Unknown db")
-    return (_repo_root() / "qdrant_data" / db_name).resolve()
+    return (get_system_data_root() / db_name).resolve()
 
 
 def _connect_ro(db_path: Path) -> sqlite3.Connection:

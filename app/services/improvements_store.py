@@ -22,10 +22,11 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from app.services.skill_gap_domains import canonicalize_skill_gap_title
+from app.services.system_data_root import data_path
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = Path("qdrant_data") / "improvements.db"
+_DB_PATH = data_path("improvements.db")
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS improvements (

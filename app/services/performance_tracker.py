@@ -14,6 +14,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Optional
 
+from app.services.system_data_root import data_path
+
 logger = logging.getLogger(__name__)
 
 # After this many new events for a component+task, sync to capability registry
@@ -361,5 +363,5 @@ _tracker: Optional[PerformanceTracker] = None
 def get_tracker() -> PerformanceTracker:
     global _tracker
     if _tracker is None:
-        _tracker = PerformanceTracker(Path("qdrant_data") / "performance.db")
+        _tracker = PerformanceTracker(data_path("performance.db"))
     return _tracker

@@ -13,14 +13,14 @@ def test_publish_readiness_reports_missing_status_doc_and_doc_sanitization_issue
         encoding="utf-8",
     )
     (tmp_path / ".dockerignore").write_text(
-        ".git/\n.*\n!.env.public.example\n.env\n.venv/\nnode_modules/\nqdrant_data/\nlogs/\n*.db\npytest_temp_*/\ntests/\npytest.ini\n",
+        ".git/\n.*\n!.env.public.example\n.env\n.venv/\nnode_modules/\nsystem_data/\nqdrant_data/\nlogs/\n*.db\npytest_temp_*/\ntests/\npytest.ini\n",
         encoding="utf-8",
     )
     (tmp_path / "demo").mkdir(parents=True, exist_ok=True)
     (tmp_path / "Dockerfile").write_text("FROM python:3.11", encoding="utf-8")
     (tmp_path / "docker-compose.yml").write_text("services: {}", encoding="utf-8")
     (tmp_path / ".env.example").write_text("API_KEY=\n", encoding="utf-8")
-    (tmp_path / ".gitignore").write_text(".*\n!.dockerignore\n!.env.public.example\n!.gitignore\n.git/\n.env\n.venv/\nnode_modules/\nqdrant_data/\nlogs/\n*.db\npytest_temp_*/\n.server.pid\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(".*\n!.dockerignore\n!.env.public.example\n!.gitignore\n.git/\n.env\n.venv/\nnode_modules/\nsystem_data/\nqdrant_data/\nlogs/\n*.db\npytest_temp_*/\n.server.pid\n", encoding="utf-8")
     (tmp_path / "docs" / "PROJECT_KNOWLEDGE_MODEL.md").write_text("# Architecture\n", encoding="utf-8")
     (tmp_path / "docs" / "EXTERNAL_PROJECT_ROADMAP.md").write_text("# Roadmap\n", encoding="utf-8")
     (tmp_path / "docs" / "USAGE_CONDITIONS.md").write_text("# Usage Conditions\n", encoding="utf-8")
@@ -67,7 +67,7 @@ def test_publish_readiness_can_report_clean_ok_state(tmp_path: Path, monkeypatch
         encoding="utf-8",
     )
     (tmp_path / ".dockerignore").write_text(
-        ".git/\n.*\n!.env.public.example\n.env\n.venv/\nnode_modules/\nqdrant_data/\nlogs/\n*.db\npytest_temp_*/\ntests/\npytest.ini\n",
+        ".git/\n.*\n!.env.public.example\n.env\n.venv/\nnode_modules/\nsystem_data/\nqdrant_data/\nlogs/\n*.db\npytest_temp_*/\ntests/\npytest.ini\n",
         encoding="utf-8",
     )
     (tmp_path / "demo" / "README.md").write_text("# Demo dataset\n", encoding="utf-8")
@@ -78,7 +78,7 @@ def test_publish_readiness_can_report_clean_ok_state(tmp_path: Path, monkeypatch
         "SELF_PROJECT_ID=mnemoforge\nDISABLED_MODULES=layout_fixer\nAPI_KEY=\n",
         encoding="utf-8",
     )
-    (tmp_path / ".gitignore").write_text(".*\n!.dockerignore\n!.env.public.example\n!.gitignore\n.git/\n.env\n.venv/\nnode_modules/\nqdrant_data/\nlogs/\n*.db\npytest_temp_*/\n.server.pid\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(".*\n!.dockerignore\n!.env.public.example\n!.gitignore\n.git/\n.env\n.venv/\nnode_modules/\nsystem_data/\nqdrant_data/\nlogs/\n*.db\npytest_temp_*/\n.server.pid\n", encoding="utf-8")
     (tmp_path / "docs" / "PROJECT_KNOWLEDGE_MODEL.md").write_text("# Architecture\n", encoding="utf-8")
     (tmp_path / "docs" / "EXTERNAL_PROJECT_ROADMAP.md").write_text("# Roadmap\n", encoding="utf-8")
     (tmp_path / "docs" / "USAGE_CONDITIONS.md").write_text("# Usage Conditions\n", encoding="utf-8")

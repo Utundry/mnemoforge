@@ -6,10 +6,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.services.system_data_root import data_path
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _MAIN_PATH = _PROJECT_ROOT / "app" / "main.py"
-_DB_PATH = _PROJECT_ROOT / "qdrant_data" / "functionality_review.db"
+_DB_PATH = data_path("functionality_review.db")
 _STATUS_PRIORITY = {
     "keep": 0,
     "modernize": 1,

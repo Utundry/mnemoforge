@@ -9,7 +9,9 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-_DB_PATH = Path("qdrant_data") / "route_patterns.db"
+from app.services.system_data_root import data_path
+
+_DB_PATH = data_path("route_patterns.db")
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS route_patterns (

@@ -11,10 +11,11 @@ from typing import Any
 
 from app.config import settings
 from app.services.learning_store import get_learning_store
+from app.services.system_data_root import data_path
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = Path("qdrant_data") / "data_hygiene.db"
+_DB_PATH = data_path("data_hygiene.db")
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS hygiene_audits (

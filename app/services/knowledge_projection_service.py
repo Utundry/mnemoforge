@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.models.law import ProjectLawRecord
+from app.services.system_data_root import data_path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_DB_PATH = _PROJECT_ROOT / "qdrant_data" / "knowledge_projections.db"
+_DB_PATH = data_path("knowledge_projections.db")
 _PROJECTION_VERSION = "1"
 
 _DDL = """

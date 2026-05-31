@@ -5,8 +5,8 @@ Tracks daily token/request usage per cloud model and ranks models by a
 composite score: wilson_score(model_id, task_type) × remaining_fraction.
 
 Storage:
-  qdrant_data/model_registry.json — static model config + initial scores
-  qdrant_data/quota.db            — SQLite: quota_usage, limit_events, handoff_log
+  system data root/model_registry.json — static model config + initial scores
+  system data root/quota.db            — SQLite: quota_usage, limit_events, handoff_log
 """
 
 import json
@@ -22,6 +22,7 @@ from typing import Optional
 
 from app.services.capability_registry import get_registry
 from app.services.cloud_llm import configured_cloud_model_profiles
+from app.services.system_data_root import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -522,7 +523,7 @@ def get_model_registry() -> ModelRegistry:
     global _registry
     if _registry is None:
         _registry = ModelRegistry(
-            config_path=Path("qdrant_data") / "model_registry.json",
-            db_path=Path("qdrant_data") / "quota.db",
+            config_path=data_path("model_registry.json"),
+            db_path=data_path("quota.db"),
         )
     return _registry

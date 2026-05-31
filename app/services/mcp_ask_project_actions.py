@@ -52,6 +52,28 @@ def select_ask_project_lexical_route(
         "guardrail": "",
     }
 
+    open_work_lookup = any(
+        term in text
+        for term in (
+            "next",
+            "priority",
+            "open work",
+            "open tasks",
+            "active tasks",
+            "list open tasks",
+            "list active tasks",
+            "list open task",
+            "list active task",
+            "list open",
+            "list active",
+            "list open tasks",
+            "list_open_tasks",
+            "what should i do",
+            "continue",
+            "backlog",
+        )
+    )
+
     if extract_task_id_like(question):
         route.update(
             facade="project_context",
@@ -59,6 +81,12 @@ def select_ask_project_lexical_route(
             confidence=0.9,
         )
         route["structural_match"] = True
+    elif open_work_lookup:
+        route.update(
+            facade="project_work",
+            reason="Question asks for next/open project work; route to project_work read-only planning.",
+            confidence=0.86,
+        )
     elif artifact_lookup or terse_topic_lookup:
         route.update(
             facade="project_context",
@@ -75,12 +103,6 @@ def select_ask_project_lexical_route(
             facade="project_context",
             reason="Question asks to find/search/recall memory content; route to project_context for memory lookup.",
             confidence=0.88,
-        )
-    elif any(term in text for term in ("next", "priority", "open work", "open tasks", "what should i do", "continue", "backlog")):
-        route.update(
-            facade="project_work",
-            reason="Question asks for next/open project work; route to project_work read-only planning.",
-            confidence=0.84,
         )
     elif any(term in text for term in ("test", "tests", "verify", "verification", "health", "restart", "smoke", "failed", "failure")):
         route.update(

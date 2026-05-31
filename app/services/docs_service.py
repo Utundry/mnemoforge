@@ -7,7 +7,7 @@ Generates and caches project documentation from live data sources:
 - Skills marketplace
 - Capability registry
 
-Cache: qdrant_data/docs_cache/{cache_key(project)}.json
+Cache: system data root/docs_cache/{cache_key(project)}.json
 Invalidation: event-driven (no TTL). Cache is deleted on:
   - PATCH /improvements/{id}/resolve
   - POST /project/ingest (if anything changed)
@@ -39,10 +39,11 @@ from app.services.component_docs_store import get_component_docs_store
 from app.services.improvements_store import get_improvements_store
 from app.services.learning_store import get_learning_store
 from app.services.project_context_service import gather_project_knowledge_snapshot
+from app.services.system_data_root import data_path
 
 logger = logging.getLogger(__name__)
 
-_CACHE_DIR = Path("qdrant_data") / "docs_cache"
+_CACHE_DIR = data_path("docs_cache")
 _SAFE_PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
@@ -618,7 +619,7 @@ def _gen_laws(laws: list[dict]) -> str:
 def _gen_performance(project: str) -> str:
     try:
         from app.services.capability_registry import CapabilityRegistry
-        reg = CapabilityRegistry(Path("qdrant_data") / "capabilities.json")
+        reg = CapabilityRegistry(data_path("capabilities.json"))
         task_types = ["code_generation", "memory_extraction", "fact_extraction",
                       "text_summarization", "skill_tagging", "layout_fix", "log_filter"]
         lines = ["| Component | Task | Score |", "|-----------|------|-------|"]

@@ -453,11 +453,14 @@ async def run(args: argparse.Namespace) -> MigrationReport:
 
 
 def main() -> int:
+    from app.services.system_data_root import get_system_data_root
+
+    data_root = get_system_data_root(create=False)
     parser = argparse.ArgumentParser(description="Rename a project identity in MnemoForge storage.")
     parser.add_argument("--old", default="supermemory", help="Old project identifier.")
     parser.add_argument("--new", default="mnemoforge", help="New project identifier.")
-    parser.add_argument("--data-dir", default=str(ROOT / "qdrant_data"), help="Directory containing SQLite stores.")
-    parser.add_argument("--backup-dir", default=str(ROOT / "qdrant_data" / "identity_migration_backups"))
+    parser.add_argument("--data-dir", default=str(data_root), help="Directory containing SQLite stores.")
+    parser.add_argument("--backup-dir", default=str(data_root / "identity_migration_backups"))
     parser.add_argument("--qdrant-limit", type=int, default=0, help="Maximum Qdrant points to scan; 0 means all.")
     parser.add_argument("--skip-qdrant", action="store_true", help="Only inspect/update SQLite files.")
     parser.add_argument("--include-text", action="store_true", help="Also rewrite free-text history fields.")

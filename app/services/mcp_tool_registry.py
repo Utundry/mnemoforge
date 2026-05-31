@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from app.services.llm_gateway import get_cloud_gateway
+from app.services.system_data_root import data_path
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_DB_PATH = _PROJECT_ROOT / "qdrant_data" / "mcp_tool_lifecycle.db"
+_DB_PATH = data_path("mcp_tool_lifecycle.db")
 _DEFAULT_TOOL_STAGE = "stable"
 _VALID_STAGES = {"testing", "stable", "deprecated"}
 

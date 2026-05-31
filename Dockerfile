@@ -18,7 +18,7 @@ COPY docs/ docs/
 COPY demo/ demo/
 COPY README.md SETUP.md CLIENT_SETUP.md STATUS.md .env.public.example ./
 
-RUN mkdir -p qdrant_data
+RUN mkdir -p qdrant_data system_data
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

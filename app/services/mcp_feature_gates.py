@@ -6,7 +6,9 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-_DB_PATH = Path("qdrant_data") / "mcp_feature_gates.db"
+from app.services.system_data_root import data_path
+
+_DB_PATH = data_path("mcp_feature_gates.db")
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS mcp_feature_gates (

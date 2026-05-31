@@ -22,6 +22,7 @@ from app.models.enums import MemoryType
 from app.models.memory import MemoryCreate
 from app.services.ollama_service import OllamaService
 from app.services.qdrant_service import QdrantService
+from app.services.system_data_root import data_path
 from qdrant_client import AsyncQdrantClient
 
 logger = logging.getLogger("reindex_memory_store")
@@ -48,13 +49,13 @@ RESERVED_META_KEYS = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Rebuild Qdrant agent_memories from qdrant_data/memory_store.db.",
+        description="Rebuild Qdrant agent_memories from the system data root memory_store.db.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "--db-path",
         type=Path,
-        default=Path("qdrant_data") / "memory_store.db",
+        default=data_path("memory_store.db", create_parent=False),
         help="SQLite file holding the memory_content rows.",
     )
     parser.add_argument(

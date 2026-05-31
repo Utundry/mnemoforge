@@ -25,6 +25,8 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - ./system_data:/app/system_data
     restart: unless-stopped
 
   memory-server-dev:
@@ -42,6 +44,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
+      - ./system_data:/app/system_data
       - ./qdrant_data:/app/qdrant_data
       - ./app:/app/app
       - ./static:/app/static
@@ -106,6 +109,7 @@ services:
     depends_on:
       - memory-server-test
     environment:
+      SLOPLESSCODE_DATA_DIR: /tmp/sloplesscode_system_data
       MNEMOFORGE_SERVER_URL: http://memory-server-test:8000
       MNEMOFORGE_DB_TEST_TARGETS: http://memory-server-test:8000
       MNEMOFORGE_LIVE_TARGETS: http://memory-server-dev:8000,http://memory-server:8000
@@ -116,4 +120,6 @@ services:
       - ./scripts:/app/scripts
       - ./docs:/app/docs
       - ./pytest.ini:/app/pytest.ini:ro
+    tmpfs:
+      - /tmp/sloplesscode_system_data
     command: ["python", "scripts/docker_remote_mcp_e2e.py"]

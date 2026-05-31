@@ -23,6 +23,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, Coroutine, Optional
 
+from app.services.system_data_root import data_path
+
 logger = logging.getLogger(__name__)
 
 _CREATE_SQL = """
@@ -289,5 +291,5 @@ _queue: Optional[JobQueue] = None
 def get_job_queue() -> JobQueue:
     global _queue
     if _queue is None:
-        _queue = JobQueue(Path("qdrant_data") / "jobs.db")
+        _queue = JobQueue(data_path("jobs.db"))
     return _queue

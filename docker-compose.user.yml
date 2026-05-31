@@ -19,6 +19,7 @@ services:
     env_file:
       - ${MNEMOFORGE_USER_ENV_FILE:-.env.user}
     environment:
+      SLOPLESSCODE_DATA_DIR: /app/system_data
       MNEMOFORGE_RUNTIME_KIND: docker
       MNEMOFORGE_DOCKER_SERVICE: sloplesscode
       QDRANT_HOST: qdrant
@@ -28,7 +29,10 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - sloplesscode_system_data:/app/system_data
     restart: unless-stopped
 
 volumes:
   mnemoforge_qdrant_data:
+  sloplesscode_system_data:

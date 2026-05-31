@@ -14,10 +14,11 @@ from qdrant_client.http import models as qmodels
 
 from app.models.enums import MemoryType
 from app.services.qdrant_rebuild_service import is_generic_memory_store_row
+from app.services.system_data_root import data_path
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = Path("qdrant_data") / "integrity.db"
+_DB_PATH = data_path("integrity.db")
 GENERIC_MEMORY_FILTER_SLICE_ID = "qdrant.generic_memory_filter"
 SKILL_DOMAIN_TAGS_FILTER_SLICE_ID = "qdrant.skill_domain_tags_filter"
 HANDOFF_STATUS_FILTER_SLICE_ID = "qdrant.handoff_status_filter"

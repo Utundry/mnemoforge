@@ -6,9 +6,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+from app.services.system_data_root import data_path
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_DB_PATH = _PROJECT_ROOT / "qdrant_data" / "operational_instincts.db"
+_DB_PATH = data_path("operational_instincts.db")
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS operational_instincts (
     instinct_id         TEXT NOT NULL,

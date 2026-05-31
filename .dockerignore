@@ -8,6 +8,7 @@ __pycache__/
 .venv/
 .venv-wsl/
 node_modules/
+system_data/
 qdrant_data/
 logs/
 *.db

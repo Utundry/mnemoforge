@@ -15,6 +15,7 @@ REQUIRED_DOCKERIGNORE_RULES = [
     ".env",
     ".venv/",
     "node_modules/",
+    "system_data/",
     "qdrant_data/",
     "logs/",
     "*.db",

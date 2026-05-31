@@ -6,9 +6,10 @@ from datetime import datetime
 from typing import Optional
 
 from app.models.knowledge_tree import TreeNode, RoutingRule
+from app.services.system_data_root import data_path
 
 # Размещаем БД рядом с остальными данными проекта
-DEFAULT_DB_PATH = Path(os.getenv("KNOWLEDGE_TREE_DB_PATH", "qdrant_data/knowledge_tree.db"))
+DEFAULT_DB_PATH = Path(os.getenv("KNOWLEDGE_TREE_DB_PATH") or data_path("knowledge_tree.db"))
 
 class KnowledgeTreeRepo:
     """Репозиторий для управления графом Дерева Знаний и правилами маршрутизации (SQLite)."""

@@ -142,14 +142,14 @@ python -m scripts.publish_docker_image --repository caveboy/sloplesscode --tag l
 - If the service looks unhealthy immediately after a Docker restart, wait up to 120 seconds and retry.
 - If you are using the contributor stack, replace `docker-compose.user.yml` commands with plain `docker compose`.
 - If MCP calls return unauthorized responses, check `API_KEY` and the `X-Api-Key` client header.
-- If Qdrant fails to start, inspect the `qdrant_data` volume or recreate it for a clean local environment.
+- If Qdrant fails to start, inspect the Qdrant volume. It is semantic index data and can often be rebuilt from SQLite-backed system data.
 - If cloud LLM calls fail, verify the provider base URL, model name, and API key environment variable.
 - If local LLM calls fail, confirm Ollama or LM Studio is running and that the configured model is available.
 
 ## Security Notes
 
 - Do not expose the service publicly without an `API_KEY`.
-- Do not commit `.env`, local databases, logs, or `qdrant_data`.
+- Do not commit `.env`, local databases, logs, `system_data`, or legacy `qdrant_data`.
 - Treat memory contents as potentially sensitive user data.
 
 ## Author And Contact

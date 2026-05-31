@@ -1,7 +1,7 @@
 """
 Capability Registry — tracks what each component can do and how well.
 
-Storage: JSON file (qdrant_data/capabilities.json) + in-memory cache.
+Storage: JSON file in the SloplessCode system data root + in-memory cache.
 Scores are Bayesian-updated: success/fail counts → Wilson score confidence interval.
 
 Components:
@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.config import settings
+from app.services.system_data_root import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +190,6 @@ _registry: Optional[CapabilityRegistry] = None
 def get_registry() -> CapabilityRegistry:
     global _registry
     if _registry is None:
-        from app.config import settings
-        path = Path("qdrant_data") / "capabilities.json"
+        path = data_path("capabilities.json")
         _registry = CapabilityRegistry(path)
     return _registry

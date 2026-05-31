@@ -7,8 +7,9 @@ from threading import RLock
 from typing import Optional
 
 from app.config import settings
+from app.services.system_data_root import data_path
 
-_DB_PATH = Path("qdrant_data") / "project_identity.db"
+_DB_PATH = data_path("project_identity.db")
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS project_identity_aliases (
