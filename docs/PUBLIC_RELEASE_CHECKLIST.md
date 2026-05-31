@@ -57,6 +57,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps
 
 ```bash
 python scripts/publish_docker_image.py --repository caveboy/sloplesscode --alias-repository caveboy/mnemoforge --tag latest --push --tag-current-git-sha
+python scripts/publish_dockerhub_overview.py --repository caveboy/sloplesscode --overview-file docs/DOCKERHUB_OVERVIEW.md
 ```
 
 ## Public FAQ
