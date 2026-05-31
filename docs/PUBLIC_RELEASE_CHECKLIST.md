@@ -53,6 +53,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps
 3. Push only after the readiness checks pass.
 4. Publish the primary public image under `caveboy/sloplesscode`.
 5. During the rename transition, publish the same image under compatibility alias `caveboy/mnemoforge`.
+6. Keep the Docker Hub Overview in sync with `docs/DOCKERHUB_OVERVIEW.md`.
 
 ```bash
 python scripts/publish_docker_image.py --repository caveboy/sloplesscode --alias-repository caveboy/mnemoforge --tag latest --push --tag-current-git-sha
