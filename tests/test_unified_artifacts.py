@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4, UUID
 
 from app.models.unified_artifact import (
@@ -14,6 +15,7 @@ from app.models.unified_artifact import (
     from_unified_status,
 )
 from app.services.improvements_store import get_improvements_store
+from app.services import project_identity_service
 from app.services.project_tasks_store import get_project_tasks_store
 from app.services.unified_artifact_service import UnifiedArtifactService, get_unified_artifact_service
 
@@ -658,6 +660,69 @@ async def test_resolve_artifact_with_linked_improvement() -> None:
     # Verify improvement was also resolved
     imp = await improvements_store.get(improvement_id)
     assert imp["status"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_resolve_task_artifact_uses_project_aliases(monkeypatch) -> None:
+    """Resolving through a public alias must close the historical stored task row."""
+    project_identity_service.close_project_identity_store()
+    alias_store = project_identity_service.ProjectIdentityStore(Path(":memory:"))
+    monkeypatch.setattr(project_identity_service, "_STORE", alias_store)
+    alias_store.upsert_alias(alias="supermemory", project_id="supermemory", reason="historical name")
+    alias_store.upsert_alias(alias="sloplesscode", project_id="supermemory", reason="public rename")
+    try:
+        service = UnifiedArtifactService()
+        improvements_store = get_improvements_store()
+        tasks_store = get_project_tasks_store()
+        task_id = str(uuid4())
+        now = datetime.now(timezone.utc).timestamp()
+
+        await improvements_store.insert(
+            improvement_id=UUID(task_id),
+            title="Alias lifecycle sync",
+            description="Historical project rows should close through the public alias.",
+            project="supermemory",
+            agent_id="test-agent",
+            importance_score=0.8,
+            tags=["test"],
+        )
+        tasks_store.upsert_task(
+            memory_id=str(uuid4()),
+            task_id=task_id,
+            project="supermemory",
+            title="Alias lifecycle sync",
+            description="Historical project rows should close through the public alias.",
+            agent_id="test-agent",
+            status="active",
+            source="improvement",
+            tags=["task_status:active", "project:supermemory"],
+            linked_improvement_id=task_id,
+            created_at=now,
+            updated_at=now,
+        )
+
+        resolved = await service.resolve_artifact(
+            f"task:sloplesscode:{task_id}",
+            UnifiedArtifactResolveRequest(
+                acted_by="test-user",
+                action_source="test",
+                reason="Finished via public alias.",
+            ),
+        )
+
+        assert resolved.status == "done"
+        assert resolved.project == "supermemory"
+        stored = tasks_store.get_task_by_task_id(project="supermemory", task_id=task_id)
+        assert stored["status"] == "done"
+        assert "task_status:done" in stored["tags"]
+        assert "task_status:active" not in stored["tags"]
+        assert (await improvements_store.get(UUID(task_id)))["status"] == "resolved"
+
+        open_tasks = await service.list_artifacts(project="sloplesscode", type_="task", status="open")
+        assert all(item.task_id != task_id for item in open_tasks.items)
+    finally:
+        alias_store.close()
+        monkeypatch.setattr(project_identity_service, "_STORE", None)
 
 
 @pytest.mark.asyncio

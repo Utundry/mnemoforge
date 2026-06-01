@@ -173,6 +173,18 @@ def _artifact_query_match_reason(item: UnifiedArtifactRecord, query: str, score:
     return (f"Ranked by artifact relevance score {score:.2f}.", [])
 
 
+def _replace_task_status_tag(tags: list[str] | None, status: str) -> list[str]:
+    cleaned = [
+        str(tag).strip()
+        for tag in (tags or [])
+        if str(tag).strip() and not str(tag).strip().startswith("task_status:")
+    ]
+    status_tag = f"task_status:{status}"
+    if status_tag not in cleaned:
+        cleaned.append(status_tag)
+    return cleaned
+
+
 class UnifiedArtifactService:
     """Единый фасад для доступа к improvements и tasks."""
 
@@ -441,10 +453,14 @@ class UnifiedArtifactService:
 
         # Синхронизировать с task, если есть связанная task запись
         try:
-            linked_task = self._tasks_store.get_task_by_task_id(
-                project=row["project"],
-                task_id=str(improvement_id),
-            )
+            linked_task = None
+            for lookup_project in project_lookup_ids(resolve_project_id(row["project"])):
+                linked_task = self._tasks_store.get_task_by_task_id(
+                    project=lookup_project,
+                    task_id=str(improvement_id),
+                )
+                if linked_task:
+                    break
             if linked_task:
                 self._tasks_store.upsert_task(
                     memory_id=str(linked_task["id"]),
@@ -455,7 +471,7 @@ class UnifiedArtifactService:
                     agent_id=linked_task["agent_id"],
                     status="done",
                     source=linked_task["source"],
-                    tags=linked_task.get("tags") or [],
+                    tags=_replace_task_status_tag(linked_task.get("tags") or [], "done"),
                     topic_path=linked_task.get("topic_path"),
                     linked_improvement_id=str(improvement_id),
                     created_at=linked_task["created_at"],
@@ -478,10 +494,15 @@ class UnifiedArtifactService:
     ) -> UnifiedArtifactRecord:
         """Разрешить task и синхронизировать с improvement."""
         # Получить task
-        row = self._tasks_store.get_task_by_task_id(
-            project=key.project,
-            task_id=key.local_id,
-        )
+        canonical_project = resolve_project_id(key.project)
+        row = None
+        for lookup_project in project_lookup_ids(canonical_project):
+            row = self._tasks_store.get_task_by_task_id(
+                project=lookup_project,
+                task_id=key.local_id,
+            )
+            if row:
+                break
         if not row:
             raise ValueError(f"Task not found: {key.local_id}")
 
@@ -495,7 +516,7 @@ class UnifiedArtifactService:
             agent_id=row["agent_id"],
             status="done",
             source=row["source"],
-            tags=row.get("tags") or [],
+            tags=_replace_task_status_tag(row.get("tags") or [], "done"),
             topic_path=row.get("topic_path"),
             linked_improvement_id=row.get("linked_improvement_id"),
             created_at=row["created_at"],
