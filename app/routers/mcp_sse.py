@@ -8985,7 +8985,11 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
         result: dict = {
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "mnemoforge", "version": "1.0.0"},
+            "serverInfo": {
+                "name": "sloplesscode",
+                "version": "1.0.0",
+                "compatibilityAliases": ["mnemoforge", "supermemory"],
+            },
         }
         if agent_id:
             result["_mnemoforge"] = build_mnemoforge_initialize_hint(agent_id)

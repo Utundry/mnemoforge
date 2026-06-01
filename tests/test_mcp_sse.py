@@ -183,6 +183,8 @@ class TestMcpToolExecution:
             "http://test",
             session_id=session_id,
         )
+        assert initialized["result"]["serverInfo"]["name"] == "sloplesscode"
+        assert "mnemoforge" in initialized["result"]["serverInfo"]["compatibilityAliases"]
         assert initialized["result"]["_mnemoforge"]["tool_catalog"]["negotiated_mode"] == "compact"
 
         response = await mcp_sse._handle(
