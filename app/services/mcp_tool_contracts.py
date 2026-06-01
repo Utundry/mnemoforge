@@ -990,7 +990,7 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     "pull_task_context": {
         "name": "pull_task_context",
         "description": (
-            "Pull task context from MnemoForge using MCP-accessible state. "
+            "Pull task context from SloplessCode using MCP-accessible state. "
             "Returns a compact layered resume response by default: latest checkpoint, replay/execution status, replay drill decision, available layer index, token-overhead estimate, and the next safe action. "
             "Use detail=full or include_replay_bundle=true to fetch full task history, linked improvement, handoff refs, and context refs. "
             "Use this when the user asks to pull or restore task context, or when an old agent session is unavailable."
@@ -2063,7 +2063,7 @@ def build_mnemoforge_initialize_hint(agent_id: str) -> dict[str, Any]:
 
 def build_mnemoforge_onboarding_basics() -> str:
     return (
-        "MNEMOFORGE BASICS:\n"
+        "SLOPLESSCODE BASICS:\n"
         "  - Public surface first: help, state, get, submit.\n"
         "  - Do not bootstrap from mcp_settings.json, alwaysAllow, client allowlists, or cached full tool lists.\n"
         "  - Call help when unsure; call state for the current workflow packet.\n"

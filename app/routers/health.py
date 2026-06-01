@@ -290,7 +290,7 @@ async def stats(qdrant: QdrantDep):
 async def system_info(qdrant: QdrantDep, ollama: OllamaDep):
     """
     Full system overview: status, components, live counters, models.
-    Use this to understand what MnemoForge can do and what's currently running.
+    Use this to understand what SloplessCode can do and what's currently running.
     """
     qdrant_ok = await qdrant.health()
     ollama_ok = await ollama.health()

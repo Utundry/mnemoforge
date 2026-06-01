@@ -3,7 +3,7 @@
 Status: active
 Project: `mnemoforge`
 
-This document describes the operational conditions for using and publishing MnemoForge.
+This document describes the operational conditions for using and publishing SloplessCode.
 It is a practical release policy, not legal advice.
 
 ## Core Conditions

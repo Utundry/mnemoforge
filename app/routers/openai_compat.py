@@ -2,14 +2,14 @@
 OpenAI-compatible integration adapter — inspired by Mem0/OpenMemory.
 
 Provides an OpenAI-style API surface so agents that expect OpenAI memory APIs
-can use MnemoForge without code changes.
+can use SloplessCode without code changes.
 
 POST /v1/memories         — add a memory (OpenAI-style)
 GET  /v1/memories         — list memories for a user
 DELETE /v1/memories/{id}  — delete a memory
 POST /v1/memories/search  — search memories (OpenAI-style)
 
-Maps to the native MnemoForge API internally.
+Maps to the native SloplessCode API internally.
 Mounted at root (no /api/v1 prefix) for maximum compatibility.
 """
 from __future__ import annotations

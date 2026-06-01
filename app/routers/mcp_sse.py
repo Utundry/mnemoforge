@@ -5297,7 +5297,7 @@ TOOLS = [
         "name": "report_issue",
         "description": (
             "Report a missing feature, incorrect behavior, or improvement idea encountered while working. "
-            "Use this when you hit a limitation or bug in MnemoForge or any project. "
+            "Use this when you hit a limitation or bug in SloplessCode or any project. "
             "Saved improvements are reviewed during future development sessions."
         ),
         "inputSchema": {
@@ -5786,7 +5786,7 @@ TOOLS = [
     {
         "name": "system_info",
         "description": (
-            "Get a full overview of the MnemoForge system: what components exist, what each does, "
+            "Get a full overview of the SloplessCode system: what components exist, what each does, "
             "live counters (memories, skills, layout terms), active models, and infrastructure status. "
             "Call this when you want to understand what the system can do or need to explain it to the user."
         ),
@@ -5885,7 +5885,7 @@ TOOLS = [
     {
         "name": "handoff_task",
         "description": (
-            "Package current task context in MnemoForge for pickup by another CLI tool. "
+            "Package current task context in SloplessCode for pickup by another CLI tool. "
             "Use when: (1) current model hit its limit, (2) you want to manually switch to another CLI. "
             "Stores context with status=pending. Returns memory_id and pickup instruction for the target CLI."
         ),

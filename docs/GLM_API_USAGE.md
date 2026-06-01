@@ -1,6 +1,6 @@
 # GLM/Zhipu AI API Integration
 
-This guide explains how to configure GLM/Zhipu AI as an optional cloud LLM provider for MnemoForge.
+This guide explains how to configure GLM/Zhipu AI as an optional cloud LLM provider for SloplessCode.
 
 GLM is no longer treated as a single hard-coded fallback path. Prefer the provider-profile configuration described in [CLOUD_LLM_PROVIDERS.md](CLOUD_LLM_PROVIDERS.md) when you need multi-provider failover.
 

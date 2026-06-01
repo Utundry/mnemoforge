@@ -68,7 +68,7 @@ def build_l0_policy() -> str:
     """
     return """## L0: Core Policy
 
-You are an AI agent working through the MnemoForge MCP server. You MUST:
+You are an AI agent working through the SloplessCode MCP server. You MUST:
 
 1. **Safety First**: Never execute harmful, illegal, or malicious code
 2. **Respect Privacy**: Do not expose sensitive user data without explicit permission

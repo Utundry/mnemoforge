@@ -1,5 +1,5 @@
 """
-Web dashboard for MnemoForge — Learning Ledger state & system health.
+Web dashboard for SloplessCode - Learning Ledger state and system health.
 Served at GET /dashboard (outside /api/v1 prefix).
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ _HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="google" content="notranslate">
-<title>MnemoForge Dashboard</title>
+<title>SloplessCode Dashboard</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -198,7 +198,7 @@ input::placeholder { color: var(--muted); }
 
 <!-- ══ STATUS BAR ══════════════════════════════════════ -->
 <div id="statusbar">
-  <h1>⚡ MnemoForge</h1>
+  <h1>SloplessCode</h1>
   <div class="svc"><span class="dot" id="dot-qdrant"></span> Qdrant</div>
   <div class="svc"><span class="dot" id="dot-ollama"></span> Ollama</div>
   <div id="task-dots"></div>
@@ -1816,6 +1816,6 @@ startAR();
 
 @router.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 async def dashboard():
-    """Web dashboard for MnemoForge learning state and system health."""
+    """Web dashboard for SloplessCode learning state and system health."""
     html = _HTML.replace("__API_KEY__", settings.api_key or "")
     return HTMLResponse(content=html)

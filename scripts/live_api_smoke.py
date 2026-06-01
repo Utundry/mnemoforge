@@ -18,7 +18,7 @@ def _load_payload(value: str | None, payload_file: str | None) -> dict | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Call the live MnemoForge API with X-API-Key enabled by default."
+        description="Call the live SloplessCode API with X-API-Key enabled by default."
     )
     parser.add_argument("endpoint", nargs="?", default="health")
     parser.add_argument("--method", default="GET", choices=["GET", "POST", "PUT", "PATCH", "DELETE"])

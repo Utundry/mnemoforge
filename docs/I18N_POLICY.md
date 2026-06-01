@@ -1,6 +1,6 @@
 # Documentation Language Policy
 
-MnemoForge uses English as the default language for public-facing documentation.
+SloplessCode uses English as the default language for public-facing documentation.
 
 ## Public Documentation
 

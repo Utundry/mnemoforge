@@ -87,7 +87,7 @@ def _mcp_call(endpoint_url: str, event_queue: queue.Queue, method: str, params: 
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Canonical MnemoForge HTTP+MCP smoke probe.")
+    parser = argparse.ArgumentParser(description="Canonical SloplessCode HTTP+MCP smoke probe.")
     parser.add_argument(
         "--server",
         default=(os.getenv("MNEMOFORGE_SERVER_URL") or os.getenv("SUPERMEMORY_SERVER_URL") or "http://127.0.0.1:8000").rstrip("/"),
