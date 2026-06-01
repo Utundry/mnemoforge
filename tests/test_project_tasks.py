@@ -116,7 +116,6 @@ async def test_project_tasks_api_resolves_project_alias_for_resume_paths(client,
         assert body["task_id"] == "publish-release"
         assert body["project"] == "mnemoforge"
         assert "project:mnemoforge" in body["tags"]
-        assert "project:mnemoforge" not in body["tags"]
         assert body["changes"][0]["project"] == "mnemoforge"
         assert "project:mnemoforge" in body["changes"][0]["tags"]
 
@@ -774,6 +773,49 @@ async def test_task_capture_candidates_fill_missing_fields_with_local_first_path
         if "project:alpha" in (row.get("tags") or []) and "task_id:task-capture-1" in (row.get("tags") or [])
     ]
     assert len(matching) == len(body["candidates"])
+
+
+@pytest.mark.asyncio
+async def test_task_capture_candidates_keep_deterministic_result_when_local_generation_fails(client, monkeypatch) -> None:
+    create = await client.post(
+        "/api/v1/project/tasks",
+        json={
+            "task_id": "task-capture-local-fail",
+            "project": "alpha",
+            "title": "Keep capture fallback stable",
+            "description": "Capture refresh should not fail the job when optional LLM generation is unavailable.",
+            "agent_id": "architect",
+            "status": "active",
+            "tags": ["memory-first"],
+        },
+    )
+    assert create.status_code == 201, create.text
+
+    change = await client.post(
+        "/api/v1/project/tasks/task-capture-local-fail/changes",
+        json={
+            "project": "alpha",
+            "change_type": "implementation",
+            "content": "Recorded deterministic evidence before optional local generation.",
+            "why": "Background hygiene jobs should degrade gracefully.",
+            "agent_id": "architect",
+        },
+    )
+    assert change.status_code == 201, change.text
+
+    async def fake_generate(ollama, prompt: str) -> str:
+        raise RuntimeError("CloudLLMGateway: all configured models failed: 401 Unauthorized")
+
+    monkeypatch.setattr("app.services.task_capture_service._generate_local_capture_fill", fake_generate)
+
+    response = await client.post("/api/v1/project/tasks/task-capture-local-fail/capture-candidates?project=alpha")
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["local_generation_used"] is False
+    assert "401 Unauthorized" in body["local_generation_error"]
+    assert body["persisted_count"] >= 1
+    assert any(item["source"] == "deterministic" for item in body["candidates"])
 
 
 @pytest.mark.asyncio

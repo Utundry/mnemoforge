@@ -1748,6 +1748,57 @@ class TestMcpToolExecution:
         assert calls[2][0:2] == ("POST", "/project/tasks/task-obsolete/changes")
         assert calls[2][2]["change_type"] == "status_change"
 
+    async def test_mailbox_submit_close_task_completed_requires_claim(self, monkeypatch):
+        calls: list[tuple[str, str, dict | None]] = []
+
+        async def fake_get(api_base: str, path: str):
+            calls.append(("GET", path, None))
+            return {
+                "id": "memory-task-1",
+                "task_id": "task-complete",
+                "project": "alpha",
+                "title": "Implemented task",
+                "description": "Work already landed outside an active session.",
+                "agent_id": "codex",
+                "status": "planning",
+                "source": "test",
+                "tags": ["existing"],
+            }
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            calls.append(("POST", path, payload))
+            if path == "/project/tasks":
+                return {"id": "memory-task-1", **payload}
+            if path == "/project/tasks/task-complete/changes":
+                return {"id": "change-1", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "close_task",
+                "payload": {
+                    "project": "alpha",
+                    "task_id": "task-complete",
+                    "reason": "Implementation was committed and published before the task was closed.",
+                    "close_status": "completed",
+                    "release_claim": False,
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "needs_claim"
+        assert data["receipt"]["requested_close_status"] == "completed"
+        assert data["receipt"]["recommended_next_call"]["form_id"] == "start_task"
+        assert data["receipt"]["recommended_next_call"]["payload"]["task_id"] == "task-complete"
+        assert calls == []
+
     async def test_mailbox_submit_close_task_resolves_linked_improvement_by_default(self, monkeypatch):
         calls: list[tuple[str, str, dict | None]] = []
         linked_improvement_id = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa"

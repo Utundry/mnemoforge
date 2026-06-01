@@ -189,6 +189,7 @@ class TaskCaptureCompletionResponse(BaseModel):
     missing_after: list[str] = Field(default_factory=list)
     local_generation_used: bool = False
     local_model: str = ""
+    local_generation_error: str = ""
     persisted_count: int = 0
     reused_count: int = 0
     candidates: list[TaskCaptureCandidateRecord] = Field(default_factory=list)

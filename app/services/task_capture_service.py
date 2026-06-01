@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -19,6 +20,8 @@ from app.models.project_task import (
 from app.services.learning_store import get_learning_store, make_context_signature
 from app.services.llm_gateway import get_cloud_gateway
 from app.services.task_statement_service import build_task_statement_projection
+
+logger = logging.getLogger(__name__)
 from app.services.text_localization import normalize_text_for_display
 
 _LOCAL_MODEL = os.getenv("LOCAL_GENERATE_MODEL", settings.learning_mirror_model or "qwen3:1.7b").strip() or "qwen3:1.7b"
@@ -517,17 +520,27 @@ async def build_task_capture_completion(
     candidates = await _deterministic_candidates(statement, missing, archived)
     remaining = [kind for kind in missing if kind not in {candidate.kind for candidate in candidates}]
     local_generation_used = False
+    local_generation_error = ""
 
     if use_local_generation and remaining:
         prompt = _local_prompt(statement, remaining)
-        raw = await _generate_local_capture_fill(ollama, prompt)
-        parsed = _parse_local_response(raw, remaining)
-        local_candidates = _local_candidates(statement, remaining, parsed)
-        for candidate in local_candidates:
-            if candidate.kind in {item.kind for item in candidates if item.source == "deterministic"} and candidate.kind not in {"assumption", "constraint", "definition_of_done"}:
-                continue
-            candidates.append(candidate)
-        local_generation_used = bool(local_candidates)
+        try:
+            raw = await _generate_local_capture_fill(ollama, prompt)
+            parsed = _parse_local_response(raw, remaining)
+            local_candidates = _local_candidates(statement, remaining, parsed)
+            for candidate in local_candidates:
+                if candidate.kind in {item.kind for item in candidates if item.source == "deterministic"} and candidate.kind not in {"assumption", "constraint", "definition_of_done"}:
+                    continue
+                candidates.append(candidate)
+            local_generation_used = bool(local_candidates)
+        except Exception as exc:
+            local_generation_error = str(exc)[:500]
+            logger.warning(
+                "Task capture local generation failed for %s/%s; keeping deterministic candidates only: %s",
+                project,
+                task_id,
+                exc,
+            )
 
     final_candidates: list[TaskCaptureCandidateRecord] = []
     seen_pairs: set[tuple[str, str]] = set()
@@ -604,6 +617,7 @@ async def build_task_capture_completion(
         missing_after=_missing_after(statement, final_candidates),
         local_generation_used=local_generation_used,
         local_model=_LOCAL_MODEL if local_generation_used else "",
+        local_generation_error=local_generation_error,
         persisted_count=persisted_count,
         reused_count=reused_count,
         candidates=final_candidates,

@@ -655,6 +655,31 @@ async def mailbox_close_task(
                 },
             }
     close_status = str(payload.get("close_status") or "obsolete").strip().lower() or "obsolete"
+    close_status_aliases = {"done": "completed", "complete": "completed", "finished": "completed"}
+    close_status = close_status_aliases.get(close_status, close_status)
+    if close_status == "completed":
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "needs_claim",
+                "form_id": form.id,
+                "message": "close_task cannot mark completed work because completion requires task ownership proof.",
+                "task_id": task_id,
+                "requested_close_status": close_status,
+                "recommended_next_call": {
+                    "tool": "submit",
+                    "form_id": "start_task",
+                    "payload": {
+                        "project": project,
+                        "task_id": task_id,
+                    },
+                    "why": "Claim/start the task first to obtain work_token, then submit finish_task with completion evidence.",
+                },
+                "next_safe_action": "Submit start_task for this task, keep the returned work_token, then submit finish_task.",
+            },
+            "next_safe_action": "Submit start_task for this task, keep the returned work_token, then submit finish_task.",
+        }
     allowed_close_statuses = {"obsolete", "duplicate", "superseded", "cancelled", "not_planned"}
     if close_status not in allowed_close_statuses:
         close_status = "obsolete"
