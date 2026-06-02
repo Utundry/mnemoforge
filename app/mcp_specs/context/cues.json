@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "purpose": "Compact cognitive recall markers for agents. Cues are stable English internal identifiers; user-language phrases must normalize to these identifiers through semantic adaptation, learned aliases, or route pattern storage.",
+  "default_max_cues": 5,
+  "cues": [
+    {
+      "id": "law:internal_english_contract",
+      "severity": "P0",
+      "scope": ["routing", "language", "semantic_adaptation", "planning"],
+      "title": "Internal contracts stay English",
+      "summary": "System internals use stable English symbols; user-language phrases normalize through semantic adaptation, learned aliases, or route pattern store.",
+      "expand_ref": "cue:law:internal_english_contract",
+      "trigger_terms": ["routing", "language", "localized", "localization", "semantic", "alias", "learned", "pattern", "intent", "normalization"],
+      "full_text": "Internal SloplessCode contracts, intent types, cue ids, route ids, and workflow symbols stay in English. Do not hardcode user-language phrases into router code. User-language phrases, slang, typos, and keyboard-layout mistakes must be normalized into stable English canonical intents through semantic adaptation, learned aliases, or route pattern storage."
+    },
+    {
+      "id": "law:data_through_code",
+      "severity": "P0",
+      "scope": ["routing", "workflow", "architecture", "planning"],
+      "title": "Do not push data through code",
+      "summary": "Workflow meaning, routing examples, guardrails, and UI hints should live in specs or governed data; code should interpret them.",
+      "expand_ref": "cue:law:data_through_code",
+      "trigger_terms": ["routing", "workflow", "guardrail", "spec", "declarative", "hardcode", "architecture", "if", "elif"],
+      "full_text": "Avoid the data-through-code architecture. Workflow states, allowed tools, required evidence, forbidden patterns, packet budgets, route examples, and guardrails should be represented as data/specs or governed memory where possible. Code should be a thin interpreter/executor rather than an accumulating if/else monolith."
+    },
+    {
+      "id": "tool:semantic_adaptation",
+      "severity": "P1",
+      "scope": ["routing", "language", "learning"],
+      "title": "Use semantic adaptation for user phrases",
+      "summary": "Recurring user wording, jargon, typos, and layout mistakes should become learned aliases, not source-code branches.",
+      "expand_ref": "cue:tool:semantic_adaptation",
+      "trigger_terms": ["semantic", "alias", "learned", "jargon", "typo", "layout", "phrase", "normalization"],
+      "full_text": "Semantic adaptation is the learning contour for mapping user-specific language, jargon, recurring typos, and wrong-keyboard-layout phrases onto stable internal English concepts. Prefer storing learned mappings in governed data over adding language-specific conditionals."
+    },
+    {
+      "id": "tool:route_pattern_store",
+      "severity": "P1",
+      "scope": ["routing", "learning"],
+      "title": "Use learned route patterns",
+      "summary": "Observed successful routes should reinforce canonical intent selection without expanding the public tool surface.",
+      "expand_ref": "cue:tool:route_pattern_store",
+      "trigger_terms": ["route", "pattern", "scorer", "intent", "fallback", "learned", "facade"],
+      "full_text": "The route pattern store records learned routing evidence and successful canonical intent choices. Use it to improve future routing without exposing more tools or hardcoding one-off phrases in source code."
+    },
+    {
+      "id": "risk:localized_hardcoding",
+      "severity": "P0",
+      "scope": ["routing", "language", "implementation"],
+      "title": "Localized hardcoding risk",
+      "summary": "Adding per-language phrase branches is an architecture risk; normalize to English canonical intents instead.",
+      "expand_ref": "cue:risk:localized_hardcoding",
+      "trigger_terms": ["localized", "localization", "language", "hardcode", "phrase", "routing", "dictionary"],
+      "full_text": "Localized hardcoding is a P0 architecture risk: adding source-code branches for Russian, English, Spanish, or any other user language turns the system into a fragile phrase router. Normalize user wording into English canonical intents through learned data instead."
+    }
+  ]
+}

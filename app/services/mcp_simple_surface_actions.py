@@ -8,6 +8,7 @@ from app.services.mcp_mailbox_read import (
     build_mailbox_get_response,
     build_mailbox_state_response,
 )
+from app.services.context_cue_service import context_cues_for_query
 
 
 SessionIdentityCallback = Callable[[str | None], Awaitable[dict[str, str]]]
@@ -136,6 +137,9 @@ async def build_simple_get_response(
     if query:
         data = await dependencies.resolve_query(api_base, scoped_args, session_id)
         if data is not None:
+            cues = context_cues_for_query(query=query, project=str(scoped_args.get("project") or ""))
+            if cues and not data.get("context_cues"):
+                data["context_cues"] = cues
             return data
 
     data = await build_simple_state_response(args=scoped_args, dependencies=dependencies, session_id=session_id)
@@ -283,7 +287,7 @@ def resource_kind_from_receipt_or_result(receipt: dict[str, Any], result: Any) -
     if kind:
         return kind
     data_ref = str(receipt.get("data_ref") or "").strip()
-    for prefix in ("task", "improvement", "law", "rule_candidate", "memory"):
+    for prefix in ("task", "improvement", "law", "rule_candidate", "memory", "cue"):
         if data_ref.startswith(f"{prefix}:"):
             return prefix
     if isinstance(result, dict):
@@ -316,6 +320,7 @@ def compact_resource_result(
         "law": ("id", "project", "title", "status", "scope", "statement", "rationale", "version"),
         "rule_candidate": ("candidate_id", "project", "status", "scope", "statement", "rationale", "trial_review_after", "trial_expires_at"),
         "memory": ("id", "content", "memory_type", "category", "project", "created_at", "updated_at", "importance_score"),
+        "cue": ("ref", "cue", "project", "severity", "scope", "title", "summary", "full_text", "source"),
     }
     fields = fields_by_kind.get(kind)
     return {key: result.get(key) for key in fields if result.get(key) not in (None, "", [])} if fields else result

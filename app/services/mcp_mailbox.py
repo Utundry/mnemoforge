@@ -15,6 +15,7 @@ from app.services.mcp_workflow_specs import (
     load_state_spec,
     list_mailbox_form_specs,
 )
+from app.services.context_cue_service import context_cues_for_state
 
 _WORKFLOW_STATE_NAMES = {
     "planning",
@@ -110,6 +111,7 @@ def build_mailbox_state_packet(
         "state": state_spec.id,
         "project": project,
         "instruction": state_spec.purpose,
+        "context_cues": context_cues_for_state(state=state_spec.id, project=project),
         "forms": [_public_form_payload(form) for form in forms],
         "hidden_forms": hidden_form_ids,
         "warnings": warnings,

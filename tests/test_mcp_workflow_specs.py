@@ -14,6 +14,8 @@ from app.services.mcp_mailbox_read import (
     build_mailbox_get_response,
     build_mailbox_state_response,
 )
+from app.services.mcp_simple_read_actions import PublicRefDependencies, build_simple_public_ref_response
+from app.services.context_cue_service import context_cues_for_query
 from app.services.mcp_workflow_specs import (
     list_mailbox_forms_for_state,
     load_clerk_capture_registry,
@@ -531,6 +533,55 @@ def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:
     assert [form["form_id"] for form in packet["forms"][:2]] == ["get_task_context", "start_task"]
     assert "get_task_context" in packet["next_safe_action"]
     assert "Internal diagnostics are not available" in packet["warnings"][-1]
+
+
+def test_mailbox_state_packet_surfaces_compact_context_cues() -> None:
+    packet = build_mailbox_state_packet(
+        state="planning",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+    )
+
+    cues = packet["context_cues"]
+    assert cues
+    assert any(cue["cue"] == "law:internal_english_contract" for cue in cues)
+    assert all("full_text" not in cue for cue in cues)
+    assert all(str(cue.get("expand_ref") or "").startswith("cue:") for cue in cues)
+
+
+def test_context_cues_for_query_use_english_canonical_triggers() -> None:
+    cues = context_cues_for_query(
+        query="routing language semantic adaptation learned aliases route pattern store",
+        project="sloplesscode",
+    )
+
+    cue_ids = {cue["cue"] for cue in cues}
+    assert "law:internal_english_contract" in cue_ids
+    assert "tool:semantic_adaptation" in cue_ids
+    assert all("full_text" not in cue for cue in cues)
+
+
+async def test_context_cue_ref_expands_full_text() -> None:
+    async def unused_get(_api_base: str, _path: str):
+        raise AssertionError("cue refs should resolve from the cue registry")
+
+    async def unused_context(_api_base: str, _args: dict):
+        raise AssertionError("cue refs should not request task context")
+
+    packet = await build_simple_public_ref_response(
+        api_base="http://test",
+        args={"project": "sloplesscode", "ref": "cue:law:internal_english_contract"},
+        dependencies=PublicRefDependencies(
+            get=unused_get,
+            get_task_context=unused_context,
+            public_error_message=lambda exc: str(exc),
+        ),
+    )
+
+    assert packet is not None
+    assert packet["receipt"]["resource_kind"] == "cue"
+    assert packet["result"]["cue"] == "law:internal_english_contract"
+    assert "Do not hardcode user-language phrases" in packet["result"]["full_text"]
 
 
 def test_mailbox_state_full_detail_bypasses_minimal_packet_limit() -> None:

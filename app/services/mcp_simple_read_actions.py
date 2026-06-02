@@ -14,6 +14,7 @@ from app.services.public_ref_index import (
     is_short_public_id,
     public_artifact_matches_short_id,
 )
+from app.services.context_cue_service import expand_context_cue
 from app.services.memory_store import get_memory_store
 
 
@@ -121,6 +122,12 @@ async def build_simple_public_ref_response(
                 dependencies=dependencies,
             )
             next_safe_action = "Review this read-only memory before creating new facts or updates."
+        elif kind == "cue":
+            ref_source = "direct"
+            result = expand_context_cue(requested_ref, project=project)
+            if result is None:
+                raise PublicRefNotFoundError("Context cue ref did not resolve.")
+            next_safe_action = "Use this cue as recall context; do not hardcode user-language phrases into source."
         else:
             return _public_ref_envelope(
                 args=args,
@@ -131,7 +138,7 @@ async def build_simple_public_ref_response(
                 receipt={
                     "status": "unsupported_ref_kind",
                     "message": f"Mailbox public ref kind is not yet mapped to a read-only resolver: {kind}",
-                    "supported_ref_kinds": ["task", "improvement", "artifact", "law", "rule_candidate", "memory"],
+                    "supported_ref_kinds": ["task", "improvement", "artifact", "law", "rule_candidate", "memory", "cue"],
                     "next_safe_action": "Use mailbox_state for available forms, or ask_project/project_work for natural read-only lookup.",
                 },
             )
@@ -404,6 +411,10 @@ def public_ref_address(args: dict[str, Any]) -> dict[str, str] | None:
                 "local_id": local_id,
                 "artifact_key": f"{kind}:{project}:{local_id}",
             }
+    if kind == "cue" and len(parts) >= 2:
+        cue_id = ":".join(parts[1:]).strip()
+        if cue_id:
+            return {"kind": "cue", "project": default_project, "local_id": cue_id}
     if kind in {"law", "rule_candidate", "candidate", "memory"} and len(parts) >= 2:
         project = parts[1].strip() if len(parts) >= 3 else default_project
         local_id = ":".join(parts[2:] if len(parts) >= 3 else parts[1:]).strip()
