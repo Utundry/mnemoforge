@@ -17,6 +17,7 @@ from app.services.public_ref_index import (
 from app.services.context_cue_service import expand_context_cue
 from app.services.memory_store import get_memory_store
 from app.services.planning_advisor_service import build_next_work_advisor, is_planning_advisor_query
+from app.services.stage_applicability_service import stage_applicability_metadata
 
 
 GetCallback = Callable[[str, str], Awaitable[Any]]
@@ -104,11 +105,21 @@ async def build_simple_public_ref_response(
         elif kind == "law":
             ref_source = "direct"
             result = await dependencies.get(api_base, f"/laws/{quote(local_id, safe='')}")
-            next_safe_action = "Review this read-only law before proposing revisions or candidates."
+            result = annotate_explicit_ref_expansion(
+                result,
+                block_id="governed_law",
+                state=str(args.get("state") or ""),
+            )
+            next_safe_action = "Use this expanded law as explicit recall context, then return to the current public workflow step."
         elif kind == "rule_candidate":
             ref_source = "direct"
             result = await dependencies.get(api_base, f"/laws/candidates/{quote(local_id, safe='')}")
-            next_safe_action = "Review this read-only rule candidate before any promotion, revision, or review action."
+            result = annotate_explicit_ref_expansion(
+                result,
+                block_id="rule_candidate",
+                state=str(args.get("state") or ""),
+            )
+            next_safe_action = "Use this expanded rule candidate as explicit review context before promotion or revision."
         elif kind == "memory":
             ref_source = "direct"
             if is_short_public_id(local_id):
@@ -190,6 +201,19 @@ async def build_simple_public_ref_response(
         },
         result=result,
     )
+
+
+def annotate_explicit_ref_expansion(result: Any, *, block_id: str, state: str = "") -> Any:
+    if not isinstance(result, dict):
+        return result
+    annotated = dict(result)
+    annotated.setdefault("expanded_by", "explicit_ref")
+    applicability = stage_applicability_metadata(block_id, state=state)
+    annotated.setdefault(
+        "stage_applicability",
+        {key: value for key, value in applicability.items() if value not in (None, "", [], {})},
+    )
+    return annotated
 
 
 async def get_artifact_by_public_ref(

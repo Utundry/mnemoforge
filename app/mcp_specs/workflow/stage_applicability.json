@@ -36,6 +36,14 @@
     "law:mcp_first_workflow_context": {
       "show_in": ["planning", "implementation", "checkpointing", "handoff"],
       "why": "The public MCP surface reminder anchors governed project context across the main task lifecycle."
+    },
+    "governed_law": {
+      "show_in": ["planning", "implementation", "verification", "live_validation", "checkpointing", "handoff", "operator_review"],
+      "why": "Full governed law text should be retrieved explicitly when the agent needs the complete rule, while normal packets can carry compact refs."
+    },
+    "rule_candidate": {
+      "show_in": ["planning", "operator_review"],
+      "why": "Rule candidates are normally reviewed during planning or explicit operator review before promotion."
     }
   }
 }

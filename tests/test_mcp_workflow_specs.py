@@ -692,6 +692,65 @@ async def test_context_cue_ref_reports_stage_applicability_when_state_is_known()
     assert "reference-only" in packet["receipt"]["next_safe_action"]
 
 
+async def test_law_ref_reports_explicit_expansion_metadata() -> None:
+    async def fake_get(_api_base: str, path: str):
+        assert path == "/laws/law-1"
+        return {
+            "law_id": "law-1",
+            "title": "Use public MCP",
+            "body": "Use public MCP for governed project state.",
+        }
+
+    async def unused_context(_api_base: str, _args: dict):
+        raise AssertionError("law refs should not request task context")
+
+    packet = await build_simple_public_ref_response(
+        api_base="http://test",
+        args={"project": "sloplesscode", "ref": "law:sloplesscode:law-1", "state": "implementation"},
+        dependencies=PublicRefDependencies(
+            get=fake_get,
+            get_task_context=unused_context,
+            public_error_message=lambda exc: str(exc),
+        ),
+    )
+
+    assert packet is not None
+    assert packet["receipt"]["resource_kind"] == "law"
+    assert packet["result"]["expanded_by"] == "explicit_ref"
+    assert packet["result"]["stage_applicability"]["block"] == "governed_law"
+    assert packet["result"]["stage_applicability"]["state"] == "implementation"
+    assert packet["result"]["stage_applicability"]["allowed_in_state"] is True
+
+
+async def test_rule_candidate_ref_reports_explicit_expansion_metadata() -> None:
+    async def fake_get(_api_base: str, path: str):
+        assert path == "/laws/candidates/candidate-1"
+        return {
+            "candidate_id": "candidate-1",
+            "title": "Candidate",
+            "body": "Draft rule candidate.",
+        }
+
+    async def unused_context(_api_base: str, _args: dict):
+        raise AssertionError("rule candidate refs should not request task context")
+
+    packet = await build_simple_public_ref_response(
+        api_base="http://test",
+        args={"project": "sloplesscode", "ref": "rule_candidate:sloplesscode:candidate-1", "state": "handoff"},
+        dependencies=PublicRefDependencies(
+            get=fake_get,
+            get_task_context=unused_context,
+            public_error_message=lambda exc: str(exc),
+        ),
+    )
+
+    assert packet is not None
+    assert packet["receipt"]["resource_kind"] == "rule_candidate"
+    assert packet["result"]["expanded_by"] == "explicit_ref"
+    assert packet["result"]["stage_applicability"]["block"] == "rule_candidate"
+    assert packet["result"]["stage_applicability"]["allowed_in_state"] is False
+
+
 async def test_next_work_advisor_surfaces_improvements_when_no_tasks() -> None:
     async def fake_get(_api_base: str, path: str):
         assert "/artifacts?" in path
