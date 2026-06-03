@@ -45,5 +45,5 @@
     "forbidden_metadata": {},
     "required_receipt_fields": ["status", "stage"]
   },
-  "public_hint": "Use this after a meaningful implementation slice or before handoff. If task_id is provided, reuse the work_token returned by start_task."
+  "public_hint": "Use this after a meaningful implementation, verification, commit, publish, or handoff slice. If task_id is provided, reuse the work_token returned by start_task."
 }

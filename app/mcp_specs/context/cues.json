@@ -34,6 +34,16 @@
       "full_text": "Before live or external-runtime validation, resolve the active project verification policy and record evidence. Do not restart, smoke-test, or mutate external runtime merely to prove a code change unless the operator explicitly asks for live validation. Concrete contours such as Docker, host commands, wait windows, or service names are project knowledge and must come from governed project data, not this universal cue."
     },
     {
+      "id": "law:checkpoint_after_work_slice",
+      "severity": "P0",
+      "scope": ["implementation", "verification", "checkpointing", "handoff", "planning"],
+      "title": "Record progress after meaningful work",
+      "summary": "After a meaningful implementation, verification, commit, or handoff slice, record progress through the public MCP surface.",
+      "expand_ref": "cue:law:checkpoint_after_work_slice",
+      "trigger_terms": ["commit", "checkpoint", "record progress", "finish", "handoff", "push", "verification", "changed files", "work slice"],
+      "full_text": "After a meaningful implementation, verification, commit, publish, or handoff slice, record a durable progress checkpoint through the public MCP surface. Use record_progress when a task is not claimed or finish_task when closing a claimed task. Chat-only summaries and git commits are not sufficient project memory because the next agent must be able to resume from governed MCP state."
+    },
+    {
       "id": "tool:semantic_adaptation",
       "severity": "P1",
       "scope": ["routing", "language", "learning"],

@@ -567,6 +567,18 @@ def test_verification_state_surfaces_test_contour_before_live_cue() -> None:
     assert all("full_text" not in cue for cue in packet["context_cues"])
 
 
+def test_checkpointing_state_surfaces_post_work_checkpoint_cue() -> None:
+    packet = build_mailbox_state_packet(
+        state="checkpointing",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+    )
+
+    cue_ids = {cue["cue"] for cue in packet["context_cues"]}
+    assert "law:checkpoint_after_work_slice" in cue_ids
+    assert all("full_text" not in cue for cue in packet["context_cues"])
+
+
 def test_context_cues_for_query_use_english_canonical_triggers() -> None:
     cues = context_cues_for_query(
         query="routing language semantic adaptation learned aliases route pattern store",
@@ -586,6 +598,17 @@ def test_context_cues_for_query_remind_test_contour_before_live_runtime() -> Non
     )
 
     assert cues[0]["cue"] == "law:test_contour_before_live"
+    assert cues[0]["severity"] == "P0"
+    assert "full_text" not in cues[0]
+
+
+def test_context_cues_for_query_remind_post_commit_checkpoint() -> None:
+    cues = context_cues_for_query(
+        query="commit finished, record progress checkpoint with changed files and verification",
+        project="sloplesscode",
+    )
+
+    assert cues[0]["cue"] == "law:checkpoint_after_work_slice"
     assert cues[0]["severity"] == "P0"
     assert "full_text" not in cues[0]
 
@@ -757,7 +780,10 @@ def test_checkpointing_state_prefers_finish_task_or_progress_forms() -> None:
     )
 
     form_ids = {form["form_id"] for form in packet["forms"]}
+    forms = {form["form_id"]: form for form in packet["forms"]}
     assert {"finish_task", "record_progress", "release_task_claim"} <= form_ids
+    assert "commit" in forms["record_progress"]["hint"]
+    assert "publish" in forms["record_progress"]["hint"]
     assert "finish_task" in packet["next_safe_action"]
 
 
