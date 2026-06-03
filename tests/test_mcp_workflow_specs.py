@@ -719,6 +719,26 @@ def test_task_compact_resource_includes_spec_driven_framing_gaps() -> None:
     assert "definition of done" in compact["task_framing_gaps"][0]["recommended_action"].casefold()
 
 
+def test_task_compact_resource_hides_framing_gaps_outside_planning_stage() -> None:
+    compact = compact_resource_result(
+        "task",
+        {
+            "project": "sloplesscode",
+            "task_id": "task-1",
+            "status": "ready",
+            "task": {"title": "Task under verification", "status": "planning"},
+            "task_statement_quality": {
+                "capture_quality": "partial",
+                "missing_artifacts": ["definition_of_done"],
+            },
+        },
+        tool_surface_role=lambda _tool: "public_entrypoint",
+        state="verification",
+    )
+
+    assert "task_framing_gaps" not in compact
+
+
 def test_mailbox_state_full_detail_bypasses_minimal_packet_limit() -> None:
     packet = build_mailbox_state_packet(
         state="planning",

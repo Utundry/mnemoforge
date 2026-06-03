@@ -233,7 +233,12 @@ def compact_simple_get_packet(
     receipt = data.get("receipt") if isinstance(data.get("receipt"), dict) else {}
     kind = str(receipt.get("resource_kind") or "").strip()
     compact = dict(data)
-    compact["result"] = compact_resource_result(kind, data.get("result"), tool_surface_role=tool_surface_role)
+    compact["result"] = compact_resource_result(
+        kind,
+        data.get("result"),
+        tool_surface_role=tool_surface_role,
+        state=str(data.get("state") or args.get("state") or "planning"),
+    )
     compact["details_available"] = True
     return compact
 
@@ -306,13 +311,14 @@ def compact_resource_result(
     result: Any,
     *,
     tool_surface_role: ToolSurfaceRoleCallback,
+    state: str = "planning",
 ) -> Any:
     if not isinstance(result, dict):
         return result
     if kind == "task":
         return {
             key: value
-            for key, value in compact_task_resource(result, tool_surface_role=tool_surface_role).items()
+            for key, value in compact_task_resource(result, tool_surface_role=tool_surface_role, state=state).items()
             if value not in (None, "", [])
         }
     fields_by_kind = {
@@ -327,7 +333,7 @@ def compact_resource_result(
     return {key: result.get(key) for key in fields if result.get(key) not in (None, "", [])} if fields else result
 
 
-def compact_task_resource(result: dict[str, Any], *, tool_surface_role: ToolSurfaceRoleCallback) -> dict[str, Any]:
+def compact_task_resource(result: dict[str, Any], *, tool_surface_role: ToolSurfaceRoleCallback, state: str = "planning") -> dict[str, Any]:
     task = result.get("task") if isinstance(result.get("task"), dict) else {}
     latest = result.get("latest_checkpoint") if isinstance(result.get("latest_checkpoint"), dict) else {}
     readiness = result.get("execution_readiness") if isinstance(result.get("execution_readiness"), dict) else {}
@@ -341,7 +347,7 @@ def compact_task_resource(result: dict[str, Any], *, tool_surface_role: ToolSurf
         "status": result.get("status"),
         "title": task.get("title") or result.get("title"),
         "task_status": task.get("status"),
-        "task_framing_gaps": task_framing_gaps_from_context(result),
+        "task_framing_gaps": task_framing_gaps_from_context(result, state=state),
         "latest_checkpoint": {
             "id": latest.get("id"),
             "stage": latest.get("stage"),
