@@ -40,6 +40,7 @@ from app.services.mcp_workflow_specs import (
     validate_specs,
 )
 from app.services.stage_applicability_service import stage_allows_block
+from app.services.spec_edit_guardrail_service import audit_universal_spec_runtime_leaks
 
 
 MCP_SPEC_ROOT = Path(__file__).resolve().parents[1] / "app" / "mcp_specs"
@@ -55,6 +56,12 @@ def test_mcp_specs_use_ascii_internal_language() -> None:
             non_ascii_files.append(str(path.relative_to(MCP_SPEC_ROOT)))
 
     assert non_ascii_files == []
+
+
+def test_universal_specs_do_not_encode_project_specific_runtime_details() -> None:
+    findings = audit_universal_spec_runtime_leaks(spec_root=MCP_SPEC_ROOT)
+
+    assert findings == []
 
 
 def test_default_workflow_specs_validate() -> None:

@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "purpose": "Guard universal MCP/FSM specs against project-specific runtime details. Project-specific contours belong in governed project data, laws, or project context, not universal workflow contracts.",
+  "checked_paths": [
+    "forms/*.json",
+    "workflow/evidence_classification.json",
+    "workflow/stage_applicability.json",
+    "planning/*.json",
+    "states/*.json",
+    "tool_contracts/public_surface.json",
+    "tool_contracts/mailbox_protocol.json"
+  ],
+  "forbidden_terms": [
+    {
+      "term": "Docker",
+      "reason": "Docker is a project/runtime contour, not a universal workflow category.",
+      "allowed_context_terms": ["not this universal cue", "project knowledge", "project-specific"]
+    },
+    {
+      "term": "pytest",
+      "reason": "pytest is a project/runtime verification tool, not a universal workflow category.",
+      "allowed_context_terms": ["not this universal cue", "project knowledge", "project-specific"]
+    },
+    {
+      "term": "run_pytest",
+      "reason": "Concrete runner names belong in governed project data.",
+      "allowed_context_terms": []
+    },
+    {
+      "term": "host pytest",
+      "reason": "Host-specific forbidden commands belong in project policy, not universal specs.",
+      "allowed_context_terms": ["not this universal cue", "project knowledge", "project-specific"]
+    },
+    {
+      "term": "120 seconds",
+      "reason": "Concrete wait windows belong in project runtime policy.",
+      "allowed_context_terms": ["not this universal cue", "project knowledge", "project-specific"]
+    },
+    {
+      "term": "memory-server",
+      "reason": "Concrete service names belong in project runtime policy.",
+      "allowed_context_terms": ["not this universal cue", "project knowledge", "project-specific"]
+    },
+    {
+      "term": "qdrant",
+      "reason": "Concrete storage/runtime backend names belong in project or service-specific data, not universal workflow contracts.",
+      "allowed_context_terms": ["health endpoint"]
+    }
+  ]
+}
