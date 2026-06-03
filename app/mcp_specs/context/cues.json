@@ -24,6 +24,16 @@
       "full_text": "Avoid the data-through-code architecture. Workflow states, allowed tools, required evidence, forbidden patterns, packet budgets, route examples, and guardrails should be represented as data/specs or governed memory where possible. Code should be a thin interpreter/executor rather than an accumulating if/else monolith."
     },
     {
+      "id": "law:test_contour_before_live",
+      "severity": "P0",
+      "scope": ["verification", "live_validation", "testing", "runtime", "planning"],
+      "title": "Resolve verification policy before live validation",
+      "summary": "Resolve the active project verification policy before touching external runtime; live validation needs explicit operator intent.",
+      "expand_ref": "cue:law:test_contour_before_live",
+      "trigger_terms": ["test", "tests", "verification", "contour", "live", "smoke", "restart", "runtime", "external runtime"],
+      "full_text": "Before live or external-runtime validation, resolve the active project verification policy and record evidence. Do not restart, smoke-test, or mutate external runtime merely to prove a code change unless the operator explicitly asks for live validation. Concrete contours such as Docker, host commands, wait windows, or service names are project knowledge and must come from governed project data, not this universal cue."
+    },
+    {
       "id": "tool:semantic_adaptation",
       "severity": "P1",
       "scope": ["routing", "language", "learning"],

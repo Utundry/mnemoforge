@@ -14,7 +14,13 @@ from app.services.mcp_mailbox_read import (
     build_mailbox_get_response,
     build_mailbox_state_response,
 )
-from app.services.mcp_simple_read_actions import PublicRefDependencies, build_simple_public_ref_response
+from app.services.mcp_simple_read_actions import (
+    PublicRefDependencies,
+    SimpleReadDependencies,
+    build_simple_get_query_response,
+    build_simple_public_ref_response,
+)
+from app.services.mcp_simple_surface_actions import compact_resource_result
 from app.services.context_cue_service import context_cues_for_query
 from app.services.mcp_workflow_specs import (
     list_mailbox_forms_for_state,
@@ -549,6 +555,18 @@ def test_mailbox_state_packet_surfaces_compact_context_cues() -> None:
     assert all(str(cue.get("expand_ref") or "").startswith("cue:") for cue in cues)
 
 
+def test_verification_state_surfaces_test_contour_before_live_cue() -> None:
+    packet = build_mailbox_state_packet(
+        state="verification",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+    )
+
+    cue_ids = {cue["cue"] for cue in packet["context_cues"]}
+    assert "law:test_contour_before_live" in cue_ids
+    assert all("full_text" not in cue for cue in packet["context_cues"])
+
+
 def test_context_cues_for_query_use_english_canonical_triggers() -> None:
     cues = context_cues_for_query(
         query="routing language semantic adaptation learned aliases route pattern store",
@@ -559,6 +577,17 @@ def test_context_cues_for_query_use_english_canonical_triggers() -> None:
     assert "law:internal_english_contract" in cue_ids
     assert "tool:semantic_adaptation" in cue_ids
     assert all("full_text" not in cue for cue in cues)
+
+
+def test_context_cues_for_query_remind_test_contour_before_live_runtime() -> None:
+    cues = context_cues_for_query(
+        query="restart external runtime after verification contour and run live smoke",
+        project="sloplesscode",
+    )
+
+    assert cues[0]["cue"] == "law:test_contour_before_live"
+    assert cues[0]["severity"] == "P0"
+    assert "full_text" not in cues[0]
 
 
 async def test_context_cue_ref_expands_full_text() -> None:
@@ -582,6 +611,77 @@ async def test_context_cue_ref_expands_full_text() -> None:
     assert packet["receipt"]["resource_kind"] == "cue"
     assert packet["result"]["cue"] == "law:internal_english_contract"
     assert "Do not hardcode user-language phrases" in packet["result"]["full_text"]
+
+
+async def test_next_work_advisor_surfaces_improvements_when_no_tasks() -> None:
+    async def fake_get(_api_base: str, path: str):
+        assert "/artifacts?" in path
+        assert "status=open" in path
+        assert "type=all" not in path
+        return {
+            "items": [
+                {
+                    "artifact_key": "improvement:sloplesscode:imp-1",
+                    "type": "improvement",
+                    "project": "sloplesscode",
+                    "id": "imp-1",
+                    "title": "Add portable export preview",
+                    "status": "open",
+                }
+            ]
+        }
+
+    async def forbidden_post(*_args, **_kwargs):
+        raise AssertionError("planning advisor should not fall through to memory search")
+
+    async def forbidden_expert(*_args, **_kwargs):
+        raise AssertionError("planning advisor should not require project expert routing")
+
+    packet = await build_simple_get_query_response(
+        api_base="http://test",
+        args={"project": "sloplesscode", "query": "what should I do next?", "limit": 5},
+        session_id=None,
+        dependencies=SimpleReadDependencies(
+            get=fake_get,
+            post=forbidden_post,
+            query_project_expert=forbidden_expert,
+            extract_task_id_like=lambda _text: None,
+        ),
+    )
+
+    assert packet is not None
+    assert packet["receipt"]["resource_kind"] == "planning_advisor"
+    assert packet["result"]["selection_rule"] == "promote_open_improvements"
+    assert packet["result"]["next_work_candidates"][0]["type"] == "improvement"
+    assert packet["result"]["next_work_candidates"][0]["ref"] == "improvement:sloplesscode:imp-1"
+
+
+def test_task_compact_resource_includes_spec_driven_framing_gaps() -> None:
+    compact = compact_resource_result(
+        "task",
+        {
+            "project": "sloplesscode",
+            "task_id": "task-1",
+            "status": "ready",
+            "task": {"title": "Incomplete task", "status": "planning"},
+            "task_statement_quality": {
+                "capture_quality": "partial",
+                "missing_artifacts": ["definition_of_done"],
+            },
+            "next_actions": [
+                {
+                    "action": "Capture missing definition of done as a grounded task artifact.",
+                    "rationale": "The task statement is incomplete.",
+                }
+            ],
+        },
+        tool_surface_role=lambda _tool: "public_entrypoint",
+    )
+
+    assert compact["task_framing_gaps"][0]["field"] == "definition_of_done"
+    assert compact["task_framing_gaps"][0]["severity"] == "high"
+    assert compact["task_framing_gaps"][0]["suggestions"]
+    assert "definition of done" in compact["task_framing_gaps"][0]["recommended_action"].casefold()
 
 
 def test_mailbox_state_full_detail_bypasses_minimal_packet_limit() -> None:

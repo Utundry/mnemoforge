@@ -9,6 +9,7 @@ from app.services.mcp_mailbox_read import (
     build_mailbox_state_response,
 )
 from app.services.context_cue_service import context_cues_for_query
+from app.services.planning_advisor_service import task_framing_gaps_from_context
 
 
 SessionIdentityCallback = Callable[[str | None], Awaitable[dict[str, str]]]
@@ -340,6 +341,7 @@ def compact_task_resource(result: dict[str, Any], *, tool_surface_role: ToolSurf
         "status": result.get("status"),
         "title": task.get("title") or result.get("title"),
         "task_status": task.get("status"),
+        "task_framing_gaps": task_framing_gaps_from_context(result),
         "latest_checkpoint": {
             "id": latest.get("id"),
             "stage": latest.get("stage"),

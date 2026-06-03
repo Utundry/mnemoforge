@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "purpose": "Spec-driven planning advisor for task framing gaps and next-work candidates. User-language phrases should normalize to these English canonical triggers through semantic adaptation or learned aliases.",
+  "query_triggers": [
+    "what should i do next",
+    "next work",
+    "next task",
+    "next priority",
+    "work queue",
+    "open work",
+    "backlog",
+    "planning advisor"
+  ],
+  "max_candidates": 5,
+  "framing_fields": [
+    {
+      "field": "objective",
+      "severity": "high",
+      "suggestions": [
+        "State the observable objective of this task.",
+        "Tie the objective to a task, improvement, or decision ref."
+      ]
+    },
+    {
+      "field": "assumption",
+      "severity": "medium",
+      "suggestions": [
+        "Record assumptions that shape the implementation path.",
+        "Mark assumptions that must be verified before mutation."
+      ]
+    },
+    {
+      "field": "constraint",
+      "severity": "high",
+      "suggestions": [
+        "Record architectural, runtime, safety, or user constraints.",
+        "Prefer governed laws/cues over free-text reminders."
+      ]
+    },
+    {
+      "field": "definition_of_done",
+      "severity": "high",
+      "suggestions": [
+        "Define observable success conditions.",
+        "Define verification evidence or live-smoke criteria.",
+        "Define what is explicitly out of scope."
+      ]
+    },
+    {
+      "field": "verification",
+      "severity": "medium",
+      "suggestions": [
+        "Name the project-approved verification contour.",
+        "Record whether verification is test-only, live-only, or both."
+      ]
+    }
+  ],
+  "next_work_rules": [
+    {
+      "id": "prefer_open_tasks",
+      "when": "open_tasks_exist",
+      "why": "Open tasks are already promoted work and should be considered before raw backlog ideas."
+    },
+    {
+      "id": "promote_open_improvements",
+      "when": "no_open_tasks_and_open_improvements_exist",
+      "why": "Improvements are embryonic tasks; surface them when no promoted open task is available."
+    },
+    {
+      "id": "request_new_improvement",
+      "when": "no_open_work_items",
+      "why": "No open task or improvement is available; ask the operator to create or import backlog work."
+    }
+  ]
+}

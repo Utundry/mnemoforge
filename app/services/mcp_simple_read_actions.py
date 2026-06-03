@@ -16,6 +16,7 @@ from app.services.public_ref_index import (
 )
 from app.services.context_cue_service import expand_context_cue
 from app.services.memory_store import get_memory_store
+from app.services.planning_advisor_service import build_next_work_advisor, is_planning_advisor_query
 
 
 GetCallback = Callable[[str, str], Awaitable[Any]]
@@ -596,6 +597,42 @@ async def build_simple_get_query_response(
             "result": compact_artifact_list_results(data, limit=limit),
             "simple_interface": {"tool": "get", "mode": "query", "route": "artifact_list"},
             "next_safe_action": "Use get with a returned artifact ref for more detail.",
+            "details_available": True,
+        }
+    if is_planning_advisor_query(query):
+        if not project:
+            return {
+                "state": state,
+                "project": "",
+                "receipt": {
+                    "status": "needs_project",
+                    "message": "Planning advisor queries require an explicit project or session project.",
+                    "resource_kind": "planning_advisor",
+                    "missing_fields": ["project"],
+                    "next_safe_action": "Call get again with project set to the target project.",
+                },
+                "simple_interface": {"tool": "get", "mode": "query", "route": "planning_advisor"},
+                "next_safe_action": "Call get again with project set to the target project.",
+                "details_available": True,
+            }
+        data = await dependencies.get(
+            api_base,
+            f"/artifacts?project={quote(project, safe='')}&status=open&limit={limit}",
+        )
+        advisor = build_next_work_advisor(data if isinstance(data, dict) else {}, project=project, query=query, limit=limit)
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Next-work query resolved through the planning advisor.",
+                "resource_kind": "planning_advisor",
+                "count": len(advisor.get("next_work_candidates") or []),
+                "next_safe_action": advisor.get("next_safe_action"),
+            },
+            "result": advisor,
+            "simple_interface": {"tool": "get", "mode": "query", "route": "planning_advisor"},
+            "next_safe_action": advisor.get("next_safe_action"),
             "details_available": True,
         }
     uses_project_expert = query_uses_project_expert(query, extract_task_id_like=dependencies.extract_task_id_like)

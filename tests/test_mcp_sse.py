@@ -3101,6 +3101,43 @@ class TestMcpToolExecution:
         assert result["receipt"]["artifact_type"] == "all"
         assert [item["type"] for item in result["result"]["items"]] == ["task", "improvement"]
 
+    async def test_simple_get_next_work_uses_mixed_open_artifacts_without_type_all(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {
+                "items": [
+                    {
+                        "artifact_key": "task:alpha:task-1",
+                        "type": "task",
+                        "task_id": "task-1",
+                        "project": "alpha",
+                        "title": "Restore next-work advisor",
+                        "status": "open",
+                    }
+                ]
+            }
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("next-work advisor should use the artifact surface directly")
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "what should I do next?", "limit": 5},
+                "http://test",
+            )
+        )
+
+        assert seen["path"] == "/artifacts?project=alpha&status=open&limit=5"
+        assert result["receipt"]["resource_kind"] == "planning_advisor"
+        assert result["result"]["selection_rule"] == "prefer_open_tasks"
+        assert result["result"]["next_work_candidates"][0]["ref"] == "task:alpha:task-1"
+
     async def test_simple_get_query_keeps_project_questions_on_project_expert(self, monkeypatch):
         async def fake_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
             return {
