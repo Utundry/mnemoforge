@@ -967,6 +967,8 @@ def test_mailbox_state_packet_orders_forms_by_workflow_not_filename() -> None:
     assert "create_law" in form_ids
     assert "confirm_law" in form_ids
     assert form_ids.index("claim_task") > form_ids.index("start_task")
+    forms = {form["form_id"]: form for form in packet["forms"]}
+    assert "before any real implementation work" in forms["start_task"]["hint"]
     assert packet["hidden_forms"] == []
 
 
@@ -982,6 +984,7 @@ def test_checkpointing_state_prefers_finish_task_or_progress_forms() -> None:
     assert {"finish_task", "record_progress", "release_task_claim"} <= form_ids
     assert "commit" in forms["record_progress"]["hint"]
     assert "publish" in forms["record_progress"]["hint"]
+    assert "must already have been claimed" in forms["record_progress"]["hint"]
     assert "diagnostic/operator feedback" in forms["record_progress"]["hint"]
     assert "diagnostic/operator feedback" in forms["finish_task"]["hint"]
     assert "Docker" not in forms["record_progress"]["hint"]

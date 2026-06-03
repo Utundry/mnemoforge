@@ -45,5 +45,5 @@
     "forbidden_metadata": {},
     "required_receipt_fields": ["status", "stage"]
   },
-  "public_hint": "Use this after a meaningful implementation, formal code verification, live diagnostic usage, commit, publish, or handoff slice. If task_id is provided, reuse the work_token returned by start_task. Resolve project-specific verification contour from governed project data, and label live working-database checks as diagnostic/operator feedback, not formal code verification."
+  "public_hint": "Use this after a meaningful implementation, formal code verification, live diagnostic usage, commit, publish, or handoff slice. If task_id is provided, implementation must already have been claimed with start_task and this form must reuse the returned work_token. Resolve project-specific verification contour from governed project data, and label live working-database checks as diagnostic/operator feedback, not formal code verification."
 }

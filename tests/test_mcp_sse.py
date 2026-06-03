@@ -2277,6 +2277,9 @@ class TestMcpToolExecution:
         data = json.loads(result)
         assert data["receipt"]["status"] == "conflict"
         assert "active owned claim" in data["receipt"]["message"]
+        assert data["receipt"]["diagnostic_incident"]["kind"] == "work_started_without_claim_or_missing_token"
+        assert data["receipt"]["diagnostic_incident"]["severity"] == "high"
+        assert data["receipt"]["diagnostic_incident"]["recommended_next_call"]["form_id"] == "start_task"
         assert "same task_id and agent_fingerprint" in data["receipt"]["next_safe_action"]
         assert data["receipt"]["recommended_reclaim_call"] == {
             "tool": "submit",

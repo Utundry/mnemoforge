@@ -39,5 +39,5 @@
     "forbidden_metadata": {},
     "required_receipt_fields": ["status", "lease", "work_token", "work_session"]
   },
-  "public_hint": "Use this when you are beginning real implementation work; keep the returned work_token for checkpoints, finish, or recovery."
+  "public_hint": "Use this before any real implementation work on a task. The returned work_token is ownership proof for checkpoints, finish, recovery, and concurrency-safe audit."
 }
