@@ -664,7 +664,32 @@ async def test_context_cue_ref_expands_full_text() -> None:
     assert packet is not None
     assert packet["receipt"]["resource_kind"] == "cue"
     assert packet["result"]["cue"] == "law:internal_english_contract"
+    assert packet["result"]["expanded_by"] == "explicit_ref"
+    assert packet["result"]["stage_applicability"]["state_known"] is False
     assert "Do not hardcode user-language phrases" in packet["result"]["full_text"]
+
+
+async def test_context_cue_ref_reports_stage_applicability_when_state_is_known() -> None:
+    async def unused_get(_api_base: str, _path: str):
+        raise AssertionError("cue refs should resolve from the cue registry")
+
+    async def unused_context(_api_base: str, _args: dict):
+        raise AssertionError("cue refs should not request task context")
+
+    packet = await build_simple_public_ref_response(
+        api_base="http://test",
+        args={"project": "sloplesscode", "ref": "cue:law:test_contour_before_live", "state": "planning"},
+        dependencies=PublicRefDependencies(
+            get=unused_get,
+            get_task_context=unused_context,
+            public_error_message=lambda exc: str(exc),
+        ),
+    )
+
+    assert packet is not None
+    assert packet["result"]["stage_applicability"]["state"] == "planning"
+    assert packet["result"]["stage_applicability"]["allowed_in_state"] is False
+    assert "reference-only" in packet["receipt"]["next_safe_action"]
 
 
 async def test_next_work_advisor_surfaces_improvements_when_no_tasks() -> None:

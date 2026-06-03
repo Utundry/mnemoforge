@@ -45,3 +45,21 @@ def stage_allows_block(block_id: str, *, state: str, default: bool | None = None
     if show_in:
         return state_text in show_in
     return effective_default
+
+
+def stage_applicability_metadata(block_id: str, *, state: str, default: bool | None = None) -> dict[str, Any]:
+    spec = _stage_applicability_spec()
+    blocks = spec.get("blocks") if isinstance(spec.get("blocks"), dict) else {}
+    block = blocks.get(block_id) if isinstance(blocks.get(block_id), dict) else {}
+    state_text = _normalized_stage(state)
+    state_known = bool(state_text)
+    allowed = stage_allows_block(block_id, state=state_text, default=default) if state_known else True
+    return {
+        "block": block_id,
+        "state": state_text or None,
+        "state_known": state_known,
+        "allowed_in_state": allowed,
+        "why": block.get("why") if block else None,
+        "show_in": block.get("show_in") or [],
+        "hide_in": block.get("hide_in") or [],
+    }

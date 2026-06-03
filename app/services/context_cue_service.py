@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import Any
 
 from app.services.mcp_workflow_specs import load_named_json_spec
-from app.services.stage_applicability_service import stage_allows_block
+from app.services.stage_applicability_service import stage_allows_block, stage_applicability_metadata
 
 
 def _clean_text(value: object) -> str:
@@ -82,7 +82,7 @@ def context_cues_for_query(
     return [_public_cue(cue, reason="query_trigger") for _, cue in scored[:limit]]
 
 
-def expand_context_cue(ref: str, *, project: str = "") -> dict[str, Any] | None:
+def expand_context_cue(ref: str, *, project: str = "", state: str = "") -> dict[str, Any] | None:
     normalized = str(ref or "").strip()
     if normalized.startswith("cue:"):
         cue_id = normalized[len("cue:") :]
@@ -93,10 +93,13 @@ def expand_context_cue(ref: str, *, project: str = "") -> dict[str, Any] | None:
         return None
     for cue in _all_cues():
         if str(cue.get("id") or "").strip() == cue_id:
+            applicability = stage_applicability_metadata(cue_id, state=state)
             return {
                 "ref": f"cue:{cue_id}",
                 "cue": cue_id,
                 "project": project,
+                "expanded_by": "explicit_ref",
+                "stage_applicability": {key: value for key, value in applicability.items() if value not in (None, "", [], {})},
                 "severity": cue.get("severity"),
                 "scope": cue.get("scope") or [],
                 "title": cue.get("title"),

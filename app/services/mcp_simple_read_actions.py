@@ -125,10 +125,14 @@ async def build_simple_public_ref_response(
             next_safe_action = "Review this read-only memory before creating new facts or updates."
         elif kind == "cue":
             ref_source = "direct"
-            result = expand_context_cue(requested_ref, project=project)
+            result = expand_context_cue(requested_ref, project=project, state=str(args.get("state") or ""))
             if result is None:
                 raise PublicRefNotFoundError("Context cue ref did not resolve.")
-            next_safe_action = "Use this cue as recall context; do not hardcode user-language phrases into source."
+            applicability = result.get("stage_applicability") if isinstance(result, dict) else {}
+            if isinstance(applicability, dict) and applicability.get("state_known") and not applicability.get("allowed_in_state"):
+                next_safe_action = "Treat this expanded cue as reference-only here; the current workflow stage does not normally surface it."
+            else:
+                next_safe_action = "Use this expanded cue as explicit recall context, then return to the current public workflow step."
         else:
             return _public_ref_envelope(
                 args=args,
