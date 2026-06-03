@@ -551,6 +551,7 @@ def test_mailbox_state_packet_surfaces_compact_context_cues() -> None:
     cues = packet["context_cues"]
     assert cues
     assert any(cue["cue"] == "law:internal_english_contract" for cue in cues)
+    assert any(cue["cue"] == "law:mcp_first_workflow_context" for cue in cues)
     assert all("full_text" not in cue for cue in cues)
     assert all(str(cue.get("expand_ref") or "").startswith("cue:") for cue in cues)
 
@@ -589,6 +590,17 @@ def test_context_cues_for_query_use_english_canonical_triggers() -> None:
     assert "law:internal_english_contract" in cue_ids
     assert "tool:semantic_adaptation" in cue_ids
     assert all("full_text" not in cue for cue in cues)
+
+
+def test_context_cues_for_query_remind_mcp_first_workflow_context() -> None:
+    cues = context_cues_for_query(
+        query="use MCP public surface instead of direct API or python script for project memory and task lifecycle",
+        project="sloplesscode",
+    )
+
+    assert cues[0]["cue"] == "law:mcp_first_workflow_context"
+    assert cues[0]["severity"] == "P0"
+    assert "full_text" not in cues[0]
 
 
 def test_context_cues_for_query_remind_test_contour_before_live_runtime() -> None:

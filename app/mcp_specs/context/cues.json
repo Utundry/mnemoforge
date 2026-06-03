@@ -14,6 +14,16 @@
       "full_text": "Internal SloplessCode contracts, intent types, cue ids, route ids, and workflow symbols stay in English. Do not hardcode user-language phrases into router code. User-language phrases, slang, typos, and keyboard-layout mistakes must be normalized into stable English canonical intents through semantic adaptation, learned aliases, or route pattern storage."
     },
     {
+      "id": "law:mcp_first_workflow_context",
+      "severity": "P0",
+      "scope": ["planning", "implementation", "checkpointing", "handoff", "workflow", "task_lifecycle"],
+      "title": "Use public MCP for governed project context",
+      "summary": "Project memory, laws, task lifecycle, next-work selection, and handoff context should go through the public MCP surface.",
+      "expand_ref": "cue:law:mcp_first_workflow_context",
+      "trigger_terms": ["mcp", "public surface", "project memory", "task lifecycle", "next work", "handoff", "rules", "laws", "direct api", "python script"],
+      "full_text": "For SloplessCode/MnemoForge-backed work, use the public MCP surface as the canonical channel for governed project memory, laws, task lifecycle, next-work selection, and handoff context. Repository files, code search, and isolated tests remain normal implementation tools, but project-state decisions should not rely on direct API calls, ad-hoc Python scripts, shell history, or agent memory alone."
+    },
+    {
       "id": "law:data_through_code",
       "severity": "P0",
       "scope": ["routing", "workflow", "architecture", "planning"],
