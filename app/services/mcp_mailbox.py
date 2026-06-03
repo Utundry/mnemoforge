@@ -343,6 +343,7 @@ def build_mailbox_mutation_packet(
         "id": result.get("id"),
         "artifact_key": result.get("artifact_key"),
         "stage": result.get("stage"),
+        "evidence_classification": result.get("evidence_classification"),
         "submitted_fields": sorted(str(key) for key in payload.keys()),
         "next_safe_action": (
             "Request mailbox_state for the next workflow state."

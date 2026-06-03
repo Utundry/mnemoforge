@@ -22,6 +22,7 @@ from app.services.mcp_simple_read_actions import (
 )
 from app.services.mcp_simple_surface_actions import compact_resource_result
 from app.services.context_cue_service import context_cues_for_query
+from app.services.evidence_classification_service import classify_evidence_items
 from app.services.mcp_workflow_specs import (
     list_mailbox_forms_for_state,
     load_clerk_capture_registry,
@@ -158,6 +159,21 @@ def test_default_workflow_specs_validate() -> None:
         "get_task_context",
         "set_feature_gate",
     } <= set(summary["mailbox_forms"])
+
+
+def test_evidence_classification_distinguishes_docker_and_live_diagnostic() -> None:
+    docker = classify_evidence_items(["Docker test contour passed through run_pytest_docker."])
+    live = classify_evidence_items(["Live diagnostic telemetry reviewed on the working database."])
+    mixed = classify_evidence_items([
+        "Docker test contour passed.",
+        "Live diagnostic telemetry reviewed on the working database.",
+    ])
+
+    assert docker["kind"] == "docker_verification"
+    assert docker["verification_evidence"] is True
+    assert live["kind"] == "live_diagnostic"
+    assert live["live_diagnostic"] is True
+    assert mixed["kind"] == "mixed"
 
 
 def test_verification_state_blocks_unresolved_host_execution() -> None:
@@ -959,6 +975,7 @@ def test_checkpointing_state_prefers_finish_task_or_progress_forms() -> None:
     assert {"finish_task", "record_progress", "release_task_claim"} <= form_ids
     assert "commit" in forms["record_progress"]["hint"]
     assert "publish" in forms["record_progress"]["hint"]
+    assert "diagnostic/operator feedback" in forms["record_progress"]["hint"]
     assert "finish_task" in packet["next_safe_action"]
 
 

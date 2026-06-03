@@ -2225,6 +2225,37 @@ class TestMcpToolExecution:
         assert data["receipt"]["status"] == "accepted"
         assert data["receipt"]["id"] == "memory-1"
         assert data["receipt"]["stage"] == "in_progress"
+        assert data["receipt"]["evidence_classification"]["kind"] == "unspecified"
+
+    async def test_mailbox_submit_record_progress_classifies_live_diagnostic_evidence(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "memory-live-diagnostic", **payload}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "implementation",
+                "form_id": "record_progress",
+                "payload": {
+                    "project": "alpha",
+                    "summary": "Checked practical agent UX on the working database.",
+                    "verification": ["live diagnostic telemetry reviewed on working database"],
+                    "stage": "in_progress",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert posted[0][0] == "/memories"
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["evidence_classification"]["kind"] == "live_diagnostic"
+        assert data["receipt"]["evidence_classification"]["live_diagnostic"] is True
 
     async def test_mailbox_submit_record_progress_with_task_requires_owned_claim(self):
         result = await mcp_sse._execute_tool(

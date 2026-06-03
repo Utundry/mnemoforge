@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
+from app.services.evidence_classification_service import classify_evidence_items
 from app.services.mcp_mailbox import (
     build_mailbox_mutation_packet,
     build_mailbox_submit_receipt,
@@ -1513,6 +1514,7 @@ async def mailbox_record_progress(
 ) -> dict[str, Any]:
     task_id = str(payload.get("task_id") or "").strip()
     stage = str(payload.get("stage") or "in_progress").strip().lower() or "in_progress"
+    evidence_classification = classify_evidence_items(_string_list_arg(payload.get("verification")))
     if task_id:
         lease_guard = dependencies.task_mutation_guard(
             project=project,
@@ -1561,6 +1563,7 @@ async def mailbox_record_progress(
         if result.get("id"):
             result["artifact_key"] = f"task:{project}:{task_id}"
             result["stage"] = stage
+            result["evidence_classification"] = evidence_classification
         _record_closeout_spans_from_progress(
             payload=payload,
             project=project,
@@ -1598,6 +1601,7 @@ async def mailbox_record_progress(
     }
     result = await dependencies.post(api_base, "/memories", memory_payload)
     result["stage"] = stage
+    result["evidence_classification"] = evidence_classification
     actual_metadata = {
         "result_kind": "progress_recorded",
         "mutation": True,

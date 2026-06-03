@@ -1,7 +1,7 @@
 {
   "id": "record_progress",
   "title": "Record progress",
-  "purpose": "Record resumable task progress or implementation framing evidence.",
+  "purpose": "Record resumable task progress, implementation framing evidence, Docker/test verification evidence, or explicitly labeled live diagnostic usage.",
   "states": ["planning", "implementation", "checkpointing", "handoff"],
   "mode": "write",
   "required_fields": ["project", "summary"],
@@ -45,5 +45,5 @@
     "forbidden_metadata": {},
     "required_receipt_fields": ["status", "stage"]
   },
-  "public_hint": "Use this after a meaningful implementation, verification, commit, publish, or handoff slice. If task_id is provided, reuse the work_token returned by start_task."
+  "public_hint": "Use this after a meaningful implementation, Docker/test verification, live diagnostic usage, commit, publish, or handoff slice. If task_id is provided, reuse the work_token returned by start_task. Label live working-database checks as diagnostic/operator feedback, not formal code verification."
 }

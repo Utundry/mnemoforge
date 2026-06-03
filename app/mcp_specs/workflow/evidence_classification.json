@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "purpose": "Classify agent-submitted evidence so Docker/test verification is not confused with live diagnostic exploitation of the working database.",
+  "default_kind": "unspecified",
+  "classes": [
+    {
+      "kind": "docker_verification",
+      "summary": "Reproducible code verification evidence from the approved Docker/test contour.",
+      "markers": ["docker", "pytest-docker", "run_pytest_docker", "test contour", "verification contour"],
+      "verification_evidence": true,
+      "live_diagnostic": false
+    },
+    {
+      "kind": "live_diagnostic",
+      "summary": "Practical agent UX or runtime diagnostic usage on the working/live database.",
+      "markers": ["live diagnostic", "operator diagnostic", "practical usage", "working database", "telemetry", "diagnostic contour", "live ux", "real agent"],
+      "verification_evidence": false,
+      "live_diagnostic": true
+    }
+  ]
+}
