@@ -1104,6 +1104,37 @@ async def test_data_hygiene_playbook_reflects_current_workflow(client):
 
 
 @pytest.mark.asyncio
+async def test_data_hygiene_playbook_warns_when_findings_are_outside_current_project(client):
+    store = get_data_hygiene_store()
+    store.upsert_finding(
+        finding_id="hygiene-other-project-1",
+        store_name="qdrant_memories",
+        record_locator="memory-other-project",
+        dataset_class="synthetic_test",
+        recommended_action="delete",
+        exclude_from_learning=True,
+        confidence=0.95,
+        reasons=["synthetic_marker:test"],
+        details={"project": "ui_avt", "category": "task"},
+    )
+
+    resp = await client.get("/api/v1/admin/data-hygiene/playbook?project=sloplesscode")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    scope = data["workflow"]["scope_summary"]
+    assert scope["current_project"] == "sloplesscode"
+    assert scope["by_relation"]["outside_current_project"] >= 1
+    assert scope["by_project"]["ui_avt"] >= 1
+    assert "scope warnings" in data["workflow"]["next_actions"][0]
+    assert any("not current project sloplesscode" in item["warning"] for item in scope["warnings"])
+
+    trust_resp = await client.get("/api/v1/admin/storage-trust?project=sloplesscode")
+    assert trust_resp.status_code == 200, trust_resp.text
+    trust = trust_resp.json()
+    assert trust["signals"]["hygiene_scope_warnings"]
+
+
+@pytest.mark.asyncio
 async def test_admin_can_queue_data_hygiene_remediation(client):
     store = get_data_hygiene_store()
     store.upsert_finding(
@@ -1188,6 +1219,12 @@ async def test_admin_lists_data_hygiene_remediations_compact_by_default(client):
             "description": "Mark records as excluded from learning.",
             "dataset_class": "stale_guidance",
             "finding_ids": ["a", "b", "c", "d", "e", "f"],
+            "scope_summary": {
+                "current_project": "sloplesscode",
+                "total_findings": 6,
+                "by_relation": {"outside_current_project": 6},
+                "warnings": [{"finding_id": "a", "warning": "outside scope"}],
+            },
         },
     )
 
@@ -1198,6 +1235,7 @@ async def test_admin_lists_data_hygiene_remediations_compact_by_default(client):
     assert "details" not in item
     assert item["details_summary"]["finding_count"] == 6
     assert item["details_summary"]["sample_finding_ids"] == ["a", "b", "c", "d", "e"]
+    assert item["details_summary"]["scope_summary"]["by_relation"]["outside_current_project"] == 6
 
     full_resp = await client.get("/api/v1/admin/data-hygiene/remediations?limit=5&detail=full")
     assert full_resp.status_code == 200, full_resp.text

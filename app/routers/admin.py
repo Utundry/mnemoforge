@@ -486,10 +486,13 @@ async def system_status(_: None = Depends(_admin_guard)) -> dict[str, Any]:
 
 
 @router.get("/storage-trust")
-async def storage_trust_status(_: None = Depends(_admin_guard)) -> dict[str, Any]:
+async def storage_trust_status(
+    project: str | None = Query(None),
+    _: None = Depends(_admin_guard),
+) -> dict[str, Any]:
     _sync_integrity_remediations_best_effort()
     _sync_data_hygiene_remediations_best_effort()
-    return build_storage_trust_report()
+    return build_storage_trust_report(current_project=project)
 
 
 @router.get("/code-hardcoding-audit")
@@ -854,9 +857,12 @@ async def queue_integrity_remediation(
 
 
 @router.get("/data-hygiene")
-async def data_hygiene_status(_: None = Depends(_admin_guard)) -> dict[str, Any]:
+async def data_hygiene_status(
+    project: str | None = Query(None),
+    _: None = Depends(_admin_guard),
+) -> dict[str, Any]:
     _sync_data_hygiene_remediations_best_effort()
-    return get_data_hygiene_store().overview()
+    return get_data_hygiene_store().overview(current_project=project)
 
 
 @router.get("/data-portability/export/plan")
@@ -926,17 +932,19 @@ async def list_data_hygiene_manual_review(
 @router.get("/data-hygiene/workflow")
 async def data_hygiene_workflow(
     limit: int = Query(1000, ge=1, le=10000),
+    project: str | None = Query(None),
     _: None = Depends(_admin_guard),
 ) -> dict[str, Any]:
-    return build_workflow_summary(limit=limit)
+    return build_workflow_summary(limit=limit, current_project=project)
 
 
 @router.get("/data-hygiene/playbook")
 async def data_hygiene_playbook(
     limit: int = Query(1000, ge=1, le=10000),
+    project: str | None = Query(None),
     _: None = Depends(_admin_guard),
 ) -> dict[str, Any]:
-    return build_operator_playbook(limit=limit)
+    return build_operator_playbook(limit=limit, current_project=project)
 
 
 @router.get("/data-hygiene/retention-report")

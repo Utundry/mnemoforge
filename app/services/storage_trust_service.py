@@ -6,10 +6,10 @@ from app.services.data_hygiene_service import build_operator_playbook, get_data_
 from app.services.data_integrity_service import get_data_integrity_store
 
 
-def build_storage_trust_report(*, limit: int = 1000) -> dict[str, Any]:
+def build_storage_trust_report(*, limit: int = 1000, current_project: str | None = None) -> dict[str, Any]:
     integrity = get_data_integrity_store().overview()
-    hygiene = get_data_hygiene_store().overview()
-    playbook = build_operator_playbook(limit=limit)
+    hygiene = get_data_hygiene_store().overview(current_project=current_project)
+    playbook = build_operator_playbook(limit=limit, current_project=current_project)
 
     integrity_status = integrity.get("status", "ok")
     hygiene_status = hygiene.get("status", "ok")
@@ -37,6 +37,11 @@ def build_storage_trust_report(*, limit: int = 1000) -> dict[str, Any]:
     if manual_review_pending:
         next_actions.append(
             "Review manual-review hygiene findings before running any destructive cleanup."
+        )
+    scope_warnings = ((playbook.get("workflow") or {}).get("scope_summary") or {}).get("warnings") or []
+    if scope_warnings:
+        next_actions.append(
+            "Review hygiene scope warnings before presenting maintenance as current-project work."
         )
     if quarantine_candidates:
         next_actions.append(
@@ -67,5 +72,6 @@ def build_storage_trust_report(*, limit: int = 1000) -> dict[str, Any]:
             "manual_review_pending": manual_review_pending,
             "quarantine_candidates": quarantine_candidates,
             "delete_ready": delete_ready,
+            "hygiene_scope_warnings": scope_warnings,
         },
     }

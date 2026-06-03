@@ -522,6 +522,124 @@ def policy_for_dataset_class(dataset_class: str) -> dict[str, Any]:
     }))
 
 
+def _unique_nonempty(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        cleaned = str(value or "").strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result
+
+
+def _extract_hygiene_project_scopes(item: dict[str, Any]) -> list[str]:
+    details = item.get("details") or {}
+    candidates: list[str] = []
+    for key in (
+        "project",
+        "project_id",
+        "canonical_project",
+        "source_project",
+        "target_project",
+    ):
+        value = details.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+        elif isinstance(value, list):
+            candidates.extend(str(entry) for entry in value)
+    for tag in details.get("tags") or []:
+        text = str(tag or "").strip()
+        if text.startswith("project:"):
+            candidates.append(text.split(":", 1)[1])
+    for reason in item.get("reasons") or []:
+        text = str(reason or "").strip()
+        if text.startswith("project:"):
+            candidates.append(text.split(":", 1)[1])
+    return _unique_nonempty(candidates)
+
+
+def classify_hygiene_finding_scope(
+    item: dict[str, Any],
+    *,
+    current_project: str | None = None,
+) -> dict[str, Any]:
+    projects = _extract_hygiene_project_scopes(item)
+    current = str(current_project or "").strip()
+    if len(projects) > 1:
+        scope_kind = "multi_project"
+        scope_project = ""
+    elif projects:
+        scope_kind = "project"
+        scope_project = projects[0]
+    else:
+        scope_kind = "system_or_unknown"
+        scope_project = ""
+
+    if not current:
+        relation = "unspecified_current_project"
+    elif scope_kind == "project" and scope_project == current:
+        relation = "current_project"
+    elif scope_kind == "project":
+        relation = "outside_current_project"
+    elif scope_kind == "multi_project" and current in projects:
+        relation = "includes_current_project"
+    elif scope_kind == "multi_project":
+        relation = "outside_current_project"
+    else:
+        relation = "system_or_unknown_scope"
+
+    warning = ""
+    if current and relation == "outside_current_project":
+        target = ", ".join(projects) if projects else "unknown project"
+        warning = f"Hygiene finding targets {target}, not current project {current}."
+    elif current and relation == "system_or_unknown_scope":
+        warning = f"Hygiene finding has system/unknown scope; do not present it as current project {current} work."
+
+    return {
+        "scope_kind": scope_kind,
+        "scope_project": scope_project,
+        "projects": projects,
+        "relation_to_current_project": relation,
+        "warning": warning,
+    }
+
+
+def build_hygiene_scope_summary(
+    findings: list[dict[str, Any]],
+    *,
+    current_project: str | None = None,
+    sample_size: int = 5,
+) -> dict[str, Any]:
+    by_scope_kind: dict[str, int] = {}
+    by_relation: dict[str, int] = {}
+    by_project: dict[str, int] = {}
+    warnings: list[dict[str, str]] = []
+    for item in findings:
+        scope = classify_hygiene_finding_scope(item, current_project=current_project)
+        scope_kind = str(scope.get("scope_kind") or "system_or_unknown")
+        relation = str(scope.get("relation_to_current_project") or "unspecified_current_project")
+        by_scope_kind[scope_kind] = by_scope_kind.get(scope_kind, 0) + 1
+        by_relation[relation] = by_relation.get(relation, 0) + 1
+        for project in scope.get("projects") or []:
+            by_project[project] = by_project.get(project, 0) + 1
+        warning = str(scope.get("warning") or "")
+        if warning and len(warnings) < sample_size:
+            warnings.append({
+                "finding_id": str(item.get("finding_id") or ""),
+                "warning": warning,
+            })
+    return {
+        "current_project": str(current_project or ""),
+        "total_findings": len(findings),
+        "by_scope_kind": by_scope_kind,
+        "by_relation": by_relation,
+        "by_project": by_project,
+        "warnings": warnings,
+    }
+
+
 class DataHygieneStore:
     def __init__(self, db_path: Path = _DB_PATH) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -960,7 +1078,7 @@ class DataHygieneStore:
             ).fetchone()
         return self._decode_finding(updated) if updated else None
 
-    def overview(self) -> dict[str, Any]:
+    def overview(self, *, current_project: str | None = None) -> dict[str, Any]:
         latest = self.latest_audit()
         findings = self.list_findings(limit=1000)
         active = [item for item in findings if item.get("status") in {"open", "quarantine_candidate", "quarantined", "manual_review"}]
@@ -987,6 +1105,7 @@ class DataHygieneStore:
             "exclude_from_learning_count": exclude_count,
             "manual_review_count": manual_review_count,
             "quarantine_count": quarantine_count,
+            "scope_summary": build_hygiene_scope_summary(active, current_project=current_project),
             "policies": DATASET_POLICY_REGISTRY,
             "recommended_remediations": {
                 action: cfg for action, cfg in HYGIENE_REMEDIATION_REGISTRY.items()
@@ -1399,6 +1518,7 @@ async def queue_hygiene_remediation(
             "description": config["description"],
             "dataset_class": dataset_class or "",
             "finding_ids": [item["finding_id"] for item in findings],
+            "scope_summary": build_hygiene_scope_summary(findings),
         },
     )
 
@@ -1414,6 +1534,8 @@ def compact_hygiene_remediation(item: dict[str, Any], *, sample_size: int = 5) -
         "finding_count": len(finding_ids),
         "sample_finding_ids": finding_ids[:sample_size],
     }
+    if details.get("scope_summary"):
+        compact["details_summary"]["scope_summary"] = details.get("scope_summary")
     if closure_summary:
         compact["details_summary"]["closure_summary"] = closure_summary
     if details.get("closure_checked_at"):
@@ -1461,6 +1583,7 @@ async def queue_reviewed_delete_remediation(
         details={
             "description": HYGIENE_REMEDIATION_REGISTRY["delete-reviewed"]["description"],
             "finding_ids": [item["finding_id"] for item in findings],
+            "scope_summary": build_hygiene_scope_summary(findings),
         },
     )
 
@@ -1506,6 +1629,7 @@ async def queue_approved_delete_remediation(
         details={
             "description": HYGIENE_REMEDIATION_REGISTRY["delete-approved"]["description"],
             "finding_ids": [item["finding_id"] for item in findings],
+            "scope_summary": build_hygiene_scope_summary(findings),
         },
     )
 
@@ -1769,7 +1893,7 @@ def bulk_update_finding_statuses(
     }
 
 
-def build_workflow_summary(*, limit: int = 1000) -> dict[str, Any]:
+def build_workflow_summary(*, limit: int = 1000, current_project: str | None = None) -> dict[str, Any]:
     store = get_data_hygiene_store()
     items = store.list_findings(limit=limit)
     manual_review: dict[str, int] = {}
@@ -1787,16 +1911,30 @@ def build_workflow_summary(*, limit: int = 1000) -> dict[str, Any]:
             quarantined[dataset_class] = quarantined.get(dataset_class, 0) + 1
             if item.get("recommended_action") == "delete":
                 delete_ready[dataset_class] = delete_ready.get(dataset_class, 0) + 1
+    scope_summary = build_hygiene_scope_summary(
+        [
+            item for item in items
+            if item.get("status") in {"open", "manual_review", "quarantine_candidate", "quarantined"}
+        ],
+        current_project=current_project,
+    )
+    next_actions = [
+        "Review manual_review_required findings and move selected records to quarantine_candidate.",
+        "Promote confirmed delete candidates from quarantine_candidate to quarantined.",
+        "Run delete-dry-run before remediate-approved-delete for live qdrant memories.",
+    ]
+    if scope_summary.get("warnings"):
+        next_actions.insert(
+            0,
+            "Review hygiene scope warnings before treating maintenance as current-project work.",
+        )
     return {
         "manual_review_pending": manual_review,
         "quarantine_candidates": quarantine_candidates,
         "quarantined": quarantined,
         "delete_ready": delete_ready,
-        "next_actions": [
-            "Review manual_review_required findings and move selected records to quarantine_candidate.",
-            "Promote confirmed delete candidates from quarantine_candidate to quarantined.",
-            "Run delete-dry-run before remediate-approved-delete for live qdrant memories.",
-        ],
+        "scope_summary": scope_summary,
+        "next_actions": next_actions,
     }
 
 
@@ -1890,8 +2028,8 @@ def build_ai_hygiene_resolution_plan(*, limit: int = 1000, sample_size: int = 10
     }
 
 
-def build_operator_playbook(*, limit: int = 1000) -> dict[str, Any]:
-    workflow = build_workflow_summary(limit=limit)
+def build_operator_playbook(*, limit: int = 1000, current_project: str | None = None) -> dict[str, Any]:
+    workflow = build_workflow_summary(limit=limit, current_project=current_project)
     manual_pending = workflow.get("manual_review_pending", {})
     quarantine_candidates = workflow.get("quarantine_candidates", {})
     delete_ready = workflow.get("delete_ready", {})
@@ -1941,6 +2079,7 @@ def build_operator_playbook(*, limit: int = 1000) -> dict[str, Any]:
     return {
         "workflow": workflow,
         "principles": [
+            "Hygiene maintenance can be current-project, other-project, multi-project, or system-wide; show scope before suggesting cleanup.",
             "Exclude noisy service and telemetry data from learning before attempting deletion.",
             "Synthetic/test data requires manual review before delete.",
             "Use preview endpoints before any destructive remediation job.",
