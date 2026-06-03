@@ -20,6 +20,17 @@
     "artifact",
     "artifacts"
   ],
+  "structural_stop_terms": [
+    "latest",
+    "recent",
+    "last",
+    "newest",
+    "project",
+    "of",
+    "последн",
+    "проект",
+    "по"
+  ],
   "alias_groups": [
     {
       "id": "http_data_portability",
@@ -54,6 +65,37 @@
       ]
     }
   ],
+  "status_aliases": {
+    "open": [
+      "open",
+      "active",
+      "unresolved",
+      "pending",
+      "backlog",
+      "current",
+      "in progress",
+      "not done",
+      "not completed",
+      "not resolved",
+      "открыт",
+      "актив",
+      "нереш"
+    ],
+    "done": [
+      "done",
+      "closed",
+      "resolved",
+      "archived",
+      "completed",
+      "finished",
+      "implemented",
+      "realized",
+      "закрыт",
+      "решен",
+      "решён",
+      "реализ"
+    ]
+  },
   "status_weights": {
     "open": 5.0,
     "active": 4.0,

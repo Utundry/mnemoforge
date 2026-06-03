@@ -648,6 +648,7 @@ async def build_simple_get_query_response(
                 "message": "Natural artifact list query resolved through artifact search.",
                 "resource_kind": "artifact_list",
                 "artifact_type": artifact_list_type,
+                "status_filter": status,
                 "count": len(data.get("items") or []) if isinstance(data.get("items"), list) else 0,
                 "next_safe_action": "Use get with a returned artifact ref for more detail.",
             },
@@ -867,18 +868,59 @@ def artifact_topic_query(query: str, artifact_list_type: str) -> str:
         "resolved",
         "archived",
     }
-    words = [word for word in text.split() if word not in stop_terms]
+    stop_terms.update(str(term).casefold() for term in _READ_LOOKUP_TERMS)
+    stop_terms.update(str(term).casefold() for term in _TASK_QUERY_TERMS)
+    stop_terms.update(str(term).casefold() for term in _IMPROVEMENT_QUERY_TERMS)
+    stop_terms.update(str(term).casefold() for term in _PROJECT_QUERY_TERMS)
+    spec = _artifact_lookup_spec()
+    stop_terms.update(str(term).casefold() for term in spec.get("stop_terms") or [])
+    stop_terms.update(str(term).casefold() for term in spec.get("structural_stop_terms") or [])
+    status_aliases = spec.get("status_aliases")
+    if isinstance(status_aliases, dict):
+        for aliases in status_aliases.values():
+            if not isinstance(aliases, list):
+                continue
+            for alias in aliases:
+                stop_terms.update(str(alias or "").casefold().split())
+    words = [
+        word
+        for word in text.split()
+        if word not in stop_terms
+        and not _word_matches_alias(word, stop_terms)
+        and not _word_matches_status_alias(word)
+    ]
     if not words or " ".join(words) == artifact_list_type:
         return ""
     return " ".join(words)
 
 
+def _word_matches_alias(word: str, aliases: set[str]) -> bool:
+    text = str(word or "").casefold()
+    return any(_query_contains_alias(text, alias) for alias in aliases)
+
+
+def _word_matches_status_alias(word: str) -> bool:
+    status_aliases = _artifact_lookup_spec().get("status_aliases")
+    if not isinstance(status_aliases, dict):
+        return False
+    text = str(word or "").casefold()
+    return any(
+        _query_contains_alias(text, str(alias))
+        for aliases in status_aliases.values()
+        if isinstance(aliases, list)
+        for alias in aliases
+    )
+
+
 def artifact_list_status_filter(query: str) -> str:
     text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
-    if any(term in text for term in ("open", "active", "unresolved", "pending", "backlog", "\u043e\u0442\u043a\u0440\u044b\u0442", "\u0430\u043a\u0442\u0438\u0432", "\u043d\u0435\u0440\u0435\u0448")):
-        return "open"
-    if any(term in text for term in ("done", "closed", "resolved", "archived", "\u0437\u0430\u043a\u0440\u044b\u0442", "\u0440\u0435\u0448\u0435\u043d")):
-        return "done"
+    status_aliases = _artifact_lookup_spec().get("status_aliases")
+    if not isinstance(status_aliases, dict):
+        status_aliases = {}
+    for status in ("open", "done", "paused", "archived"):
+        aliases = status_aliases.get(status)
+        if isinstance(aliases, list) and any(_query_contains_alias(text, str(alias)) for alias in aliases):
+            return status
     return ""
 
 
@@ -942,6 +984,22 @@ def _simple_get_route_spec() -> dict[str, Any]:
         return load_named_json_spec("search/simple_get_routes.json")
     except Exception:
         return {}
+
+
+def _artifact_lookup_spec() -> dict[str, Any]:
+    try:
+        return load_named_json_spec("search/artifact_lookup.json")
+    except Exception:
+        return {}
+
+
+def _query_contains_alias(text: str, alias: str) -> bool:
+    value = str(alias or "").strip().casefold()
+    if not value:
+        return False
+    if re.fullmatch(r"[\w]+", value, flags=re.UNICODE):
+        return re.search(rf"\b{re.escape(value)}", text, flags=re.UNICODE) is not None
+    return value in text
 
 
 def explicit_storage_trust_query(query: str) -> bool:

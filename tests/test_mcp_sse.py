@@ -3306,6 +3306,113 @@ class TestMcpToolExecution:
         assert result["receipt"]["artifact_type"] == "all"
         assert [item["type"] for item in result["result"]["items"]] == ["task", "improvement"]
 
+    async def test_simple_get_query_filters_completed_task_artifacts(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {
+                "items": [
+                    {
+                        "artifact_key": "task:alpha:task-done",
+                        "type": "task",
+                        "task_id": "task-done",
+                        "title": "Latest completed task",
+                        "status": "done",
+                    }
+                ]
+            }
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("completed task list should use the artifact surface directly")
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "find latest implemented tasks", "limit": 5},
+                "http://test",
+            )
+        )
+
+        assert seen["path"] == "/artifacts?project=alpha&status=done&limit=5&type=task"
+        assert result["receipt"]["resource_kind"] == "artifact_list"
+        assert result["receipt"]["artifact_type"] == "task"
+        assert result["receipt"]["status_filter"] == "done"
+        assert result["result"]["items"][0]["status"] == "done"
+
+    async def test_simple_get_query_uses_spec_status_aliases_for_task_artifacts(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {
+                "items": [
+                    {
+                        "artifact_key": "task:alpha:task-done",
+                        "type": "task",
+                        "task_id": "task-done",
+                        "title": "Done task",
+                        "status": "done",
+                    }
+                ]
+            }
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("status-aware task list should not route through ask_project")
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "найди реализованную задачу alpha", "limit": 5},
+                "http://test",
+            )
+        )
+
+        assert seen["path"] == "/artifacts?project=alpha&status=done&limit=5&type=task&query=alpha"
+        assert result["receipt"]["resource_kind"] == "artifact_list"
+        assert result["receipt"]["artifact_type"] == "task"
+        assert result["receipt"]["status_filter"] == "done"
+
+    async def test_simple_get_lifecycle_only_task_query_does_not_overconstrain_topic_search(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {
+                "items": [
+                    {
+                        "artifact_key": "task:alpha:task-done",
+                        "type": "task",
+                        "task_id": "task-done",
+                        "title": "Done task",
+                        "status": "done",
+                    }
+                ]
+            }
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("lifecycle-only task list should not route through ask_project")
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "find latest implemented task", "limit": 5},
+                "http://test",
+            )
+        )
+
+        assert seen["path"] == "/artifacts?project=alpha&status=done&limit=5&type=task"
+        assert result["receipt"]["status_filter"] == "done"
+
     async def test_simple_get_next_work_uses_mixed_open_artifacts_without_type_all(self, monkeypatch):
         seen: dict[str, str] = {}
 
