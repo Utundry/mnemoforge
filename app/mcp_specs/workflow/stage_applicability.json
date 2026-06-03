@@ -22,6 +22,20 @@
       "show_in": ["implementation", "checkpointing", "handoff"],
       "hide_in": ["planning", "framing", "operator_review"],
       "why": "Checkpoint and closeout reminders are useful during active work and handoff."
+    },
+    "law:test_contour_before_live": {
+      "show_in": ["verification", "live_validation"],
+      "hide_in": ["planning", "framing", "implementation", "checkpointing", "handoff", "operator_review"],
+      "why": "External runtime and live-validation policy is critical near verification, but noisy during ordinary planning."
+    },
+    "law:checkpoint_after_work_slice": {
+      "show_in": ["implementation", "verification", "checkpointing", "handoff"],
+      "hide_in": ["planning", "framing", "operator_review"],
+      "why": "Checkpoint reminders belong after meaningful work starts, not during simple project orientation."
+    },
+    "law:mcp_first_workflow_context": {
+      "show_in": ["planning", "implementation", "checkpointing", "handoff"],
+      "why": "The public MCP surface reminder anchors governed project context across the main task lifecycle."
     }
   }
 }

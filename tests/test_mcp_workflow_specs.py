@@ -553,6 +553,8 @@ def test_mailbox_state_packet_surfaces_compact_context_cues() -> None:
     assert cues
     assert any(cue["cue"] == "law:internal_english_contract" for cue in cues)
     assert any(cue["cue"] == "law:mcp_first_workflow_context" for cue in cues)
+    assert "law:test_contour_before_live" not in {cue["cue"] for cue in cues}
+    assert "law:checkpoint_after_work_slice" not in {cue["cue"] for cue in cues}
     assert all("full_text" not in cue for cue in cues)
     assert all(str(cue.get("expand_ref") or "").startswith("cue:") for cue in cues)
 
@@ -579,6 +581,22 @@ def test_checkpointing_state_surfaces_post_work_checkpoint_cue() -> None:
     cue_ids = {cue["cue"] for cue in packet["context_cues"]}
     assert "law:checkpoint_after_work_slice" in cue_ids
     assert all("full_text" not in cue for cue in packet["context_cues"])
+
+
+def test_context_cues_for_query_respect_stage_applicability_when_state_is_known() -> None:
+    planning_cues = context_cues_for_query(
+        query="restart external runtime after verification contour and run live smoke",
+        project="sloplesscode",
+        state="planning",
+    )
+    verification_cues = context_cues_for_query(
+        query="restart external runtime after verification contour and run live smoke",
+        project="sloplesscode",
+        state="verification",
+    )
+
+    assert "law:test_contour_before_live" not in {cue["cue"] for cue in planning_cues}
+    assert verification_cues[0]["cue"] == "law:test_contour_before_live"
 
 
 def test_context_cues_for_query_use_english_canonical_triggers() -> None:
@@ -746,6 +764,8 @@ def test_stage_applicability_contract_scopes_response_blocks() -> None:
     assert stage_allows_block("work_guidance", state="planning") is False
     assert stage_allows_block("work_guidance", state="implementation") is True
     assert stage_allows_block("verification_policy", state="handoff") is False
+    assert stage_allows_block("law:test_contour_before_live", state="planning") is False
+    assert stage_allows_block("law:test_contour_before_live", state="verification") is True
     assert stage_allows_block("unknown_public_block", state="verification") is True
 
 

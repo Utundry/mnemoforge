@@ -4,6 +4,7 @@ from functools import lru_cache
 from typing import Any
 
 from app.services.mcp_workflow_specs import load_named_json_spec
+from app.services.stage_applicability_service import stage_allows_block
 
 
 def _clean_text(value: object) -> str:
@@ -46,6 +47,9 @@ def context_cues_for_state(
     selected: list[dict[str, Any]] = []
     for cue in _all_cues():
         scopes = {_clean_text(item) for item in cue.get("scope") or []}
+        cue_id = str(cue.get("id") or "").strip()
+        if cue_id and not stage_allows_block(cue_id, state=state_text):
+            continue
         if state_text in scopes or (state_text == "planning" and "planning" in scopes):
             selected.append(_public_cue(cue, reason=f"state:{state_text}"))
         if len(selected) >= limit:
@@ -57,6 +61,7 @@ def context_cues_for_query(
     *,
     query: str,
     project: str = "",
+    state: str = "",
     max_cues: int | None = None,
 ) -> list[dict[str, Any]]:
     del project  # Project-acquired cues can be merged here in a later slice.
@@ -66,6 +71,9 @@ def context_cues_for_query(
     limit = max_cues or int(_cue_spec().get("default_max_cues") or 5)
     scored: list[tuple[int, dict[str, Any]]] = []
     for cue in _all_cues():
+        cue_id = str(cue.get("id") or "").strip()
+        if state and cue_id and not stage_allows_block(cue_id, state=state):
+            continue
         terms = [_clean_text(term) for term in cue.get("trigger_terms") or []]
         score = sum(1 for term in terms if term and term in text)
         if score:
