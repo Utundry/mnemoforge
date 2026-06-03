@@ -708,6 +708,7 @@ async def mailbox_finish_task(
     release = dict(result.get("release") or {})
     if isinstance(release.get("lease"), dict):
         release["lease"] = public_lease_payload(release.get("lease"))
+    evidence_classification = classify_evidence_items(_string_list_arg(payload.get("verification")))
     actual_metadata = {"result_kind": "task_finished", "mutation": True}
     health = evaluate_mailbox_postconditions(form, actual_metadata)
     receipt = {
@@ -717,6 +718,7 @@ async def mailbox_finish_task(
         "message": "Task session finished and claim release was attempted.",
         "task_id": result.get("task_id"),
         "release": release,
+        "evidence_classification": evidence_classification,
         "next_safe_action": "Request mailbox_state for planning or handoff before starting more work.",
     }
     packet: dict[str, Any] = {"state": state, "project": project, "receipt": _compact(receipt), "next_safe_action": receipt["next_safe_action"]}

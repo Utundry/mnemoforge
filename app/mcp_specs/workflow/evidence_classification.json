@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "purpose": "Classify agent-submitted evidence so Docker/test verification is not confused with live diagnostic exploitation of the working database.",
+  "purpose": "Classify agent-submitted evidence so formal code verification is not confused with live diagnostic exploitation of the working database.",
   "default_kind": "unspecified",
   "classes": [
     {
-      "kind": "docker_verification",
-      "summary": "Reproducible code verification evidence from the approved Docker/test contour.",
-      "markers": ["docker", "pytest-docker", "run_pytest_docker", "test contour", "verification contour"],
+      "kind": "code_verification",
+      "summary": "Formal code verification evidence from the project-approved verification contour.",
+      "markers": ["code verification", "formal verification", "approved verification contour", "verification contour", "verification evidence"],
       "verification_evidence": true,
       "live_diagnostic": false
     },

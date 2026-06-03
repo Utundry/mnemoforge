@@ -41,5 +41,5 @@
     "forbidden_metadata": {},
     "required_receipt_fields": ["status", "release"]
   },
-  "public_hint": "Use this only after closeout evidence is ready; completed work needs changed_files, verification, next_step where applicable, and a durable MCP closeout record."
+  "public_hint": "Use this only after closeout evidence is ready; completed work needs changed_files, verification, next_step where applicable, and a durable MCP closeout record. Resolve project-specific verification contour from governed project data, and label live working-database checks as diagnostic/operator feedback, not formal code verification."
 }

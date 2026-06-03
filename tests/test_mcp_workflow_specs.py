@@ -161,16 +161,16 @@ def test_default_workflow_specs_validate() -> None:
     } <= set(summary["mailbox_forms"])
 
 
-def test_evidence_classification_distinguishes_docker_and_live_diagnostic() -> None:
-    docker = classify_evidence_items(["Docker test contour passed through run_pytest_docker."])
+def test_evidence_classification_distinguishes_code_verification_and_live_diagnostic() -> None:
+    verification = classify_evidence_items(["Formal code verification passed through the approved verification contour."])
     live = classify_evidence_items(["Live diagnostic telemetry reviewed on the working database."])
     mixed = classify_evidence_items([
-        "Docker test contour passed.",
+        "Formal code verification passed.",
         "Live diagnostic telemetry reviewed on the working database.",
     ])
 
-    assert docker["kind"] == "docker_verification"
-    assert docker["verification_evidence"] is True
+    assert verification["kind"] == "code_verification"
+    assert verification["verification_evidence"] is True
     assert live["kind"] == "live_diagnostic"
     assert live["live_diagnostic"] is True
     assert mixed["kind"] == "mixed"
@@ -976,6 +976,9 @@ def test_checkpointing_state_prefers_finish_task_or_progress_forms() -> None:
     assert "commit" in forms["record_progress"]["hint"]
     assert "publish" in forms["record_progress"]["hint"]
     assert "diagnostic/operator feedback" in forms["record_progress"]["hint"]
+    assert "diagnostic/operator feedback" in forms["finish_task"]["hint"]
+    assert "Docker" not in forms["record_progress"]["hint"]
+    assert "Docker" not in forms["finish_task"]["hint"]
     assert "finish_task" in packet["next_safe_action"]
 
 

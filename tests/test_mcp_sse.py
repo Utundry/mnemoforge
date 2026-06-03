@@ -875,7 +875,7 @@ class TestMcpToolExecution:
                 "task_id": "task-mailbox-finish",
                 "summary": "Finished via mailbox.",
                 "changed_files": ["app/example.py"],
-                "verification": ["Docker contour passed."],
+                "verification": ["Formal code verification passed through the approved verification contour."],
                 "next_step": "No follow-up.",
             },
             state="checkpointing",
@@ -894,6 +894,7 @@ class TestMcpToolExecution:
 
         assert packet["receipt"]["status"] == "finished"
         assert packet["receipt"]["release"]["status"] == "released"
+        assert packet["receipt"]["evidence_classification"]["kind"] == "code_verification"
         assert "work_token_hash" not in packet["receipt"]["release"]["lease"]
         assert "_internal" not in packet
 
