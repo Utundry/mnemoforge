@@ -667,6 +667,35 @@ def test_context_cues_for_query_remind_post_commit_checkpoint() -> None:
     assert "full_text" not in cues[0]
 
 
+def test_context_cues_surface_generic_adherence_without_project_runtime_details() -> None:
+    cues = context_cues_for_query(
+        query="finish task after mutation but I forgot claim ownership token",
+        project="sloplesscode",
+        state="implementation",
+    )
+
+    first = cues[0]
+    assert first["cue"] == "adherence:claim_before_mutation"
+    assert first["authority_layer"] == "canonical_principle"
+    assert first["source"] == "adherence_spec"
+    assert "full_text" not in first
+    assert "Docker" not in str(first)
+
+
+def test_context_cues_surface_practical_validation_as_complementary_stage() -> None:
+    cues = context_cues_for_query(
+        query="agent ux practical validation should inspect receipt and next safe action through product surface",
+        project="sloplesscode",
+        state="verification",
+    )
+
+    cue_ids = {cue["cue"] for cue in cues}
+    assert "adherence:product_surface_practical_validation" in cue_ids
+    practical = next(cue for cue in cues if cue["cue"] == "adherence:product_surface_practical_validation")
+    assert practical["severity"] == "P1"
+    assert "full_text" not in practical
+
+
 def test_context_cues_can_include_governed_canonical_laws_before_bootstrap_cues() -> None:
     cues = context_cues_for_state(
         state="planning",
@@ -771,6 +800,34 @@ async def test_context_cue_ref_reports_stage_applicability_when_state_is_known()
     assert packet["result"]["stage_applicability"]["state"] == "planning"
     assert packet["result"]["stage_applicability"]["allowed_in_state"] is False
     assert "reference-only" in packet["receipt"]["next_safe_action"]
+
+
+async def test_adherence_cue_ref_expands_full_text() -> None:
+    async def unused_get(_api_base: str, _path: str):
+        raise AssertionError("cue refs should resolve from the cue registry")
+
+    async def unused_context(_api_base: str, _args: dict):
+        raise AssertionError("cue refs should not request task context")
+
+    packet = await build_simple_public_ref_response(
+        api_base="http://test",
+        args={
+            "project": "sloplesscode",
+            "ref": "cue:adherence:product_surface_practical_validation",
+            "state": "verification",
+        },
+        dependencies=PublicRefDependencies(
+            get=unused_get,
+            get_task_context=unused_context,
+            public_error_message=lambda exc: str(exc),
+        ),
+    )
+
+    assert packet is not None
+    assert packet["receipt"]["resource_kind"] == "cue"
+    assert packet["result"]["cue"] == "adherence:product_surface_practical_validation"
+    assert packet["result"]["stage_applicability"]["allowed_in_state"] is True
+    assert "complementary stage" in packet["result"]["full_text"]
 
 
 async def test_law_ref_reports_explicit_expansion_metadata() -> None:

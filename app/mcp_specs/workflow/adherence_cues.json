@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "purpose": "Generic adherence cues for keeping agents inside governed workflow boundaries. Keep entries project-agnostic: project runtime, host commands, verification contours, and environment details belong in governed project data.",
+  "default_max_cues": 3,
+  "cues": [
+    {
+      "id": "adherence:claim_before_mutation",
+      "severity": "P0",
+      "authority_layer": "canonical_principle",
+      "source": "adherence_spec",
+      "scope": ["implementation", "checkpointing", "handoff", "task_lifecycle"],
+      "title": "Claim work before mutating task state",
+      "summary": "Mutating task work needs an owned task claim and continuation token before progress or finish actions.",
+      "expand_ref": "cue:adherence:claim_before_mutation",
+      "trigger_terms": ["claim", "start task", "mutate", "mutation", "record progress", "finish task", "task state", "ownership", "token"],
+      "full_text": "Before mutating task state, claim or start the task through the governed public workflow and keep the returned continuation token. The token is ownership proof for progress, finish, recovery, and auditable concurrency."
+    },
+    {
+      "id": "adherence:product_surface_practical_validation",
+      "severity": "P1",
+      "authority_layer": "canonical_principle",
+      "source": "adherence_spec",
+      "scope": ["verification", "live_validation", "operator_review"],
+      "title": "Exercise the product-facing surface in practice",
+      "summary": "When the product-facing agent surface is being evaluated, practical use through that surface complements synthetic tests.",
+      "expand_ref": "cue:adherence:product_surface_practical_validation",
+      "trigger_terms": ["product surface", "public surface", "agent ux", "practical validation", "practical exploitation", "live diagnostic", "receipt", "next safe action"],
+      "full_text": "Synthetic or formal tests verify code behavior in isolation. Practical product-surface validation is a later complementary stage: exercise the agent-facing public workflow itself to evaluate discoverability, receipts, next-safe-action guidance, ownership, cues, and adherence. Keep practical evidence distinct from formal verification."
+    },
+    {
+      "id": "adherence:record_process_drift_as_experience",
+      "severity": "P1",
+      "authority_layer": "canonical_principle",
+      "source": "adherence_spec",
+      "scope": ["implementation", "verification", "live_validation", "checkpointing", "handoff", "operator_review"],
+      "title": "Record workflow drift as experience",
+      "summary": "Observed adherence failures should become experience evidence for later learning and hygiene, not silent chat-only corrections.",
+      "expand_ref": "cue:adherence:record_process_drift_as_experience",
+      "trigger_terms": ["drift", "bypass", "violation", "missed claim", "forgot", "experience", "learning", "hygiene", "adherence"],
+      "full_text": "When an agent bypasses governed workflow, skips ownership proof, confuses evidence classes, or validates the product-facing surface through the wrong channel, record the incident as experience so the system can learn and surface better cues later."
+    }
+  ]
+}

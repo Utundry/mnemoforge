@@ -3,6 +3,11 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
+from app.services.adherence_cue_service import (
+    adherence_cues_for_query,
+    adherence_cues_for_state,
+    expand_adherence_cue,
+)
 from app.services.mcp_workflow_specs import load_named_json_spec
 from app.services.stage_applicability_service import stage_allows_block, stage_applicability_metadata
 
@@ -58,7 +63,15 @@ def context_cues_for_state(
             limit=limit,
         )
     )
+    remaining = max(limit - len(selected), 0)
+    if remaining:
+        selected.extend(
+            _public_cue(cue, reason=f"adherence:{state_text}")
+            for cue in adherence_cues_for_state(state=state_text, limit=remaining)
+        )
     for cue in _all_cues():
+        if len(selected) >= limit:
+            break
         scopes = {_clean_text(item) for item in cue.get("scope") or []}
         cue_id = str(cue.get("id") or "").strip()
         if cue_id and not stage_allows_block(cue_id, state=state_text):
@@ -91,6 +104,8 @@ def context_cues_for_query(
             score = 1
         if score:
             scored.append((score, cue))
+    for cue in adherence_cues_for_query(query=text, state=state, limit=limit):
+        scored.append((int(cue.get("_score") or 1), cue))
     for cue in _all_cues():
         cue_id = str(cue.get("id") or "").strip()
         if state and cue_id and not stage_allows_block(cue_id, state=state):
@@ -204,6 +219,10 @@ def expand_context_cue(ref: str, *, project: str = "", state: str = "") -> dict[
     cue_id = cue_id.strip()
     if not cue_id:
         return None
+    adherence = expand_adherence_cue(cue_id, state=state)
+    if adherence:
+        adherence["project"] = project
+        return adherence
     for cue in _all_cues():
         if str(cue.get("id") or "").strip() == cue_id:
             applicability = stage_applicability_metadata(cue_id, state=state)
