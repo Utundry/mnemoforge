@@ -2233,6 +2233,7 @@ async def _resolve_mailbox_public_ref(api_base: str, args: dict[str, Any]) -> di
 
 def _simple_surface_dependencies() -> SimpleSurfaceDependencies:
     return SimpleSurfaceDependencies(
+        get=_get,
         get_session_identity_defaults=_get_session_identity_defaults,
         resolve_public_ref=_resolve_mailbox_public_ref,
         resolve_query=lambda base, query_args, sid: build_simple_get_query_response(
@@ -2264,8 +2265,9 @@ async def _build_simple_help_payload(args: dict[str, Any], *, session_id: str | 
     return build_simple_help_response(args)
 
 
-async def _build_simple_state_payload(args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
+async def _build_simple_state_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
     return await build_simple_state_response(
+        api_base=api_base,
         args=args,
         session_id=session_id,
         dependencies=_simple_surface_dependencies(),
@@ -7132,7 +7134,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         return json.dumps(data, indent=2, ensure_ascii=False)
 
     if name == "state":
-        data = await _build_simple_state_payload(args, session_id=session_id)
+        data = await _build_simple_state_payload(api_base, args, session_id=session_id)
         data = _public_simple_tool_payload(name, data, args)
         return json.dumps(data, indent=2, ensure_ascii=False)
 
@@ -7911,7 +7913,8 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         data = await build_mailbox_state_response(
             args=args,
             session_id=session_id,
-            dependencies=MailboxReadDependencies(get_session_identity_defaults=_get_session_identity_defaults),
+            api_base=api_base,
+            dependencies=MailboxReadDependencies(get_session_identity_defaults=_get_session_identity_defaults, get=_get),
         )
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)

@@ -21,7 +21,7 @@ from app.services.mcp_simple_read_actions import (
     build_simple_public_ref_response,
 )
 from app.services.mcp_simple_surface_actions import compact_resource_result
-from app.services.context_cue_service import context_cues_for_query
+from app.services.context_cue_service import context_cues_for_query, context_cues_for_state
 from app.services.evidence_classification_service import classify_evidence_items
 from app.services.mcp_workflow_specs import (
     list_mailbox_forms_for_state,
@@ -665,6 +665,64 @@ def test_context_cues_for_query_remind_post_commit_checkpoint() -> None:
     assert cues[0]["cue"] == "law:checkpoint_after_work_slice"
     assert cues[0]["severity"] == "P0"
     assert "full_text" not in cues[0]
+
+
+def test_context_cues_can_include_governed_canonical_laws_before_bootstrap_cues() -> None:
+    cues = context_cues_for_state(
+        state="planning",
+        project="sloplesscode",
+        governed_laws=[
+            {
+                "id": "law-meta-1",
+                "project": "sloplesscode",
+                "scope": "meta",
+                "status": "active",
+                "title": "Fix causes, not symptoms",
+                "statement": "Fix the general mechanism behind the observed incident.",
+                "rationale": "Root-cause fixes prevent repeated failures.",
+                "tags": ["canonical", "root-cause"],
+            }
+        ],
+    )
+
+    assert cues[0]["cue"] == "law:sloplesscode:law-meta-1"
+    assert cues[0]["authority_layer"] == "canonical_principle"
+    assert cues[0]["source"] == "governed_law_db"
+    assert cues[0]["expand_ref"] == "law:sloplesscode:law-meta-1"
+    assert "full_text" not in cues[0]
+
+
+def test_context_cues_distinguish_project_laws_from_canonical_principles() -> None:
+    cues = context_cues_for_query(
+        query="project agnostic product scope root cause",
+        project="sloplesscode",
+        governed_laws=[
+            {
+                "id": "law-project-1",
+                "project": "sloplesscode",
+                "scope": "project",
+                "status": "active",
+                "title": "System serves arbitrary governed projects",
+                "statement": "SloplessCode helps arbitrary governed projects, not only itself.",
+                "rationale": "Avoid project-local overfitting.",
+                "tags": ["product-scope"],
+            },
+            {
+                "id": "law-meta-1",
+                "project": "sloplesscode",
+                "scope": "meta",
+                "status": "active",
+                "title": "Solve the general class through the particular case",
+                "statement": "Use particular examples to validate the general rule.",
+                "rationale": "Avoid hardcoding individual cases.",
+                "tags": ["canonical", "root-cause"],
+            },
+        ],
+    )
+
+    layers = {cue["cue"]: cue.get("authority_layer") for cue in cues}
+    assert layers["law:sloplesscode:law-project-1"] == "project_rule"
+    assert layers["law:sloplesscode:law-meta-1"] == "canonical_principle"
 
 
 async def test_context_cue_ref_expands_full_text() -> None:

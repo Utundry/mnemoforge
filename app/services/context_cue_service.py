@@ -25,7 +25,7 @@ def _all_cues() -> list[dict[str, Any]]:
 
 
 def _public_cue(cue: dict[str, Any], *, reason: str) -> dict[str, Any]:
-    return {
+    payload = {
         "cue": cue.get("id"),
         "severity": cue.get("severity"),
         "title": cue.get("title"),
@@ -33,6 +33,10 @@ def _public_cue(cue: dict[str, Any], *, reason: str) -> dict[str, Any]:
         "reason": reason,
         "expand_ref": cue.get("expand_ref") or f"cue:{cue.get('id')}",
     }
+    for key in ("authority_layer", "source"):
+        if cue.get(key) not in (None, "", []):
+            payload[key] = cue.get(key)
+    return payload
 
 
 def context_cues_for_state(
@@ -40,11 +44,20 @@ def context_cues_for_state(
     state: str,
     project: str = "",
     max_cues: int | None = None,
+    governed_laws: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
-    del project  # Project-acquired cues can be merged here in a later slice.
     state_text = _clean_text(state)
     limit = max_cues or int(_cue_spec().get("default_max_cues") or 5)
     selected: list[dict[str, Any]] = []
+    selected.extend(
+        _public_cue(cue, reason=f"governed_law:{state_text}")
+        for cue in governed_law_cues(
+            governed_laws or [],
+            project=project,
+            state=state_text,
+            limit=limit,
+        )
+    )
     for cue in _all_cues():
         scopes = {_clean_text(item) for item in cue.get("scope") or []}
         cue_id = str(cue.get("id") or "").strip()
@@ -63,13 +76,21 @@ def context_cues_for_query(
     project: str = "",
     state: str = "",
     max_cues: int | None = None,
+    governed_laws: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
-    del project  # Project-acquired cues can be merged here in a later slice.
     text = _clean_text(query)
     if not text:
         return []
     limit = max_cues or int(_cue_spec().get("default_max_cues") or 5)
     scored: list[tuple[int, dict[str, Any]]] = []
+    for cue in governed_law_cues(governed_laws or [], project=project, state=state, limit=limit):
+        haystack = _clean_text(" ".join(str(cue.get(key) or "") for key in ("title", "summary", "full_text")))
+        terms = [_clean_text(term) for term in cue.get("trigger_terms") or []]
+        score = sum(1 for term in terms if term and term in text)
+        if not score and any(token and token in haystack for token in text.split()):
+            score = 1
+        if score:
+            scored.append((score, cue))
     for cue in _all_cues():
         cue_id = str(cue.get("id") or "").strip()
         if state and cue_id and not stage_allows_block(cue_id, state=state):
@@ -80,6 +101,98 @@ def context_cues_for_query(
             scored.append((score, cue))
     scored.sort(key=lambda pair: (pair[0], str(pair[1].get("severity") or "")), reverse=True)
     return [_public_cue(cue, reason="query_trigger") for _, cue in scored[:limit]]
+
+
+def governed_law_cues(
+    laws: list[Any],
+    *,
+    project: str = "",
+    state: str = "",
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    for law in laws:
+        cue = governed_law_to_cue(law, current_project=project)
+        if not cue:
+            continue
+        if state and not _governed_law_allows_state(cue, state=state):
+            continue
+        selected.append(cue)
+        if limit and len(selected) >= limit:
+            break
+    return selected
+
+
+def governed_law_to_cue(law: Any, *, current_project: str = "") -> dict[str, Any] | None:
+    data = law if isinstance(law, dict) else getattr(law, "model_dump", lambda **_: {})()
+    if not isinstance(data, dict):
+        return None
+    status = _clean_text(data.get("status"))
+    if status not in {"active", "user_confirmed"}:
+        return None
+    law_id = str(data.get("id") or data.get("law_id") or "").strip()
+    if not law_id:
+        return None
+    scope = _clean_text(data.get("scope") or "project")
+    law_project = str(data.get("project") or "").strip()
+    title = str(data.get("title") or "Governed law").strip()
+    statement = str(data.get("statement") or data.get("summary") or "").strip()
+    rationale = str(data.get("rationale") or "").strip()
+    tags = [str(tag).strip() for tag in data.get("tags") or [] if str(tag).strip()]
+    ref = f"law:{law_project}:{law_id}" if law_project else f"law:{law_id}"
+    return {
+        "id": ref,
+        "severity": _governed_law_severity(tags=tags, scope=scope),
+        "authority_layer": _law_authority_layer(scope=scope, project=law_project, current_project=current_project, tags=tags),
+        "scope": [scope],
+        "title": title,
+        "summary": rationale or statement[:240],
+        "expand_ref": ref,
+        "trigger_terms": _governed_law_trigger_terms(title=title, statement=statement, rationale=rationale, tags=tags),
+        "full_text": statement,
+        "source": "governed_law_db",
+        "tags": tags,
+    }
+
+
+def _law_authority_layer(*, scope: str, project: str, current_project: str, tags: list[str]) -> str:
+    tag_text = " ".join(tags).casefold()
+    if scope in {"meta", "principle"} or "canonical" in tag_text:
+        return "canonical_principle"
+    if scope in {"domain", "family"}:
+        return "cross_project_rule"
+    if project and current_project and project == current_project:
+        return "project_rule"
+    if project:
+        return "external_project_rule"
+    return "governed_rule"
+
+
+def _governed_law_severity(*, tags: list[str], scope: str) -> str:
+    lowered = {tag.casefold() for tag in tags}
+    if "p0" in lowered or scope in {"meta", "principle"}:
+        return "P0"
+    if "p2" in lowered:
+        return "P2"
+    return "P1"
+
+
+def _governed_law_trigger_terms(*, title: str, statement: str, rationale: str, tags: list[str]) -> list[str]:
+    words = []
+    for text in (title, statement, rationale, " ".join(tags)):
+        words.extend(token for token in _clean_text(text).replace("_", " ").replace("-", " ").split() if len(token) > 3)
+    return list(dict.fromkeys(words))[:24]
+
+
+def _governed_law_allows_state(cue: dict[str, Any], *, state: str) -> bool:
+    tags = {_clean_text(tag) for tag in cue.get("tags") or []}
+    state_text = _clean_text(state)
+    explicit_states = {
+        tag.split(":", 1)[1]
+        for tag in tags
+        if tag.startswith("stage:") or tag.startswith("state:")
+    }
+    return not explicit_states or state_text in explicit_states
 
 
 def expand_context_cue(ref: str, *, project: str = "", state: str = "") -> dict[str, Any] | None:

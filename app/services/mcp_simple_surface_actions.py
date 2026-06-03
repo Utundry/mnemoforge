@@ -13,6 +13,7 @@ from app.services.planning_advisor_service import task_framing_gaps_from_context
 
 
 SessionIdentityCallback = Callable[[str | None], Awaitable[dict[str, str]]]
+GetCallback = Callable[[str, str], Awaitable[dict[str, Any]]]
 RefResolverCallback = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any] | None]]
 QueryResolverCallback = Callable[[str, dict[str, Any], str | None], Awaitable[dict[str, Any] | None]]
 SubmitCallback = Callable[[dict[str, Any], dict[str, Any], str, str | None], Awaitable[dict[str, Any]]]
@@ -21,6 +22,7 @@ ToolSurfaceRoleCallback = Callable[[str], str]
 
 @dataclass(frozen=True)
 class SimpleSurfaceDependencies:
+    get: GetCallback
     get_session_identity_defaults: SessionIdentityCallback
     resolve_public_ref: RefResolverCallback
     resolve_query: QueryResolverCallback
@@ -78,6 +80,7 @@ def build_simple_help_response(args: dict[str, Any]) -> dict[str, Any]:
 
 async def build_simple_state_response(
     *,
+    api_base: str,
     args: dict[str, Any],
     dependencies: SimpleSurfaceDependencies,
     session_id: str | None = None,
@@ -93,8 +96,10 @@ async def build_simple_state_response(
             "detail": str(scoped_args.get("detail") or "compact"),
         },
         session_id=session_id,
+        api_base=api_base,
         dependencies=MailboxReadDependencies(
-            get_session_identity_defaults=dependencies.get_session_identity_defaults
+            get_session_identity_defaults=dependencies.get_session_identity_defaults,
+            get=dependencies.get,
         ),
     )
     data["simple_interface"] = {
@@ -128,7 +133,8 @@ async def build_simple_get_response(
                 args=get_args,
                 session_id=session_id,
                 dependencies=MailboxReadDependencies(
-                    get_session_identity_defaults=dependencies.get_session_identity_defaults
+                    get_session_identity_defaults=dependencies.get_session_identity_defaults,
+                    get=dependencies.get,
                 ),
             )
         data["simple_interface"] = {"tool": "get", "mode": "ref"}

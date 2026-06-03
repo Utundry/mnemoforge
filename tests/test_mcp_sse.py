@@ -3062,6 +3062,53 @@ class TestMcpToolExecution:
         assert result["result"]["task_id"] == "task-123"
         assert result["result"]["title"] == "Auto format task."
 
+    async def test_simple_state_merges_governed_law_cues_from_laws_endpoint(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {
+                "items": [
+                    {
+                        "id": "law-meta-1",
+                        "project": "alpha",
+                        "scope": "meta",
+                        "status": "active",
+                        "title": "Fix causes, not symptoms",
+                        "statement": "Fix the general mechanism behind the observed incident.",
+                        "rationale": "Root-cause fixes prevent repeated failures.",
+                        "tags": ["canonical", "root-cause"],
+                    },
+                    {
+                        "id": "law-project-1",
+                        "project": "alpha",
+                        "scope": "project",
+                        "status": "active",
+                        "title": "Project-specific runtime contour",
+                        "statement": "This project resolves verification contour from governed data.",
+                        "rationale": "Project runtime details are local data.",
+                        "tags": ["runtime-policy"],
+                    },
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "state",
+                {"project": "alpha", "state": "planning", "runtime_profile_id": "unknown_cli"},
+                "http://test",
+            )
+        )
+
+        assert seen["path"] == "/laws?project=alpha&status=active&include_promoted=true&limit=20"
+        cues = result["context_cues"]
+        layers = {cue["cue"]: cue.get("authority_layer") for cue in cues}
+        assert layers["law:alpha:law-meta-1"] == "canonical_principle"
+        assert layers["law:alpha:law-project-1"] == "project_rule"
+        assert all("full_text" not in cue for cue in cues)
+
     async def test_simple_get_query_uses_memory_search_for_generic_semantic_reads(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
 

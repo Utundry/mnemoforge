@@ -73,6 +73,7 @@ def build_mailbox_state_packet(
     runtime_profile_id: str = "unknown_cli",
     diagnostic: bool = False,
     detail: str = "compact",
+    governed_laws: list[Any] | None = None,
     spec_root: Path = DEFAULT_SPEC_ROOT,
 ) -> dict[str, Any]:
     state_spec = load_state_spec(state, spec_root=spec_root)
@@ -111,7 +112,7 @@ def build_mailbox_state_packet(
         "state": state_spec.id,
         "project": project,
         "instruction": state_spec.purpose,
-        "context_cues": context_cues_for_state(state=state_spec.id, project=project),
+        "context_cues": context_cues_for_state(state=state_spec.id, project=project, governed_laws=governed_laws),
         "forms": [_public_form_payload(form) for form in forms],
         "hidden_forms": hidden_form_ids,
         "warnings": warnings,
