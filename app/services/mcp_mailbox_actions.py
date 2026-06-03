@@ -231,15 +231,6 @@ async def mailbox_get_task_context(
         result = json.loads(raw)
     except Exception:
         result = {"status": "ok", "text": raw}
-    if isinstance(result, dict):
-        result["verification_policy"] = await _build_public_verification_policy(
-            result=result,
-            project=project,
-            task_id=task_id,
-            api_base=api_base,
-            dependencies=dependencies,
-            session_id=session_id,
-        )
     actual_metadata = {"result_kind": "state_data", "mutation": False, "internal_tool": "pull_task_context"}
     health = evaluate_mailbox_postconditions(form, actual_metadata)
     receipt = {
@@ -510,6 +501,18 @@ async def mailbox_start_task(
     reclaim = _start_task_reclaim_payload(result=result, previous_lease=previous_lease)
     reclaimed_after_ttl = reclaim.get("reason") == "previous_lease_expired"
     resumed = bool(result.get("work_session_resumed"))
+    work_guidance = {
+        "message": "Begin work; remember the project-specific execution policy before implementation and verification.",
+        "verification_policy": await _build_public_verification_policy(
+            result=result,
+            project=project,
+            task_id=str(payload["task_id"]),
+            api_base=api_base,
+            dependencies=dependencies,
+            session_id=session_id,
+        ),
+        "checkpoint_reminder": "After a meaningful work slice, submit record_progress; when closing claimed work, submit finish_task.",
+    }
     receipt = {
         "status": "reclaimed_after_ttl" if reclaimed_after_ttl else "started",
         "form_id": form.id,
@@ -527,6 +530,7 @@ async def mailbox_start_task(
         "work_session_resumed": resumed,
         "reclaim": reclaim,
         "auto_heartbeat": result.get("auto_heartbeat"),
+        "work_guidance": work_guidance,
         "next_state": "implementation",
         "next_forms": ["record_progress", "finish_task", "release_task_claim"],
         "next_safe_action": "Continue implementation, then submit record_progress or finish_task through mailbox.",
