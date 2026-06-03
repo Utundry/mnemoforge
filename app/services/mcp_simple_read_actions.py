@@ -18,6 +18,7 @@ from app.services.context_cue_service import expand_context_cue
 from app.services.memory_store import get_memory_store
 from app.services.planning_advisor_service import build_next_work_advisor, is_planning_advisor_query
 from app.services.stage_applicability_service import stage_applicability_metadata
+from app.services.mcp_workflow_specs import load_named_json_spec
 
 
 GetCallback = Callable[[str, str], Awaitable[Any]]
@@ -491,6 +492,34 @@ async def build_simple_get_query_response(
             "next_safe_action": "Use these aliases as compatibility names; do not rewrite stored refs without rename_project/apply review.",
             "details_available": True,
         }
+    if explicit_storage_trust_query(query):
+        storage_path = "/admin/storage-trust"
+        if project:
+            storage_path = f"{storage_path}?project={quote(project, safe='')}"
+        data = await dependencies.get(api_base, storage_path)
+        result = data if isinstance(data, dict) else {}
+        if not _full_detail_requested(args):
+            result = compact_storage_trust_query_result(result)
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Natural read query resolved through storage trust.",
+                "resource_kind": "storage_trust",
+                "next_safe_action": (
+                    "Review storage trust warnings as system maintenance context; "
+                    "do not treat hygiene cleanup as current-project work unless explicitly promoted."
+                ),
+            },
+            "result": result,
+            "simple_interface": {"tool": "get", "mode": "query", "route": "storage_trust"},
+            "next_safe_action": (
+                "Review storage trust warnings as system maintenance context; "
+                "do not treat hygiene cleanup as current-project work unless explicitly promoted."
+            ),
+            "details_available": True,
+        }
     memory_lookup_id = explicit_memory_lookup_id(query)
     if memory_lookup_id:
         if not project:
@@ -908,6 +937,55 @@ def explicit_project_alias_project(query: str) -> str:
     return "" if value.casefold() in stop_values else value
 
 
+def _simple_get_route_spec() -> dict[str, Any]:
+    try:
+        return load_named_json_spec("search/simple_get_routes.json")
+    except Exception:
+        return {}
+
+
+def explicit_storage_trust_query(query: str) -> bool:
+    text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
+    for route in (_simple_get_route_spec().get("routes") or []):
+        if not isinstance(route, dict) or str(route.get("id") or "") != "storage_trust":
+            continue
+        return any(str(term or "").casefold() in text for term in route.get("trigger_terms") or [])
+    return False
+
+
+def compact_storage_trust_query_result(result: dict[str, Any]) -> dict[str, Any]:
+    signals = result.get("signals") if isinstance(result.get("signals"), dict) else {}
+    hygiene = result.get("data_hygiene") if isinstance(result.get("data_hygiene"), dict) else {}
+    playbook = result.get("playbook") if isinstance(result.get("playbook"), dict) else {}
+    workflow = playbook.get("workflow") if isinstance(playbook.get("workflow"), dict) else {}
+    scope_summary = hygiene.get("scope_summary") if isinstance(hygiene.get("scope_summary"), dict) else {}
+    workflow_scope = workflow.get("scope_summary") if isinstance(workflow.get("scope_summary"), dict) else {}
+    compact = {
+        "status": result.get("status"),
+        "summary": result.get("summary"),
+        "signals": {
+            key: signals.get(key)
+            for key in (
+                "degraded_slices",
+                "active_hygiene_findings",
+                "manual_review_pending",
+                "quarantine_candidates",
+                "delete_ready",
+                "hygiene_scope_warnings",
+            )
+            if signals.get(key) not in (None, "", [], {})
+        },
+        "data_hygiene": {
+            key: hygiene.get(key)
+            for key in ("status", "active_findings", "scope_summary")
+            if hygiene.get(key) not in (None, "", [], {})
+        },
+        "workflow_scope": workflow_scope or scope_summary,
+        "next_actions": list(result.get("next_actions") or [])[:5],
+    }
+    return {key: value for key, value in compact.items() if value not in (None, "", [], {})}
+
+
 def compact_project_alias_results(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         return {"aliases": []}
@@ -1060,6 +1138,10 @@ def _response_format(args: dict[str, Any]) -> str:
     if requested in {"diagnostic", "answer"}:
         return requested
     return "json"
+
+
+def _full_detail_requested(args: dict[str, Any]) -> bool:
+    return str(args.get("detail") or "compact").strip().lower() == "full" or bool(args.get("diagnostic", False))
 
 
 def _public_ref_envelope(

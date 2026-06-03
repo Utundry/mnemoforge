@@ -3128,6 +3128,66 @@ class TestMcpToolExecution:
         assert result["simple_interface"]["route"] == "memory_search"
         assert posted[0][1]["query"] == "search memories for TTL reclaim receipt"
 
+    async def test_simple_get_query_routes_storage_trust_through_public_read_surface(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {
+                "status": "warning",
+                "summary": "Storage trust is warning: storage is reachable, but hygiene issues still require operator review.",
+                "signals": {
+                    "active_hygiene_findings": 30,
+                    "hygiene_scope_warnings": [
+                        "Hygiene findings may include records outside the current project."
+                    ],
+                    "manual_review_pending": {"synthetic_test": 7},
+                    "quarantine_candidates": {},
+                    "delete_ready": {},
+                },
+                "data_hygiene": {
+                    "status": "warning",
+                    "active_findings": 30,
+                    "scope_summary": {
+                        "current_project": "alpha",
+                        "warnings": ["Hygiene findings may include records outside the current project."],
+                    },
+                },
+                "playbook": {
+                    "workflow": {
+                        "scope_summary": {
+                            "current_project": "alpha",
+                            "relation_counts": {"outside_current_project": 29, "current_project": 1},
+                        }
+                    }
+                },
+                "next_actions": ["Review hygiene scope warnings before presenting maintenance as current-project work."],
+            }
+
+        async def forbidden_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("storage trust query should not route through memory_search")
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("storage trust query should not route through ask_project")
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", forbidden_post)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "storage trust data hygiene status", "limit": 5},
+                "http://test",
+            )
+        )
+
+        assert seen["path"] == "/admin/storage-trust?project=alpha"
+        assert result["receipt"]["resource_kind"] == "storage_trust"
+        assert result["result"]["status"] == "warning"
+        assert result["result"]["signals"]["active_hygiene_findings"] == 30
+        assert result["result"]["workflow_scope"]["current_project"] == "alpha"
+
     async def test_simple_get_query_lists_improvements_via_artifact_surface(self, monkeypatch):
         seen: dict[str, str] = {}
 

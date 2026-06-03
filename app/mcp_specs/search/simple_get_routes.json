@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "purpose": "Declarative canonical topic routes for public get(query) before generic memory search or project expert fallback.",
+  "routes": [
+    {
+      "id": "storage_trust",
+      "resource_kind": "storage_trust",
+      "trigger_terms": [
+        "storage trust",
+        "storage health",
+        "data hygiene",
+        "hygiene status",
+        "cleanup pressure",
+        "cleanup status",
+        "storage diagnostics",
+        "data integrity",
+        "governance duplicates"
+      ],
+      "endpoint": "/admin/storage-trust",
+      "scope": "system_with_current_project_context"
+    }
+  ]
+}
