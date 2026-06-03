@@ -2,6 +2,7 @@ import pytest
 
 from app.services.data_hygiene_service import apply_approved_delete, apply_reviewed_delete, classify_memory_payload
 from app.services.data_hygiene_service import (
+    detect_governance_duplicate_review_packets,
     get_data_hygiene_store,
     is_auto_test_cleanup_candidate,
     promote_auto_test_cleanup_candidates,
@@ -1604,6 +1605,91 @@ def test_auto_test_cleanup_candidate_detection_prefers_explicit_markers():
             "details": {"source": "production-pipeline", "tags": ["entity:task"]},
         }
     ) is False
+
+
+def test_governance_duplicate_detector_builds_non_destructive_review_packet():
+    packets = detect_governance_duplicate_review_packets(
+        [
+            {
+                "store_name": "qdrant_memories",
+                "record_locator": "law-project",
+                "payload": {
+                    "category": "law",
+                    "title": "Use MCP before code",
+                    "statement": "Agents must check governed project memory before editing code.",
+                    "project": "sloplesscode",
+                    "scope": "project",
+                    "status": "active",
+                    "tags": ["law", "project:sloplesscode"],
+                },
+            },
+            {
+                "store_name": "qdrant_memories",
+                "record_locator": "law-meta",
+                "payload": {
+                    "category": "law",
+                    "title": "Use MCP before code",
+                    "statement": "Agents must check governed project memory before editing code.",
+                    "project": "",
+                    "scope": "meta",
+                    "status": "active",
+                    "tags": ["law"],
+                },
+            },
+        ],
+        current_project="sloplesscode",
+    )
+
+    assert len(packets) == 1
+    packet = packets[0]
+    assert packet["suspicion_type"] == "project_law_covered_by_promoted_law"
+    assert packet["record_count"] == 2
+    assert packet["safety"]["auto_merge_allowed"] is False
+    assert packet["safety"]["auto_delete_allowed"] is False
+    assert packet["scope_summary"]["by_relation"]["current_project"] == 1
+    assert packet["scope_summary"]["by_relation"]["system_or_unknown_scope"] == 1
+
+
+@pytest.mark.asyncio
+async def test_governance_duplicate_findings_are_manual_review_items(client):
+    store = get_data_hygiene_store()
+    store.upsert_finding(
+        finding_id="governance-dup-1",
+        store_name="qdrant_memories",
+        record_locator="law-project",
+        dataset_class="governance_duplicate",
+        recommended_action="operator-review",
+        exclude_from_learning=True,
+        confidence=0.86,
+        reasons=[
+            "project_law_covered_by_promoted_law",
+            "requires_operator_review:no_silent_merge_or_delete",
+        ],
+        details={
+            "category": "law",
+            "project": "sloplesscode",
+            "scope": "project",
+            "review_packet": {
+                "safety": {
+                    "auto_merge_allowed": False,
+                    "auto_delete_allowed": False,
+                }
+            },
+        },
+    )
+
+    manual_resp = await client.get("/api/v1/admin/data-hygiene/manual-review")
+    assert manual_resp.status_code == 200, manual_resp.text
+    item = next(row for row in manual_resp.json()["items"] if row["finding_id"] == "governance-dup-1")
+    assert item["dataset_class"] == "governance_duplicate"
+    assert item["recommended_action"] == "operator-review"
+    assert item["details"]["review_packet"]["safety"]["auto_merge_allowed"] is False
+
+    workflow_resp = await client.get("/api/v1/admin/data-hygiene/workflow?project=sloplesscode")
+    assert workflow_resp.status_code == 200, workflow_resp.text
+    workflow = workflow_resp.json()
+    assert workflow["manual_review_pending"]["governance_duplicate"] >= 1
+    assert workflow["scope_summary"]["by_relation"]["current_project"] >= 1
 
 
 def test_promote_auto_test_cleanup_candidates_sets_delete_ready_statuses():

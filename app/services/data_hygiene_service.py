@@ -5,6 +5,7 @@ import logging
 import re
 import sqlite3
 import time
+import hashlib
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -188,7 +189,15 @@ DATASET_POLICY_REGISTRY: dict[str, dict[str, Any]] = {
         "manual_review_required": False,
         "description": "Outdated operational guidance should not feed agent learning or hot retrieval.",
     },
+    "governance_duplicate": {
+        "retention": "review",
+        "learning_mode": "blocked",
+        "auto_remediate": False,
+        "manual_review_required": True,
+        "description": "Potential duplicate or superseded governance artifacts require operator review; never merge or delete silently.",
+    },
 }
+_GOVERNANCE_PROMOTED_SCOPES = {"family", "domain", "principle", "meta"}
 
 
 def _loads_json(raw: str | None, default: Any) -> Any:
@@ -638,6 +647,120 @@ def build_hygiene_scope_summary(
         "by_project": by_project,
         "warnings": warnings,
     }
+
+
+def _normalized_governance_text(value: Any) -> str:
+    text = re.sub(r"\s+", " ", str(value or "").strip().casefold())
+    text = re.sub(r"[^a-z0-9а-яё ]+", "", text)
+    return text.strip()
+
+
+def _is_law_like_payload(payload: dict[str, Any]) -> bool:
+    category = str(payload.get("category") or "").strip().lower()
+    source = str(payload.get("source") or "").strip().lower()
+    tags = [str(tag).strip().lower() for tag in (payload.get("tags") or [])]
+    entity_type = str(payload.get("entity_type") or "").strip().lower()
+    return bool(
+        category == "law"
+        or entity_type == "project_law"
+        or source == "project-law"
+        or "law" in tags
+        or "entity:law" in tags
+    )
+
+
+def _governance_record_signature(record: dict[str, Any]) -> str:
+    payload = record.get("payload") or record
+    statement = (
+        payload.get("statement")
+        or payload.get("content")
+        or payload.get("title")
+        or ""
+    )
+    return _normalized_governance_text(statement)
+
+
+def detect_governance_duplicate_review_packets(
+    records: list[dict[str, Any]],
+    *,
+    current_project: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        payload = record.get("payload") or record
+        if not _is_law_like_payload(payload):
+            continue
+        signature = _governance_record_signature(record)
+        if len(signature) < 24:
+            continue
+        grouped.setdefault(signature, []).append(record)
+
+    packets: list[dict[str, Any]] = []
+    for signature, items in grouped.items():
+        if len(items) < 2:
+            continue
+        projects = _unique_nonempty([
+            str((item.get("payload") or item).get("project") or "")
+            for item in items
+        ])
+        scopes = _unique_nonempty([
+            str((item.get("payload") or item).get("scope") or "")
+            for item in items
+        ])
+        has_promoted = any(scope in _GOVERNANCE_PROMOTED_SCOPES for scope in scopes)
+        has_project_local = any(scope == "project" for scope in scopes)
+        suspicion_type = (
+            "project_law_covered_by_promoted_law"
+            if has_promoted and has_project_local
+            else "duplicate_governance_artifact"
+        )
+        signature_hash = hashlib.sha256(signature.encode("utf-8")).hexdigest()[:16]
+        sample_records = []
+        for item in items[:10]:
+            payload = item.get("payload") or item
+            sample_records.append({
+                "store_name": str(item.get("store_name") or "qdrant_memories"),
+                "record_locator": str(item.get("record_locator") or item.get("id") or ""),
+                "title": str(payload.get("title") or "")[:256],
+                "project": str(payload.get("project") or ""),
+                "scope": str(payload.get("scope") or ""),
+                "status": str(payload.get("status") or ""),
+            })
+        scope_summary = build_hygiene_scope_summary(
+            [
+                {
+                    "finding_id": str(row.get("record_locator") or ""),
+                    "details": {
+                        "project": str(row.get("project") or ""),
+                        "tags": [f"project:{row.get('project')}"] if row.get("project") else [],
+                    },
+                    "reasons": [],
+                }
+                for row in sample_records
+            ],
+            current_project=current_project,
+        )
+        packets.append({
+            "review_packet_id": f"governance-duplicate:{signature_hash}",
+            "signature_hash": signature_hash,
+            "suspicion_type": suspicion_type,
+            "record_count": len(items),
+            "projects": projects,
+            "scopes": scopes,
+            "scope_summary": scope_summary,
+            "sample_records": sample_records,
+            "recommended_action": "operator_review",
+            "safety": {
+                "auto_merge_allowed": False,
+                "auto_delete_allowed": False,
+                "why": "Duplicate governance artifacts can encode authority conflicts; resolve only through reviewed supersede/suppress decisions.",
+            },
+        })
+        if len(packets) >= limit:
+            break
+    packets.sort(key=lambda item: (-int(item.get("record_count") or 0), str(item.get("suspicion_type") or "")))
+    return packets
 
 
 class DataHygieneStore:
@@ -1159,6 +1282,7 @@ async def run_data_hygiene_audit(
     resolved_stale_findings = 0
     memory_scan_source = "qdrant"
     qdrant_scan_error = ""
+    governance_records: list[dict[str, Any]] = []
 
     async def _payload_from_store(memory_id: str) -> dict[str, Any] | None:
         row = await get_memory_store().get(memory_id)
@@ -1281,6 +1405,12 @@ async def run_data_hygiene_audit(
                 if payload is None:
                     continue
                 scanned_memories += 1
+                if _is_law_like_payload(payload):
+                    governance_records.append({
+                        "store_name": "qdrant_memories",
+                        "record_locator": str(point.id),
+                        "payload": payload,
+                    })
                 result = classify_memory_payload(payload)
                 classified[result["dataset_class"]] = classified.get(result["dataset_class"], 0) + 1
                 actions[result["recommended_action"]] = actions.get(result["recommended_action"], 0) + 1
@@ -1326,12 +1456,18 @@ async def run_data_hygiene_audit(
             payload = dict(metadata)
             payload.setdefault("category", metadata.get("category") or row.get("category") or "")
             payload.setdefault("content", row.get("content") or "")
+            locator = str(row.get("memory_id") or "")
+            if _is_law_like_payload(payload):
+                governance_records.append({
+                    "store_name": "qdrant_memories",
+                    "record_locator": locator,
+                    "payload": payload,
+                })
             result = classify_memory_payload(payload)
             classified[result["dataset_class"]] = classified.get(result["dataset_class"], 0) + 1
             actions[result["recommended_action"]] = actions.get(result["recommended_action"], 0) + 1
             if result["recommended_action"] != "keep":
                 policy = policy_for_dataset_class(result["dataset_class"])
-                locator = str(row.get("memory_id") or "")
                 store.upsert_finding(
                     finding_id=f"qdrant:{locator}:{result['dataset_class']}",
                     store_name="qdrant_memories",
@@ -1352,12 +1488,46 @@ async def run_data_hygiene_audit(
                 )
                 findings_count += 1
             else:
-                locator = str(row.get("memory_id") or "")
                 resolved_stale_findings += store.resolve_open_findings_for_record(
                     store_name="qdrant_memories",
                     record_locator=locator,
                     reason=f"current_classification_keep:{result['dataset_class']}",
                 )
+
+    governance_duplicate_packets = detect_governance_duplicate_review_packets(governance_records)
+    governance_duplicate_findings = 0
+    for packet in governance_duplicate_packets:
+        signature_hash = str(packet.get("signature_hash") or "")
+        for sample in packet.get("sample_records") or []:
+            locator = str(sample.get("record_locator") or "")
+            if not locator:
+                continue
+            store.upsert_finding(
+                finding_id=f"governance_duplicate:{signature_hash}:{locator}",
+                store_name=str(sample.get("store_name") or "qdrant_memories"),
+                record_locator=locator,
+                dataset_class="governance_duplicate",
+                recommended_action="operator-review",
+                exclude_from_learning=True,
+                confidence=0.86,
+                reasons=[
+                    str(packet.get("suspicion_type") or "duplicate_governance_artifact"),
+                    "requires_operator_review:no_silent_merge_or_delete",
+                ],
+                details={
+                    "category": "law",
+                    "project": sample.get("project", ""),
+                    "scope": sample.get("scope", ""),
+                    "title": sample.get("title", ""),
+                    "review_packet": packet,
+                    "policy": policy_for_dataset_class("governance_duplicate"),
+                },
+            )
+            governance_duplicate_findings += 1
+    if governance_duplicate_findings:
+        findings_count += governance_duplicate_findings
+        classified["governance_duplicate"] = classified.get("governance_duplicate", 0) + governance_duplicate_findings
+        actions["operator-review"] = actions.get("operator-review", 0) + governance_duplicate_findings
 
     events = await get_learning_store().list_events(
         limit=event_limit,
@@ -1417,6 +1587,8 @@ async def run_data_hygiene_audit(
         "scanned_events": scanned_events,
         "findings_count": findings_count,
         "resolved_stale_findings": resolved_stale_findings,
+        "governance_duplicate_packets": len(governance_duplicate_packets),
+        "governance_duplicate_findings": governance_duplicate_findings,
         "memory_scan_source": memory_scan_source,
         "qdrant_scan_start_offset": qdrant_offset,
         "qdrant_scan_next_offset": offset if not qdrant_wrapped else None,
