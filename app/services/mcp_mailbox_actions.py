@@ -21,6 +21,7 @@ from app.services.mcp_simple_read_actions import (
     compact_public_ref_matches,
     resolve_public_artifact_short_ref,
 )
+from app.services.stage_applicability_service import stage_allows_block
 from app.services.public_ref_index import AmbiguousPublicRefError, is_short_public_id
 from app.services.route_pattern_store import get_route_pattern_store
 
@@ -312,6 +313,37 @@ async def _build_public_verification_policy(
     )
 
 
+async def _build_start_task_work_guidance(
+    *,
+    result: dict[str, Any],
+    project: str,
+    task_id: str,
+    api_base: str,
+    dependencies: MailboxActionDependencies,
+    session_id: str | None,
+    guidance_stage: str = "implementation",
+) -> dict[str, Any]:
+    if not stage_allows_block("work_guidance", state=guidance_stage):
+        return {}
+    guidance: dict[str, Any] = {
+        "message": "Begin work; remember the project-specific execution policy before implementation and verification.",
+    }
+    if stage_allows_block("verification_policy", state=guidance_stage):
+        guidance["verification_policy"] = await _build_public_verification_policy(
+            result=result,
+            project=project,
+            task_id=task_id,
+            api_base=api_base,
+            dependencies=dependencies,
+            session_id=session_id,
+        )
+    if stage_allows_block("checkpoint_reminder", state=guidance_stage):
+        guidance["checkpoint_reminder"] = (
+            "After a meaningful work slice, submit record_progress; when closing claimed work, submit finish_task."
+        )
+    return _compact(guidance)
+
+
 def _compact_rule_refs(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -501,18 +533,14 @@ async def mailbox_start_task(
     reclaim = _start_task_reclaim_payload(result=result, previous_lease=previous_lease)
     reclaimed_after_ttl = reclaim.get("reason") == "previous_lease_expired"
     resumed = bool(result.get("work_session_resumed"))
-    work_guidance = {
-        "message": "Begin work; remember the project-specific execution policy before implementation and verification.",
-        "verification_policy": await _build_public_verification_policy(
-            result=result,
-            project=project,
-            task_id=str(payload["task_id"]),
-            api_base=api_base,
-            dependencies=dependencies,
-            session_id=session_id,
-        ),
-        "checkpoint_reminder": "After a meaningful work slice, submit record_progress; when closing claimed work, submit finish_task.",
-    }
+    work_guidance = await _build_start_task_work_guidance(
+        result=result,
+        project=project,
+        task_id=str(payload["task_id"]),
+        api_base=api_base,
+        dependencies=dependencies,
+        session_id=session_id,
+    )
     receipt = {
         "status": "reclaimed_after_ttl" if reclaimed_after_ttl else "started",
         "form_id": form.id,

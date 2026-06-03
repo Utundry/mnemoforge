@@ -7,6 +7,21 @@
       "show_in": ["planning", "framing", "implementation", "checkpointing"],
       "hide_in": ["verification", "live_validation", "handoff", "operator_review"],
       "why": "Task framing gaps are useful before or during implementation, but become noise once the task is in verification or handoff."
+    },
+    "work_guidance": {
+      "show_in": ["implementation", "checkpointing", "verification", "live_validation"],
+      "hide_in": ["planning", "framing", "operator_review"],
+      "why": "Execution reminders belong at the beginning of claimed work and during active work states, not during simple task lookup."
+    },
+    "verification_policy": {
+      "show_in": ["implementation", "verification", "live_validation"],
+      "hide_in": ["planning", "framing", "handoff", "operator_review"],
+      "why": "Verification policy becomes relevant when implementation is starting or verification is imminent."
+    },
+    "checkpoint_reminder": {
+      "show_in": ["implementation", "checkpointing", "handoff"],
+      "hide_in": ["planning", "framing", "operator_review"],
+      "why": "Checkpoint and closeout reminders are useful during active work and handoff."
     }
   }
 }

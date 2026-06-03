@@ -743,6 +743,9 @@ def test_task_compact_resource_hides_framing_gaps_outside_planning_stage() -> No
 def test_stage_applicability_contract_scopes_response_blocks() -> None:
     assert stage_allows_block("task_framing_gaps", state="planning") is True
     assert stage_allows_block("task_framing_gaps", state="live_validation") is False
+    assert stage_allows_block("work_guidance", state="planning") is False
+    assert stage_allows_block("work_guidance", state="implementation") is True
+    assert stage_allows_block("verification_policy", state="handoff") is False
     assert stage_allows_block("unknown_public_block", state="verification") is True
 
 
