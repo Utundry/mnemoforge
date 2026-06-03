@@ -60,6 +60,10 @@ async def test_task_execution_context_for_server_verification_returns_scoped_rul
     assert "Docker Test Contour" in required_titles
     assert "Agent Internal Text Uses English" in required_titles
     assert "Dev Server Restart Is Agent-Managed" in recommended_titles
+    docker_rule = next(item for item in data["required_rules"] if item["title"] == "Docker Test Contour")
+    assert docker_rule["ref"].startswith("law:alpha:")
+    assert docker_rule["expand_ref"] == docker_rule["ref"]
+    assert "statement" not in docker_rule
     assert any("host pytest" in item for item in data["risk_controls"])
     assert any("docker" in item.casefold() and "contour" in item.casefold() for item in data["risk_controls"])
     assert data["readiness"]["ready_to_enter"] is True

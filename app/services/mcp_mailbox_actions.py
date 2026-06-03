@@ -355,6 +355,8 @@ def _compact_rule_refs(value: Any) -> list[dict[str, Any]]:
             _compact(
                 {
                     "id": item.get("id") or item.get("law_id"),
+                    "ref": _rule_ref_from_item(item),
+                    "expand_ref": _rule_ref_from_item(item),
                     "title": item.get("title"),
                     "scope": item.get("scope"),
                     "topic_path": item.get("topic_path"),
@@ -365,6 +367,14 @@ def _compact_rule_refs(value: Any) -> list[dict[str, Any]]:
         if len(refs) >= 3:
             break
     return refs
+
+
+def _rule_ref_from_item(item: dict[str, Any]) -> str:
+    law_id = str(item.get("id") or item.get("law_id") or "").strip()
+    if not law_id:
+        return ""
+    project = str(item.get("project") or "").strip()
+    return f"law:{project}:{law_id}" if project else f"law:{law_id}"
 
 
 def public_lease_payload(lease: dict[str, Any] | None) -> dict[str, Any]:

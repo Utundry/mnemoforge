@@ -264,8 +264,11 @@ def _task_terms(body: TaskExecutionContextRequest) -> tuple[str, ...]:
 
 
 def _rule_ref(law: ProjectLawRecord, *, reason: str) -> TaskExecutionRuleRef:
+    ref = f"law:{law.project or ''}:{law.id}" if law.project else f"law:{law.id}"
     return TaskExecutionRuleRef(
         id=law.id,
+        ref=ref,
+        expand_ref=ref,
         title=law.title,
         scope=law.scope,
         status=law.status,

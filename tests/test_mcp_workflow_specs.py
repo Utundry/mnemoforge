@@ -751,6 +751,35 @@ async def test_rule_candidate_ref_reports_explicit_expansion_metadata() -> None:
     assert packet["result"]["stage_applicability"]["allowed_in_state"] is False
 
 
+def test_law_context_block_uses_compact_refs_before_full_text() -> None:
+    from datetime import datetime, timezone
+
+    from app.models.law import ProjectLawRecord
+    from app.services.law_service import build_law_context_block
+
+    block = build_law_context_block(
+        [
+            ProjectLawRecord(
+                id="law-1",
+                project="sloplesscode",
+                scope="project",
+                status="active",
+                title="Use MCP",
+                statement="Full law statement should be available through explicit expansion.",
+                rationale="Short reason for normal context packets.",
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                memory_id="law-1",
+            )
+        ]
+    )
+
+    assert "law:sloplesscode:law-1" in block
+    assert "Expand: law:sloplesscode:law-1" in block
+    assert "Summary: Short reason" in block
+    assert "Full law statement should be available" not in block
+
+
 async def test_next_work_advisor_surfaces_improvements_when_no_tasks() -> None:
     async def fake_get(_api_base: str, path: str):
         assert "/artifacts?" in path

@@ -34,6 +34,8 @@ class TaskExecutionContextRequest(BaseModel):
 
 class TaskExecutionRuleRef(BaseModel):
     id: str
+    ref: str = ""
+    expand_ref: str = ""
     title: str
     scope: str
     status: str

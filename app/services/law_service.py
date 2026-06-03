@@ -52,9 +52,12 @@ def build_law_context_block(laws: list[ProjectLawRecord]) -> str:
     lines = ["## Applicable Project Laws", ""]
     for law in laws:
         locality = "project-local" if law.is_project_local else law.scope
-        lines.append(f"- [{locality}] {law.title}: {law.statement}")
-        if law.rationale:
-            lines.append(f"  Why: {law.rationale}")
+        ref = f"law:{law.project or ''}:{law.id}" if law.project else f"law:{law.id}"
+        summary = law.rationale or law.statement
+        lines.append(f"- [{locality}] {law.title} ({ref})")
+        if summary:
+            lines.append(f"  Summary: {summary}")
+        lines.append(f"  Expand: {ref}")
     return "\n".join(lines)
 
 
