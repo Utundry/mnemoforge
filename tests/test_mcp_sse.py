@@ -2416,6 +2416,54 @@ class TestMcpToolExecution:
         assert data["result"]["title"] == "Make weak-model workflow safe."
         assert data["next_safe_action"] == "Review context before claiming."
 
+    async def test_mailbox_submit_get_task_context_surfaces_verification_policy(self, monkeypatch):
+        async def fake_pull_context(api_base: str, args: dict):
+            return {
+                "status": "ready",
+                "project": "alpha",
+                "task_id": "task-123",
+                "task": {"title": "Verify parser change.", "status": "planning"},
+                "next_safe_action": "Review context before claiming.",
+            }
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            assert path == "/task-execution-context"
+            assert payload["project"] == "alpha"
+            assert payload["state"] == "verification"
+            assert payload["include_tools"] is False
+            return {
+                "readiness": {"ready_to_enter": True, "missing_prerequisites": []},
+                "required_rules": [
+                    {
+                        "id": "law-1",
+                        "title": "Alpha Docker Test Contour",
+                        "scope": "project",
+                        "reason": "Matched required terms for state 'verification'.",
+                    }
+                ],
+                "recommended_rules": [],
+                "risk_controls": ["For this project, use the Docker-based verification contour described by project law."],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_pull_task_context_payload", fake_pull_context)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "form_id": "get_task_context",
+                "state": "planning",
+                "project": "alpha",
+                "payload": {"project": "alpha", "task_id": "task-123", "detail": "compact"},
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        policy = data["result"]["verification_policy"]
+        assert policy["status"] == "ready"
+        assert policy["required_rules"][0]["title"] == "Alpha Docker Test Contour"
+        assert "Docker-based verification contour" in policy["risk_controls"][0]
+
     async def test_mailbox_get_task_reference_recovers_weak_model_ref(self, monkeypatch):
         async def fake_pull_context(api_base: str, args: dict):
             assert args["project"] == "alpha"

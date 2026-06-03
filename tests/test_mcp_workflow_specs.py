@@ -719,6 +719,27 @@ def test_task_compact_resource_includes_spec_driven_framing_gaps() -> None:
     assert "definition of done" in compact["task_framing_gaps"][0]["recommended_action"].casefold()
 
 
+def test_task_compact_resource_preserves_verification_policy() -> None:
+    compact = compact_resource_result(
+        "task",
+        {
+            "project": "sloplesscode",
+            "task_id": "task-1",
+            "status": "ready",
+            "task": {"title": "Task with policy", "status": "planning"},
+            "verification_policy": {
+                "status": "ready",
+                "required_rules": [{"id": "law-1", "title": "Project test contour"}],
+                "risk_controls": ["Use the project-approved verification contour."],
+            },
+        },
+        tool_surface_role=lambda _tool: "public_entrypoint",
+    )
+
+    assert compact["verification_policy"]["status"] == "ready"
+    assert compact["verification_policy"]["required_rules"][0]["title"] == "Project test contour"
+
+
 def test_mailbox_state_full_detail_bypasses_minimal_packet_limit() -> None:
     packet = build_mailbox_state_packet(
         state="planning",

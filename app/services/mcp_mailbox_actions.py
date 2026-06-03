@@ -231,6 +231,15 @@ async def mailbox_get_task_context(
         result = json.loads(raw)
     except Exception:
         result = {"status": "ok", "text": raw}
+    if isinstance(result, dict):
+        result["verification_policy"] = await _build_public_verification_policy(
+            result=result,
+            project=project,
+            task_id=task_id,
+            api_base=api_base,
+            dependencies=dependencies,
+            session_id=session_id,
+        )
     actual_metadata = {"result_kind": "state_data", "mutation": False, "internal_tool": "pull_task_context"}
     health = evaluate_mailbox_postconditions(form, actual_metadata)
     receipt = {
@@ -252,6 +261,87 @@ async def mailbox_get_task_context(
     if diagnostic:
         packet["_internal"] = {"visibility": "internal", "actual_metadata": actual_metadata, "postcondition_health": health}
     return packet
+
+
+async def _build_public_verification_policy(
+    *,
+    result: dict[str, Any],
+    project: str,
+    task_id: str,
+    api_base: str,
+    dependencies: MailboxActionDependencies,
+    session_id: str | None,
+) -> dict[str, Any]:
+    task = result.get("task") if isinstance(result.get("task"), dict) else {}
+    task_title = str(task.get("title") or result.get("title") or task_id).strip()
+    try:
+        raw = await dependencies.execute_tool(
+            "get_task_execution_context",
+            {
+                "project": project,
+                "task_id": task_id,
+                "task": task_title,
+                "state": "verification",
+                "include_rules": True,
+                "include_tools": False,
+                "max_required_rules": 3,
+                "max_recommended_rules": 3,
+            },
+            api_base,
+            session_id,
+        )
+        context = json.loads(raw)
+    except Exception:
+        return {
+            "status": "unavailable",
+            "next_safe_action": "Request project verification context before executing checks.",
+        }
+    if not isinstance(context, dict):
+        return {
+            "status": "unavailable",
+            "next_safe_action": "Request project verification context before executing checks.",
+        }
+    readiness = context.get("readiness") if isinstance(context.get("readiness"), dict) else {}
+    return _compact(
+        {
+            "status": "ready" if readiness.get("ready_to_enter") else "needs_review",
+            "state": "verification",
+            "readiness": {
+                "ready_to_enter": readiness.get("ready_to_enter"),
+                "missing_prerequisites": readiness.get("missing_prerequisites") or [],
+                "required_actions": readiness.get("required_actions") or [],
+            }
+            if readiness
+            else None,
+            "required_rules": _compact_rule_refs(context.get("required_rules")),
+            "recommended_rules": _compact_rule_refs(context.get("recommended_rules")),
+            "risk_controls": list(context.get("risk_controls") or [])[:5] if isinstance(context.get("risk_controls"), list) else [],
+            "next_safe_action": "Use the project-approved verification contour before reporting success.",
+        }
+    )
+
+
+def _compact_rule_refs(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    refs: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        refs.append(
+            _compact(
+                {
+                    "id": item.get("id") or item.get("law_id"),
+                    "title": item.get("title"),
+                    "scope": item.get("scope"),
+                    "topic_path": item.get("topic_path"),
+                    "reason": item.get("reason"),
+                }
+            )
+        )
+        if len(refs) >= 3:
+            break
+    return refs
 
 
 def public_lease_payload(lease: dict[str, Any] | None) -> dict[str, Any]:
