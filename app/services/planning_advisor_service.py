@@ -5,6 +5,7 @@ from functools import lru_cache
 from typing import Any
 
 from app.services.mcp_workflow_specs import load_named_json_spec
+from app.services.stage_applicability_service import stage_allows_block
 
 
 @lru_cache(maxsize=1)
@@ -34,19 +35,8 @@ def _field_specs() -> dict[str, dict[str, Any]]:
     }
 
 
-def stage_allows_advisor_block(block_id: str, *, state: str) -> bool:
-    bindings = _advisor_spec().get("stage_bindings") if isinstance(_advisor_spec().get("stage_bindings"), dict) else {}
-    block = bindings.get(block_id) if isinstance(bindings.get(block_id), dict) else {}
-    state_text = _normalized_text(state)
-    hide_in = {_normalized_text(item) for item in block.get("hide_in") or []}
-    if state_text in hide_in:
-        return False
-    show_in = {_normalized_text(item) for item in block.get("show_in") or []}
-    return not show_in or state_text in show_in
-
-
 def task_framing_gaps_from_context(task_context: dict[str, Any], *, state: str = "planning") -> list[dict[str, Any]]:
-    if not stage_allows_advisor_block("task_framing_gaps", state=state):
+    if not stage_allows_block("task_framing_gaps", state=state):
         return []
     quality = task_context.get("task_statement_quality") if isinstance(task_context.get("task_statement_quality"), dict) else {}
     missing = [str(item).strip() for item in (quality.get("missing_artifacts") or []) if str(item).strip()]

@@ -38,6 +38,7 @@ from app.services.mcp_workflow_specs import (
     load_tool_surface_spec,
     validate_specs,
 )
+from app.services.stage_applicability_service import stage_allows_block
 
 
 MCP_SPEC_ROOT = Path(__file__).resolve().parents[1] / "app" / "mcp_specs"
@@ -737,6 +738,12 @@ def test_task_compact_resource_hides_framing_gaps_outside_planning_stage() -> No
     )
 
     assert "task_framing_gaps" not in compact
+
+
+def test_stage_applicability_contract_scopes_response_blocks() -> None:
+    assert stage_allows_block("task_framing_gaps", state="planning") is True
+    assert stage_allows_block("task_framing_gaps", state="live_validation") is False
+    assert stage_allows_block("unknown_public_block", state="verification") is True
 
 
 def test_mailbox_state_full_detail_bypasses_minimal_packet_limit() -> None:

@@ -12,12 +12,6 @@
     "planning advisor"
   ],
   "max_candidates": 5,
-  "stage_bindings": {
-    "task_framing_gaps": {
-      "show_in": ["planning", "framing", "implementation", "checkpointing"],
-      "hide_in": ["verification", "live_validation", "handoff", "operator_review"]
-    }
-  },
   "framing_fields": [
     {
       "field": "objective",

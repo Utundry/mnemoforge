@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "purpose": "Generic stage applicability contract for public response blocks. Keep workflow meaning in specs and let services interpret block visibility by FSM stage.",
+  "default_policy": "show",
+  "blocks": {
+    "task_framing_gaps": {
+      "show_in": ["planning", "framing", "implementation", "checkpointing"],
+      "hide_in": ["verification", "live_validation", "handoff", "operator_review"],
+      "why": "Task framing gaps are useful before or during implementation, but become noise once the task is in verification or handoff."
+    }
+  }
+}
