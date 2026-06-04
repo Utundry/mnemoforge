@@ -68,6 +68,10 @@ async def test_admin_storage_trust_report_reflects_integrity_and_hygiene(client)
     assert data["status"] == "degraded"
     assert "qdrant.skill_domain_tags_filter" in data["signals"]["degraded_slices"]
     assert data["signals"]["manual_review_pending"]["synthetic_test"] >= 1
+    assert data["maintenance_suggestion"]["status"] == "warning"
+    assert data["maintenance_suggestion"]["active_findings"] >= 1
+    assert data["maintenance_suggestion"]["destructive_action_allowed"] is False
+    assert "Hygiene findings" in data["maintenance_suggestion"]["why_it_matters"]
     assert len(data["next_actions"]) >= 1
 
 

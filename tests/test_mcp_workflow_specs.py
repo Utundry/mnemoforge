@@ -14,15 +14,23 @@ from app.services.mcp_mailbox_read import (
     build_mailbox_get_response,
     build_mailbox_state_response,
 )
+from app.services import mcp_simple_read_actions
 from app.services.mcp_simple_read_actions import (
     PublicRefDependencies,
     SimpleReadDependencies,
     build_simple_get_query_response,
     build_simple_public_ref_response,
 )
+from app.services.public_ref_index import AmbiguousPublicRefError
 from app.services.mcp_simple_surface_actions import compact_resource_result
+from app.services.cognitive_health_service import build_cognitive_health_packet
 from app.services.context_cue_service import context_cues_for_query, context_cues_for_state
 from app.services.evidence_classification_service import classify_evidence_items
+from app.services import planning_advisor_service
+from app.services.public_diagnostic_service import (
+    attach_public_diagnostic_incident,
+    build_public_diagnostic_incident,
+)
 from app.services.mcp_workflow_specs import (
     list_mailbox_forms_for_state,
     load_clerk_capture_registry,
@@ -582,6 +590,38 @@ def test_mailbox_state_packet_surfaces_compact_context_cues() -> None:
     assert all(str(cue.get("expand_ref") or "").startswith("cue:") for cue in cues)
 
 
+def test_mailbox_state_packet_surfaces_compact_health_nudge() -> None:
+    packet = build_mailbox_state_packet(
+        state="planning",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+    )
+
+    nudge = packet["health_nudge"]
+    assert nudge["reason"] == "state:planning"
+    assert nudge["severity"] == "P0"
+    assert "next safe action" in nudge["check"]
+    assert nudge["cue"] == "law:mcp_first_workflow_context"
+    assert str(nudge["expand_ref"]).startswith("cue:")
+    assert "full_text" not in nudge
+
+
+def test_mailbox_state_health_nudge_is_stage_aware() -> None:
+    planning = build_mailbox_state_packet(
+        state="planning",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+    )
+    implementation = build_mailbox_state_packet(
+        state="implementation",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+    )
+
+    assert "owned task claim" not in planning["health_nudge"]["check"]
+    assert "owned task claim" in implementation["health_nudge"]["check"]
+
+
 def test_verification_state_surfaces_test_contour_before_live_cue() -> None:
     packet = build_mailbox_state_packet(
         state="verification",
@@ -643,6 +683,55 @@ def test_context_cues_for_query_remind_mcp_first_workflow_context() -> None:
     assert cues[0]["cue"] == "law:mcp_first_workflow_context"
     assert cues[0]["severity"] == "P0"
     assert "full_text" not in cues[0]
+
+
+def test_cognitive_health_packet_is_compact_read_only_and_project_agnostic() -> None:
+    packet = build_cognitive_health_packet(
+        project="alpha",
+        state="implementation",
+        query="agent context recall health",
+        limit=5,
+    )
+
+    assert packet["status"] == "needs_self_check"
+    assert packet["read_only"] is True
+    assert packet["evaluator_executed"] is False
+    assert packet["checks"]
+    assert packet["context_cues"]
+    assert all("full_text" not in check for check in packet["checks"])
+    serialized = str(packet).casefold()
+    assert "docker" not in serialized
+    assert "sloplesscode" not in serialized
+
+
+def test_public_diagnostic_incidents_are_compact_and_actionable() -> None:
+    missing_project = attach_public_diagnostic_incident(
+        receipt={
+            "status": "needs_project",
+            "resource_kind": "planning_advisor",
+            "missing_fields": ["project"],
+            "next_safe_action": "Call get again with project set.",
+        },
+        kind="missing_project_scope",
+    )
+    missing_claim = build_public_diagnostic_incident(
+        kind="work_started_without_claim_or_missing_token",
+        task_id="task-1",
+        safe_next_action="Submit start_task before record_progress.",
+        recommended_next_call={
+            "tool": "submit",
+            "form_id": "start_task",
+            "payload": {"project": "alpha", "task_id": "task-1"},
+        },
+    )
+
+    assert missing_project["diagnostic_incident"]["kind"] == "missing_project_scope"
+    assert missing_project["diagnostic_incident"]["missing_fields"] == ["project"]
+    assert missing_project["diagnostic_incident"]["safe_next_action"] == "Call get again with project set."
+    assert "route_telemetry" not in missing_project["diagnostic_incident"]
+    assert missing_claim["kind"] == "work_started_without_claim_or_missing_token"
+    assert missing_claim["recommended_next_call"]["form_id"] == "start_task"
+    assert "secret-token-value" not in str(missing_claim)
 
 
 def test_context_cues_for_query_remind_test_contour_before_live_runtime() -> None:
@@ -889,6 +978,68 @@ async def test_rule_candidate_ref_reports_explicit_expansion_metadata() -> None:
     assert packet["result"]["stage_applicability"]["allowed_in_state"] is False
 
 
+async def test_public_ref_not_found_receipt_includes_human_readable_diagnostic() -> None:
+    async def failing_get(_api_base: str, _path: str):
+        raise RuntimeError("missing")
+
+    async def unused_context(_api_base: str, _args: dict):
+        raise AssertionError("law refs should not request task context")
+
+    packet = await build_simple_public_ref_response(
+        api_base="http://test",
+        args={"project": "sloplesscode", "ref": "law:sloplesscode:missing-law"},
+        dependencies=PublicRefDependencies(
+            get=failing_get,
+            get_task_context=unused_context,
+            public_error_message=lambda exc: str(exc),
+        ),
+    )
+
+    assert packet["receipt"]["status"] == "not_found"
+    incident = packet["receipt"]["diagnostic_incident"]
+    assert incident["kind"] == "public_ref_not_found"
+    assert incident["resource_kind"] == "law"
+    assert incident["safe_next_action"] == packet["receipt"]["next_safe_action"]
+    assert "mistyped" in incident["why"]
+    assert "route_telemetry" not in incident
+
+
+async def test_ambiguous_public_ref_receipt_includes_human_readable_diagnostic(monkeypatch) -> None:
+    async def unused_get(_api_base: str, _path: str):
+        raise AssertionError("ambiguous short refs should stop before API lookup")
+
+    async def unused_context(_api_base: str, _args: dict):
+        raise AssertionError("ambiguous short refs should stop before task context")
+
+    def ambiguous_resolver(**_kwargs):
+        raise AmbiguousPublicRefError(
+            [
+                {"artifact_key": "task:sloplesscode:abcdef-1", "title": "First"},
+                {"artifact_key": "task:sloplesscode:abcdef-2", "title": "Second"},
+            ]
+        )
+
+    monkeypatch.setattr(mcp_simple_read_actions, "resolve_public_artifact_short_ref", ambiguous_resolver)
+
+    packet = await build_simple_public_ref_response(
+        api_base="http://test",
+        args={"project": "sloplesscode", "ref": "task:sloplesscode:abcdef"},
+        dependencies=PublicRefDependencies(
+            get=unused_get,
+            get_task_context=unused_context,
+            public_error_message=lambda exc: str(exc),
+        ),
+    )
+
+    assert packet["receipt"]["status"] == "ambiguous_ref"
+    assert len(packet["receipt"]["matches"]) == 2
+    incident = packet["receipt"]["diagnostic_incident"]
+    assert incident["kind"] == "ambiguous_public_ref"
+    assert incident["resource_kind"] == "task"
+    assert incident["safe_next_action"] == packet["receipt"]["next_safe_action"]
+    assert "must not guess" in incident["why"]
+
+
 def test_law_context_block_uses_compact_refs_before_full_text() -> None:
     from datetime import datetime, timezone
 
@@ -918,7 +1069,7 @@ def test_law_context_block_uses_compact_refs_before_full_text() -> None:
     assert "Full law statement should be available" not in block
 
 
-async def test_next_work_advisor_surfaces_improvements_when_no_tasks() -> None:
+async def test_next_work_advisor_surfaces_improvements_when_no_tasks(monkeypatch) -> None:
     async def fake_get(_api_base: str, path: str):
         assert "/artifacts?" in path
         assert "status=open" in path
@@ -942,6 +1093,25 @@ async def test_next_work_advisor_surfaces_improvements_when_no_tasks() -> None:
     async def forbidden_expert(*_args, **_kwargs):
         raise AssertionError("planning advisor should not require project expert routing")
 
+    monkeypatch.setattr(
+        planning_advisor_service,
+        "build_maintenance_suggestion",
+        lambda current_project, **_: {
+            "status": "warning",
+            "active_findings": 4,
+            "top_dataset_classes": {"stale_guidance": 3},
+            "scope": {
+                "current_project": current_project,
+                "dominant_relation": "outside_current_project",
+                "notice": f"Hygiene findings mostly target other projects, not current project {current_project}.",
+            },
+            "why_it_matters": "Hygiene findings can pollute search and learned route selection.",
+            "next_safe_action": "Review maintenance scope before promoting cleanup into project work.",
+            "destructive_action_allowed": False,
+            "expand_refs": ["admin:data-hygiene/workflow"],
+        },
+    )
+
     packet = await build_simple_get_query_response(
         api_base="http://test",
         args={"project": "sloplesscode", "query": "what should I do next?", "limit": 5},
@@ -959,6 +1129,11 @@ async def test_next_work_advisor_surfaces_improvements_when_no_tasks() -> None:
     assert packet["result"]["selection_rule"] == "promote_open_improvements"
     assert packet["result"]["next_work_candidates"][0]["type"] == "improvement"
     assert packet["result"]["next_work_candidates"][0]["ref"] == "improvement:sloplesscode:imp-1"
+    suggestion = packet["result"]["maintenance_suggestion"]
+    assert suggestion["active_findings"] == 4
+    assert suggestion["destructive_action_allowed"] is False
+    assert "maintenance_suggestion" not in packet["result"]["next_work_candidates"][0]
+    assert "pollute search" in suggestion["why_it_matters"]
 
 
 def test_task_compact_resource_includes_spec_driven_framing_gaps() -> None:
@@ -1048,6 +1223,120 @@ async def test_mailbox_state_response_uses_session_runtime_profile_defaults() ->
     assert packet["state"] == "planning"
     assert "_internal" not in packet
     assert "claim_task" in packet["hidden_forms"]
+
+
+async def test_mailbox_state_response_suppresses_repeated_health_nudge_per_session() -> None:
+    from app.services.mcp_session_store import get_session_store
+
+    session_id = "sess-health-nudge-repeat"
+    store = get_session_store()
+    await store.init_session(session_id)
+
+    async def fake_identity_defaults(session_id_arg: str | None) -> dict[str, str]:
+        assert session_id_arg == session_id
+        return {"runtime_profile_id": "weak_mcp_operator"}
+
+    dependencies = MailboxReadDependencies(get_session_identity_defaults=fake_identity_defaults)
+    first = await build_mailbox_state_response(
+        args={"project": "mnemoforge", "state": "planning"},
+        session_id=session_id,
+        dependencies=dependencies,
+    )
+    second = await build_mailbox_state_response(
+        args={"project": "mnemoforge", "state": "planning"},
+        session_id=session_id,
+        dependencies=dependencies,
+    )
+    diagnostic = await build_mailbox_state_response(
+        args={"project": "mnemoforge", "state": "planning", "diagnostic": True},
+        session_id=session_id,
+        dependencies=dependencies,
+    )
+
+    await store.close_session(session_id)
+
+    assert "health_nudge" in first
+    assert "health_nudge" not in second
+    assert "health_nudge" not in diagnostic
+    assert diagnostic["health_nudge_suppressed"]["reason"] == "already_shown_in_session"
+
+
+async def test_mailbox_state_response_suppresses_repeated_health_nudge_for_stateless_hosts() -> None:
+    from app.services import mcp_mailbox_read
+
+    mcp_mailbox_read._STATELESS_HEALTH_NUDGE_SEEN.clear()
+
+    async def fake_identity_defaults(session_id_arg: str | None) -> dict[str, str]:
+        assert session_id_arg is None
+        return {"runtime_profile_id": "weak_mcp_operator"}
+
+    dependencies = MailboxReadDependencies(get_session_identity_defaults=fake_identity_defaults)
+    first = await build_mailbox_state_response(
+        args={"project": "stateless-health-project", "state": "planning"},
+        session_id=None,
+        dependencies=dependencies,
+    )
+    second = await build_mailbox_state_response(
+        args={"project": "stateless-health-project", "state": "planning", "diagnostic": True},
+        session_id=None,
+        dependencies=dependencies,
+    )
+
+    mcp_mailbox_read._STATELESS_HEALTH_NUDGE_SEEN.clear()
+
+    assert "health_nudge" in first
+    assert "health_nudge" not in second
+    assert second["health_nudge_suppressed"]["reason"] == "stateless_cooldown"
+    assert second["health_nudge_suppressed"]["cooldown_seconds"] > 0
+
+
+async def test_mailbox_state_health_nudge_stateless_scope_uses_hashed_work_token() -> None:
+    from app.services import mcp_mailbox_read
+
+    mcp_mailbox_read._STATELESS_HEALTH_NUDGE_SEEN.clear()
+
+    async def fake_identity_defaults(session_id_arg: str | None) -> dict[str, str]:
+        assert session_id_arg is None
+        return {"runtime_profile_id": "weak_mcp_operator"}
+
+    dependencies = MailboxReadDependencies(get_session_identity_defaults=fake_identity_defaults)
+    first = await build_mailbox_state_response(
+        args={
+            "project": "stateless-token-project",
+            "state": "implementation",
+            "work_token": "token-alpha",
+        },
+        session_id=None,
+        dependencies=dependencies,
+    )
+    repeated = await build_mailbox_state_response(
+        args={
+            "project": "stateless-token-project",
+            "state": "implementation",
+            "work_token": "token-alpha",
+            "diagnostic": True,
+        },
+        session_id=None,
+        dependencies=dependencies,
+    )
+    different_token = await build_mailbox_state_response(
+        args={
+            "project": "stateless-token-project",
+            "state": "implementation",
+            "work_token": "token-beta",
+        },
+        session_id=None,
+        dependencies=dependencies,
+    )
+
+    mcp_mailbox_read._STATELESS_HEALTH_NUDGE_SEEN.clear()
+
+    assert "health_nudge" in first
+    assert "health_nudge" not in repeated
+    assert "health_nudge" in different_token
+    repeat_key = repeated["health_nudge_suppressed"]["repeat_key"]
+    assert "work_token:" in repeat_key
+    assert "token-alpha" not in repeat_key
 
 
 async def test_mailbox_get_response_uses_session_runtime_profile_defaults() -> None:
@@ -1146,6 +1435,11 @@ def test_mailbox_submit_rejects_forms_outside_current_state() -> None:
 
     assert packet["receipt"]["status"] == "rejected"
     assert "not available in state planning" in packet["receipt"]["message"]
+    incident = packet["receipt"]["diagnostic_incident"]
+    assert incident["kind"] == "form_unavailable_in_state"
+    assert incident["safe_next_action"] == packet["receipt"]["next_safe_action"]
+    assert "state mismatch" in incident["why"]
+    assert "help:workflow.state" in incident["expand_refs"]
 
 
 def test_mailbox_submit_reports_missing_required_fields() -> None:
@@ -1158,6 +1452,25 @@ def test_mailbox_submit_reports_missing_required_fields() -> None:
 
     assert packet["receipt"]["status"] == "needs_input"
     assert packet["receipt"]["missing_fields"] == ["summary", "next_step"]
+    incident = packet["receipt"]["diagnostic_incident"]
+    assert incident["kind"] == "missing_required_fields"
+    assert incident["missing_fields"] == ["summary", "next_step"]
+    assert incident["safe_next_action"] == packet["receipt"]["next_safe_action"]
+
+
+def test_mailbox_submit_unknown_form_reports_public_diagnostic() -> None:
+    packet = build_mailbox_submit_receipt(
+        form_id="finish_everything",
+        state="planning",
+        project="mnemoforge",
+        payload={"project": "mnemoforge"},
+    )
+
+    assert packet["receipt"]["status"] == "rejected"
+    incident = packet["receipt"]["diagnostic_incident"]
+    assert incident["kind"] == "unknown_mailbox_form"
+    assert incident["resource_kind"] == "mailbox_form"
+    assert incident["safe_next_action"] == packet["receipt"]["next_safe_action"]
 
 
 def test_mailbox_submit_verification_returns_project_contour_ref_not_command() -> None:

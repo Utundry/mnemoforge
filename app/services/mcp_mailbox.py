@@ -16,6 +16,8 @@ from app.services.mcp_workflow_specs import (
     list_mailbox_form_specs,
 )
 from app.services.context_cue_service import context_cues_for_state
+from app.services.cognitive_health_service import build_health_nudge
+from app.services.public_diagnostic_service import attach_public_diagnostic_incident
 
 _WORKFLOW_STATE_NAMES = {
     "planning",
@@ -113,6 +115,7 @@ def build_mailbox_state_packet(
         "project": project,
         "instruction": state_spec.purpose,
         "context_cues": context_cues_for_state(state=state_spec.id, project=project, governed_laws=governed_laws),
+        "health_nudge": build_health_nudge(project=project, state=state_spec.id),
         "forms": [_public_form_payload(form) for form in forms],
         "hidden_forms": hidden_form_ids,
         "warnings": warnings,
@@ -234,34 +237,32 @@ def build_mailbox_submit_receipt(
     runtime_profile = _runtime_profile(runtime_profile_id, spec_root=spec_root)
 
     if form is None:
+        receipt = {
+            "status": "rejected",
+            "form_id": str(form_id or "").strip(),
+            "message": "Unknown mailbox form. Request mailbox_state and choose one of the listed forms.",
+            "submitted_fields": sorted(str(key) for key in payload.keys()),
+            "next_safe_action": "Request mailbox_state for the current workflow state.",
+        }
         return {
             "state": state_name,
             "project": project,
-            "receipt": _compact_receipt(
-                {
-                    "status": "rejected",
-                    "form_id": str(form_id or "").strip(),
-                    "message": "Unknown mailbox form. Request mailbox_state and choose one of the listed forms.",
-                    "submitted_fields": sorted(str(key) for key in payload.keys()),
-                    "next_safe_action": "Request mailbox_state for the current workflow state.",
-                }
-            ),
+            "receipt": _compact_receipt(attach_public_diagnostic_incident(receipt=receipt, kind="unknown_mailbox_form")),
         }
 
     if state_name not in mailbox_form_state_names(form):
+        receipt = {
+            "status": "rejected",
+            "form_id": form.id,
+            "message": f"Form {form.id} is not available in state {state_name}.",
+            "available_states": sorted(mailbox_form_state_names(form)),
+            "submitted_fields": sorted(str(key) for key in payload.keys()),
+            "next_safe_action": "Request mailbox_state for this state and submit one of its forms.",
+        }
         return {
             "state": state_name,
             "project": project,
-            "receipt": _compact_receipt(
-                {
-                    "status": "rejected",
-                    "form_id": form.id,
-                    "message": f"Form {form.id} is not available in state {state_name}.",
-                    "available_states": sorted(mailbox_form_state_names(form)),
-                    "submitted_fields": sorted(str(key) for key in payload.keys()),
-                    "next_safe_action": "Request mailbox_state for this state and submit one of its forms.",
-                }
-            ),
+            "receipt": _compact_receipt(attach_public_diagnostic_incident(receipt=receipt, kind="form_unavailable_in_state")),
         }
 
     missing_fields = [
@@ -270,19 +271,18 @@ def build_mailbox_submit_receipt(
         if payload.get(field) in (None, "", [])
     ]
     if missing_fields:
+        receipt = {
+            "status": "needs_input",
+            "form_id": form.id,
+            "message": "Required fields are missing.",
+            "missing_fields": missing_fields,
+            "submitted_fields": sorted(str(key) for key in payload.keys()),
+            "next_safe_action": "Fill the missing fields and submit the same form again.",
+        }
         return {
             "state": state_name,
             "project": project,
-            "receipt": _compact_receipt(
-                {
-                    "status": "needs_input",
-                    "form_id": form.id,
-                    "message": "Required fields are missing.",
-                    "missing_fields": missing_fields,
-                    "submitted_fields": sorted(str(key) for key in payload.keys()),
-                    "next_safe_action": "Fill the missing fields and submit the same form again.",
-                }
-            ),
+            "receipt": _compact_receipt(attach_public_diagnostic_incident(receipt=receipt, kind="missing_required_fields")),
         }
 
     if status is None or message is None:

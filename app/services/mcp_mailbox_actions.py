@@ -26,6 +26,7 @@ from app.services.mcp_simple_read_actions import (
 )
 from app.services.stage_applicability_service import stage_allows_block
 from app.services.public_ref_index import AmbiguousPublicRefError, is_short_public_id
+from app.services.public_diagnostic_service import attach_public_diagnostic_incident
 from app.services.route_pattern_store import get_route_pattern_store
 
 
@@ -686,30 +687,32 @@ async def mailbox_finish_task(
     try:
         raw = await dependencies.execute_tool("finish_task_session", finish_args, api_base, session_id)
     except Exception as exc:
+        receipt = {
+            "status": "conflict",
+            "form_id": form.id,
+            "message": public_mailbox_error_message(exc),
+            "next_safe_action": "Review closeout evidence and task identity, then submit finish_task again or release_task_claim if only cleanup is needed.",
+        }
         return {
             "state": state,
             "project": project,
-            "receipt": {
-                "status": "conflict",
-                "form_id": form.id,
-                "message": public_mailbox_error_message(exc),
-                "next_safe_action": "Review closeout evidence and task identity, then submit finish_task again or release_task_claim if only cleanup is needed.",
-            },
+            "receipt": attach_public_diagnostic_incident(receipt=receipt, kind="mailbox_action_conflict"),
         }
     try:
         result = json.loads(raw)
     except Exception:
         result = {"status": "error", "message": raw}
     if result.get("status") != "finished":
+        receipt = {
+            "status": result.get("status") or "conflict",
+            "form_id": form.id,
+            "message": result.get("message") or result.get("error") or "finish_task_session did not finish.",
+            "next_safe_action": result.get("next_safe_action") or "Review the receipt, fix missing evidence, and submit finish_task again.",
+        }
         return {
             "state": state,
             "project": project,
-            "receipt": {
-                "status": result.get("status") or "conflict",
-                "form_id": form.id,
-                "message": result.get("message") or result.get("error") or "finish_task_session did not finish.",
-                "next_safe_action": result.get("next_safe_action") or "Review the receipt, fix missing evidence, and submit finish_task again.",
-            },
+            "receipt": attach_public_diagnostic_incident(receipt=receipt, kind="mailbox_action_conflict"),
         }
     release = dict(result.get("release") or {})
     if isinstance(release.get("lease"), dict):
@@ -799,26 +802,32 @@ async def mailbox_close_task(
     close_status_aliases = {"done": "completed", "complete": "completed", "finished": "completed"}
     close_status = close_status_aliases.get(close_status, close_status)
     if close_status == "completed":
+        receipt = {
+            "status": "needs_claim",
+            "form_id": form.id,
+            "message": "close_task cannot mark completed work because completion requires task ownership proof.",
+            "task_id": task_id,
+            "requested_close_status": close_status,
+            "recommended_next_call": {
+                "tool": "submit",
+                "form_id": "start_task",
+                "payload": {
+                    "project": project,
+                    "task_id": task_id,
+                },
+                "why": "Claim/start the task first to obtain work_token, then submit finish_task with completion evidence.",
+            },
+            "next_safe_action": "Submit start_task for this task, keep the returned work_token, then submit finish_task.",
+        }
         return {
             "state": state,
             "project": project,
-            "receipt": {
-                "status": "needs_claim",
-                "form_id": form.id,
-                "message": "close_task cannot mark completed work because completion requires task ownership proof.",
-                "task_id": task_id,
-                "requested_close_status": close_status,
-                "recommended_next_call": {
-                    "tool": "submit",
-                    "form_id": "start_task",
-                    "payload": {
-                        "project": project,
-                        "task_id": task_id,
-                    },
-                    "why": "Claim/start the task first to obtain work_token, then submit finish_task with completion evidence.",
-                },
-                "next_safe_action": "Submit start_task for this task, keep the returned work_token, then submit finish_task.",
-            },
+            "receipt": attach_public_diagnostic_incident(
+                receipt=receipt,
+                kind="completion_requires_owned_claim",
+                task_id=task_id,
+                recommended_next_call=receipt["recommended_next_call"],
+            ),
             "next_safe_action": "Submit start_task for this task, keep the returned work_token, then submit finish_task.",
         }
     allowed_close_statuses = {"obsolete", "duplicate", "superseded", "cancelled", "not_planned"}
@@ -1604,24 +1613,22 @@ async def mailbox_record_progress(
                 task_id=task_id,
                 lease_guard=lease_guard,
             )
+            receipt = {
+                "status": "conflict",
+                "form_id": form.id,
+                "message": "Task progress requires an active owned claim when task_id is provided.",
+                "recommended_reclaim_call": reclaim_call,
+                "next_safe_action": lease_guard.get("next_safe_action", "Claim the task before recording task progress."),
+            }
             return {
                 "state": state,
                 "project": project,
-                "receipt": {
-                    "status": "conflict",
-                    "form_id": form.id,
-                    "message": "Task progress requires an active owned claim when task_id is provided.",
-                    "diagnostic_incident": {
-                        "kind": "work_started_without_claim_or_missing_token",
-                        "severity": "high",
-                        "summary": "Task-bound progress was submitted without active ownership proof.",
-                        "why": "Implementation work should begin only after start_task returns work_token, so the system can provide stage guidance, enforce ownership, and keep an auditable work trail.",
-                        "task_id": task_id,
-                        "recommended_next_call": reclaim_call,
-                    },
-                    "recommended_reclaim_call": reclaim_call,
-                    "next_safe_action": lease_guard.get("next_safe_action", "Claim the task before recording task progress."),
-                },
+                "receipt": attach_public_diagnostic_incident(
+                    receipt=receipt,
+                    kind="work_started_without_claim_or_missing_token",
+                    task_id=task_id,
+                    recommended_next_call=reclaim_call,
+                ),
             }
         checkpoint_args = {
             "project": project,

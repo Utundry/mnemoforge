@@ -8,6 +8,7 @@ import pytest
 from app import dependencies
 from app.main import _should_suppress_asyncio_transport_error
 from app.routers import mcp_sse
+from app.services import planning_advisor_service
 from app.services.mcp_mailbox_actions import MailboxActionDependencies, mailbox_finish_task, mailbox_start_task
 from app.services.mcp_simple_read_actions import explicit_artifact_list_type
 from mcp import server as mcp_stdio
@@ -1798,9 +1799,65 @@ class TestMcpToolExecution:
         data = json.loads(result)
         assert data["receipt"]["status"] == "needs_claim"
         assert data["receipt"]["requested_close_status"] == "completed"
+        assert data["receipt"]["diagnostic_incident"]["kind"] == "completion_requires_owned_claim"
+        assert data["receipt"]["diagnostic_incident"]["task_id"] == "task-complete"
+        assert data["receipt"]["diagnostic_incident"]["recommended_next_call"]["form_id"] == "start_task"
         assert data["receipt"]["recommended_next_call"]["form_id"] == "start_task"
         assert data["receipt"]["recommended_next_call"]["payload"]["task_id"] == "task-complete"
         assert calls == []
+
+    async def test_mailbox_submit_finish_task_conflict_reports_public_diagnostic(self, monkeypatch):
+        from app.services.mcp_mailbox import mailbox_form_by_id
+        from app.services.mcp_mailbox_actions import MailboxActionDependencies, mailbox_finish_task
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            assert tool_name == "finish_task_session"
+            return json.dumps(
+                {
+                    "status": "conflict",
+                    "message": "owned claim required",
+                    "next_safe_action": "Submit start_task before finish_task.",
+                }
+            )
+
+        async def unused_post(*_args, **_kwargs):
+            raise AssertionError("finish_task conflict should not post")
+
+        async def fake_identity(_session_id):
+            return {}
+
+        def unused_guard(**_kwargs):
+            return None
+
+        packet = await mailbox_finish_task(
+            form=mailbox_form_by_id("finish_task"),
+            payload={
+                "project": "alpha",
+                "task_id": "task-1",
+                "summary": "finish without claim",
+                "changed_files": ["app/example.py"],
+                "verification": ["diagnostic conflict smoke"],
+            },
+            state="handoff",
+            project="alpha",
+            runtime_profile_id="unknown_cli",
+            diagnostic=False,
+            api_base="http://test",
+            dependencies=MailboxActionDependencies(
+                post=unused_post,
+                execute_tool=fake_execute,
+                get_session_identity_defaults=fake_identity,
+                task_mutation_guard=unused_guard,
+            ),
+            session_id=None,
+        )
+
+        assert packet["receipt"]["status"] == "conflict"
+        assert packet["receipt"]["message"] == "owned claim required"
+        incident = packet["receipt"]["diagnostic_incident"]
+        assert incident["kind"] == "mailbox_action_conflict"
+        assert incident["safe_next_action"] == "Submit start_task before finish_task."
+        assert "server-side action" in incident["summary"]
 
     async def test_mailbox_submit_close_task_resolves_linked_improvement_by_default(self, monkeypatch):
         calls: list[tuple[str, str, dict | None]] = []
@@ -2368,6 +2425,9 @@ class TestMcpToolExecution:
         assert "active owned claim" in data["receipt"]["message"]
         assert data["receipt"]["diagnostic_incident"]["kind"] == "work_started_without_claim_or_missing_token"
         assert data["receipt"]["diagnostic_incident"]["severity"] == "high"
+        assert data["receipt"]["diagnostic_incident"]["likely_source"]
+        assert data["receipt"]["diagnostic_incident"]["safe_next_action"] == data["receipt"]["next_safe_action"]
+        assert "help:submit.start_task" in data["receipt"]["diagnostic_incident"]["expand_refs"]
         assert data["receipt"]["diagnostic_incident"]["recommended_next_call"]["form_id"] == "start_task"
         assert "same task_id and agent_fingerprint" in data["receipt"]["next_safe_action"]
         assert data["receipt"]["recommended_reclaim_call"] == {
@@ -3289,6 +3349,19 @@ class TestMcpToolExecution:
                         "warnings": ["Hygiene findings may include records outside the current project."],
                     },
                 },
+                "maintenance_suggestion": {
+                    "status": "warning",
+                    "active_findings": 30,
+                    "top_dataset_classes": {"synthetic_test": 7},
+                    "scope": {
+                        "current_project": "alpha",
+                        "dominant_relation": "outside_current_project",
+                        "notice": "Hygiene findings mostly target other projects, not current project alpha.",
+                    },
+                    "why_it_matters": "Hygiene findings can pollute search, learned routes, context cues, and next-work selection.",
+                    "next_safe_action": "Review scope warnings first; do not present system or other-project hygiene as current-project work.",
+                    "destructive_action_allowed": False,
+                },
                 "playbook": {
                     "workflow": {
                         "scope_summary": {
@@ -3320,9 +3393,17 @@ class TestMcpToolExecution:
 
         assert seen["path"] == "/admin/storage-trust?project=alpha"
         assert result["receipt"]["resource_kind"] == "storage_trust"
+        assert result["receipt"]["route_source"] == "simple_get_routes"
         assert result["result"]["status"] == "warning"
         assert result["result"]["signals"]["active_hygiene_findings"] == 30
-        assert result["result"]["workflow_scope"]["current_project"] == "alpha"
+        assert "workflow_scope" not in result["result"]
+        assert "hygiene_scope_warnings" not in result["result"]["signals"]
+        assert "scope_summary" not in result["result"]["data_hygiene"]
+        suggestion = result["result"]["maintenance_suggestion"]
+        assert suggestion["active_findings"] == 30
+        assert suggestion["destructive_action_allowed"] is False
+        assert "pollute search" in suggestion["why_it_matters"]
+        assert "other-project hygiene" in suggestion["next_safe_action"]
 
     async def test_simple_get_adherence_query_returns_context_cues_without_project_verify(self, monkeypatch):
         async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
@@ -3344,7 +3425,35 @@ class TestMcpToolExecution:
         )
 
         assert result["receipt"]["resource_kind"] == "context_cues"
+        assert result["receipt"]["route_source"] == "simple_get_routes"
         assert result["result"]["no_verification_execution"] is True
+        assert result["result"]["context_cues"]
+
+    async def test_simple_get_cognitive_health_query_returns_self_check_packet(self, monkeypatch):
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("cognitive health query should not route through ask_project")
+
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {
+                    "project": "alpha",
+                    "state": "implementation",
+                    "query": "agent context recall health",
+                    "limit": 5,
+                },
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["resource_kind"] == "cognitive_health"
+        assert result["receipt"]["route_source"] == "simple_get_routes"
+        assert result["result"]["status"] == "needs_self_check"
+        assert result["result"]["evaluator_executed"] is False
+        assert result["result"]["read_only"] is True
+        assert result["result"]["checks"]
         assert result["result"]["context_cues"]
 
     async def test_simple_get_query_lists_improvements_via_artifact_surface(self, monkeypatch):
@@ -3548,6 +3657,24 @@ class TestMcpToolExecution:
 
         monkeypatch.setattr(mcp_sse, "_get", fake_get)
         monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+        monkeypatch.setattr(
+            planning_advisor_service,
+            "build_maintenance_suggestion",
+            lambda current_project, **_: {
+                "status": "warning",
+                "active_findings": 9,
+                "top_dataset_classes": {"synthetic_test": 6},
+                "top_recommended_actions": {"quarantine": 4},
+                "scope": {
+                    "current_project": current_project,
+                    "dominant_relation": "outside_current_project",
+                    "notice": f"Hygiene findings mostly target other projects, not current project {current_project}.",
+                },
+                "why_it_matters": "Hygiene findings can pollute search and next-work selection.",
+                "next_safe_action": "Review maintenance scope before treating it as current-project work.",
+                "destructive_action_allowed": False,
+            },
+        )
 
         result = json.loads(
             await mcp_sse._execute_tool(
@@ -3561,6 +3688,11 @@ class TestMcpToolExecution:
         assert result["receipt"]["resource_kind"] == "planning_advisor"
         assert result["result"]["selection_rule"] == "prefer_open_tasks"
         assert result["result"]["next_work_candidates"][0]["ref"] == "task:alpha:task-1"
+        suggestion = result["result"]["maintenance_suggestion"]
+        assert suggestion["active_findings"] == 9
+        assert suggestion["destructive_action_allowed"] is False
+        assert "maintenance_suggestion" not in result["result"]["next_work_candidates"][0]
+        assert "pollute search" in suggestion["why_it_matters"]
 
     async def test_simple_get_query_keeps_project_questions_on_project_expert(self, monkeypatch):
         async def fake_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
@@ -3610,6 +3742,12 @@ class TestMcpToolExecution:
 
         assert result["receipt"]["status"] == "needs_project"
         assert result["receipt"]["missing_fields"] == ["project"]
+        incident = result["receipt"]["diagnostic_incident"]
+        assert incident["kind"] == "missing_project_scope"
+        assert incident["resource_kind"] == "query"
+        assert incident["missing_fields"] == ["project"]
+        assert incident["safe_next_action"] == result["receipt"]["next_safe_action"]
+        assert "silently falling back" in incident["why"]
         assert "project" not in result
         assert "mnemoforge" not in json.dumps(result)
 
@@ -4161,6 +4299,24 @@ class TestMcpToolExecution:
             }
 
         monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(
+            mcp_sse,
+            "build_maintenance_suggestion",
+            lambda current_project, **_: {
+                "status": "warning",
+                "active_findings": 12,
+                "top_dataset_classes": {"telemetry_trace": 10},
+                "scope": {
+                    "current_project": current_project,
+                    "dominant_relation": "current_project",
+                    "notice": f"Hygiene findings appear scoped to current project {current_project}.",
+                },
+                "why_it_matters": "Hygiene findings can pollute search and next-work selection.",
+                "next_safe_action": "Review scope warnings before promoting maintenance into current work.",
+                "destructive_action_allowed": False,
+                "expand_refs": ["admin:data-hygiene/workflow"],
+            },
+        )
         result = await mcp_sse._execute_tool(
             "project_work",
             {"project": "alpha", "intent": "what is the next priority?", "limit": 5},
@@ -4189,6 +4345,10 @@ class TestMcpToolExecution:
         ]
         assert requested[0].startswith("/artifacts?project=alpha&status=open&limit=5")
         assert data["result"]["items"][0]["artifact_key"] == "task:alpha:task-1"
+        assert data["maintenance_suggestion"]["active_findings"] == 12
+        assert data["maintenance_suggestion"]["destructive_action_allowed"] is False
+        assert "maintenance_suggestion" not in data["result"]["items"][0]
+        assert "pollute search" in data["maintenance_suggestion"]["why_it_matters"]
 
     async def test_project_work_list_active_tasks_keeps_improvement_embryos_actionable(self, monkeypatch):
         requested: list[str] = []
@@ -5535,6 +5695,39 @@ class TestMcpToolExecution:
         assert "Partial task_id detected" in result["warnings"][0]
         assert called[0] == ("list_artifacts", {"project": "alpha", "type": "task", "limit": 50})
 
+    async def test_project_context_completed_task_list_routes_to_done_artifacts_without_task_replay(self, monkeypatch):
+        called: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            called.append((tool_name, args))
+            return json.dumps(
+                {
+                    "items": [
+                        {
+                            "artifact_key": "task:alpha:task-done",
+                            "task_id": "task-done",
+                            "type": "task",
+                            "title": "Done task",
+                            "status": "done",
+                        }
+                    ]
+                }
+            )
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        result = await mcp_sse._build_project_context_payload(
+            "http://test",
+            {"project": "alpha", "intent": "list_completed_tasks", "scorer_backend": "lexical"},
+        )
+
+        assert result["selected_route"]["tool"] == "list_artifacts"
+        assert result["selected_route"]["intent_type"] == "task_status_list"
+        assert called[0] == (
+            "list_artifacts",
+            {"project": "alpha", "type": "task", "status": "done", "limit": 50},
+        )
+        assert result["result"]["items"][0]["status"] == "done"
+
     async def test_project_context_diagnostic_response_is_plain_text_route_block(self, monkeypatch):
         async def fake_project_context(api_base: str, args: dict, session_id=None):
             return {
@@ -5612,6 +5805,34 @@ class TestMcpToolExecution:
         assert calls[0][0] == "project_context"
         assert calls[0][1]["response_format"] == "answer"
         assert calls[0][1]["intent"] == "what is task 382e7306?"
+        assert "allow_mutation" not in calls[0][1]
+
+    async def test_ask_project_completed_task_list_uses_project_context_artifact_status_route(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            calls.append((tool_name, args))
+            return (
+                "SloplessCode answer\n"
+                "Answer: Found completed tasks.\n"
+                "task_id=task-done\n"
+                "task_status=done"
+            )
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {"project": "alpha", "question": "find latest implemented tasks"},
+            "http://test",
+        )
+
+        assert text.startswith("SloplessCode answer\n")
+        assert "task_status=done" in text
+        assert calls[0][0] == "project_context"
+        assert calls[0][1]["intent"] == "find latest implemented tasks"
+        assert calls[0][1]["artifact_lookup"] is True
+        assert calls[0][1]["artifact_type"] == "task"
         assert "allow_mutation" not in calls[0][1]
 
     async def test_ask_project_task_id_structural_route_beats_stale_learned_pattern(self, monkeypatch):

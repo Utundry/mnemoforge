@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.data_hygiene_service import build_operator_playbook, get_data_hygiene_store
+from app.services.data_hygiene_service import (
+    build_maintenance_suggestion,
+    build_operator_playbook,
+    get_data_hygiene_store,
+)
 from app.services.data_integrity_service import get_data_integrity_store
 
 
@@ -64,6 +68,7 @@ def build_storage_trust_report(*, limit: int = 1000, current_project: str | None
         "summary": summary,
         "integrity": integrity,
         "data_hygiene": hygiene,
+        "maintenance_suggestion": build_maintenance_suggestion(limit=limit, current_project=current_project),
         "playbook": playbook,
         "next_actions": next_actions,
         "signals": {

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
-from app.services.adherence_query_routing import adherence_query_next_action, explicit_adherence_cue_query
+from app.services.adherence_query_routing import adherence_query_next_action
 from app.services.public_ref_index import (
     AmbiguousPublicRefError,
     PublicRefNotFoundError,
@@ -16,8 +16,10 @@ from app.services.public_ref_index import (
     public_artifact_matches_short_id,
 )
 from app.services.context_cue_service import context_cues_for_query, context_cues_for_state, expand_context_cue
+from app.services.cognitive_health_service import build_cognitive_health_packet
 from app.services.memory_store import get_memory_store
 from app.services.planning_advisor_service import build_next_work_advisor, is_planning_advisor_query
+from app.services.public_diagnostic_service import attach_public_diagnostic_incident
 from app.services.stage_applicability_service import stage_applicability_metadata
 from app.services.mcp_workflow_specs import load_named_json_spec
 
@@ -161,31 +163,43 @@ async def build_simple_public_ref_response(
                 },
             )
     except AmbiguousPublicRefError as exc:
+        next_safe_action = "Call get again with a longer id prefix or a full public ref from matches."
+        receipt = {
+            "status": "ambiguous_ref",
+            "message": "Public ref short id matched multiple artifacts.",
+            "matches": compact_public_ref_matches(exc.matches),
+            "next_safe_action": next_safe_action,
+        }
         return _public_ref_envelope(
             args=args,
             project=project,
             normalized_ref=normalized_ref,
             requested_ref=requested_ref,
             kind=kind,
-            receipt={
-                "status": "ambiguous_ref",
-                "message": "Public ref short id matched multiple artifacts.",
-                "matches": compact_public_ref_matches(exc.matches),
-                "next_safe_action": "Call get again with a longer id prefix or a full public ref from matches.",
-            },
+            receipt=attach_public_diagnostic_incident(
+                receipt=receipt,
+                kind="ambiguous_public_ref",
+                resource_kind=kind or "artifact",
+            ),
         )
     except Exception as exc:
+        next_safe_action = "Verify the public ref from the latest list/open/context result, then request mailbox_get again."
+        receipt = {
+            "status": "not_found",
+            "message": dependencies.public_error_message(exc),
+            "next_safe_action": next_safe_action,
+        }
         return _public_ref_envelope(
             args=args,
             project=project,
             normalized_ref=normalized_ref,
             requested_ref=requested_ref,
             kind=kind,
-            receipt={
-                "status": "not_found",
-                "message": dependencies.public_error_message(exc),
-                "next_safe_action": "Verify the public ref from the latest list/open/context result, then request mailbox_get again.",
-            },
+            receipt=attach_public_diagnostic_incident(
+                receipt=receipt,
+                kind="public_ref_not_found",
+                resource_kind=kind or "artifact",
+            ),
         )
 
     return _public_ref_envelope(
@@ -493,73 +507,20 @@ async def build_simple_get_query_response(
             "next_safe_action": "Use these aliases as compatibility names; do not rewrite stored refs without rename_project/apply review.",
             "details_available": True,
         }
-    if explicit_storage_trust_query(query):
-        storage_path = "/admin/storage-trust"
-        if project:
-            storage_path = f"{storage_path}?project={quote(project, safe='')}"
-        data = await dependencies.get(api_base, storage_path)
-        result = data if isinstance(data, dict) else {}
-        if not _full_detail_requested(args):
-            result = compact_storage_trust_query_result(result)
-        return {
-            "state": state,
-            "project": project,
-            "receipt": {
-                "status": "accepted",
-                "message": "Natural read query resolved through storage trust.",
-                "resource_kind": "storage_trust",
-                "next_safe_action": (
-                    "Review storage trust warnings as system maintenance context; "
-                    "do not treat hygiene cleanup as current-project work unless explicitly promoted."
-                ),
-            },
-            "result": result,
-            "simple_interface": {"tool": "get", "mode": "query", "route": "storage_trust"},
-            "next_safe_action": (
-                "Review storage trust warnings as system maintenance context; "
-                "do not treat hygiene cleanup as current-project work unless explicitly promoted."
-            ),
-            "details_available": True,
-        }
-    if explicit_adherence_cue_query(query):
-        if not project:
-            return {
-                "state": state,
-                "project": "",
-                "receipt": {
-                    "status": "needs_project",
-                    "message": "Adherence cue queries require an explicit project or session project.",
-                    "resource_kind": "context_cues",
-                    "missing_fields": ["project"],
-                    "next_safe_action": adherence_query_next_action(has_project=False),
-                },
-                "simple_interface": {"tool": "get", "mode": "query", "route": "adherence_cues"},
-                "next_safe_action": adherence_query_next_action(has_project=False),
-                "details_available": True,
-            }
-        cues = context_cues_for_query(query=query, project=project, state=state, max_cues=limit)
-        if not cues:
-            cues = context_cues_for_state(state=state, project=project, max_cues=limit)
-        return {
-            "state": state,
-            "project": project,
-            "receipt": {
-                "status": "accepted",
-                "message": "Natural adherence query resolved through context cues.",
-                "resource_kind": "context_cues",
-                "count": len(cues),
-                "next_safe_action": adherence_query_next_action(has_project=True),
-            },
-            "result": {
-                "status": "ok",
-                "query": query,
-                "context_cues": cues,
-                "no_verification_execution": True,
-            },
-            "simple_interface": {"tool": "get", "mode": "query", "route": "adherence_cues"},
-            "next_safe_action": adherence_query_next_action(has_project=True),
-            "details_available": True,
-        }
+    spec_route = select_simple_get_spec_route(query)
+    if spec_route:
+        routed = await execute_simple_get_spec_route(
+            api_base=api_base,
+            args=args,
+            query=query,
+            project=project,
+            limit=limit,
+            state=state,
+            route=spec_route,
+            dependencies=dependencies,
+        )
+        if routed is not None:
+            return routed
     memory_lookup_id = explicit_memory_lookup_id(query)
     if memory_lookup_id:
         if not project:
@@ -628,18 +589,20 @@ async def build_simple_get_query_response(
 
     artifact_list_type = explicit_artifact_list_type(query)
     if artifact_list_type and not project:
+        next_safe_action = "Call get again with project set to the target project."
+        receipt = {
+            "status": "needs_project",
+            "message": "Project-scoped artifact list query requires an explicit project or session project.",
+            "resource_kind": "artifact_list",
+            "missing_fields": ["project"],
+            "next_safe_action": next_safe_action,
+        }
         return {
             "state": state,
             "project": "",
-            "receipt": {
-                "status": "needs_project",
-                "message": "Project-scoped artifact list query requires an explicit project or session project.",
-                "resource_kind": "artifact_list",
-                "missing_fields": ["project"],
-                "next_safe_action": "Call get again with project set to the target project.",
-            },
+            "receipt": attach_public_diagnostic_incident(receipt=receipt, kind="missing_project_scope"),
             "simple_interface": {"tool": "get", "mode": "query", "route": "artifact_list"},
-            "next_safe_action": "Call get again with project set to the target project.",
+            "next_safe_action": next_safe_action,
             "details_available": True,
         }
     if artifact_list_type and project:
@@ -699,18 +662,20 @@ async def build_simple_get_query_response(
         }
     if is_planning_advisor_query(query):
         if not project:
+            next_safe_action = "Call get again with project set to the target project."
+            receipt = {
+                "status": "needs_project",
+                "message": "Planning advisor queries require an explicit project or session project.",
+                "resource_kind": "planning_advisor",
+                "missing_fields": ["project"],
+                "next_safe_action": next_safe_action,
+            }
             return {
                 "state": state,
                 "project": "",
-                "receipt": {
-                    "status": "needs_project",
-                    "message": "Planning advisor queries require an explicit project or session project.",
-                    "resource_kind": "planning_advisor",
-                    "missing_fields": ["project"],
-                    "next_safe_action": "Call get again with project set to the target project.",
-                },
+                "receipt": attach_public_diagnostic_incident(receipt=receipt, kind="missing_project_scope"),
                 "simple_interface": {"tool": "get", "mode": "query", "route": "planning_advisor"},
-                "next_safe_action": "Call get again with project set to the target project.",
+                "next_safe_action": next_safe_action,
                 "details_available": True,
             }
         data = await dependencies.get(
@@ -735,18 +700,20 @@ async def build_simple_get_query_response(
         }
     uses_project_expert = query_uses_project_expert(query, extract_task_id_like=dependencies.extract_task_id_like)
     if uses_project_expert and not project:
+        next_safe_action = "Call get again with project set to the target project, or reconnect with a session project."
+        receipt = {
+            "status": "needs_project",
+            "message": "Project-scoped read query requires an explicit project or session project.",
+            "resource_kind": "query",
+            "missing_fields": ["project"],
+            "next_safe_action": next_safe_action,
+        }
         return {
             "state": state,
             "project": "",
-            "receipt": {
-                "status": "needs_project",
-                "message": "Project-scoped read query requires an explicit project or session project.",
-                "resource_kind": "query",
-                "missing_fields": ["project"],
-                "next_safe_action": "Call get again with project set to the target project, or reconnect with a session project.",
-            },
+            "receipt": attach_public_diagnostic_incident(receipt=receipt, kind="missing_project_scope"),
             "simple_interface": {"tool": "get", "mode": "query"},
-            "next_safe_action": "Call get again with project set to the target project, or reconnect with a session project.",
+            "next_safe_action": next_safe_action,
             "details_available": True,
         }
     if not project:
@@ -1026,6 +993,181 @@ def _simple_get_route_spec() -> dict[str, Any]:
         return {}
 
 
+def select_simple_get_spec_route(query: str) -> dict[str, Any]:
+    text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
+    matches: list[tuple[float, int, dict[str, Any]]] = []
+    for route in _simple_get_route_spec().get("routes") or []:
+        if not isinstance(route, dict):
+            continue
+        for term in route.get("trigger_terms") or []:
+            value = str(term or "").strip().casefold()
+            if value and _query_contains_alias(text, value):
+                selected = dict(route)
+                selected["matched_trigger"] = value
+                try:
+                    priority = float(selected.get("priority") or 0.0)
+                except Exception:
+                    priority = 0.0
+                matches.append((priority, len(value), selected))
+                break
+    if not matches:
+        return {}
+    matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    selected = dict(matches[0][2])
+    selected["route_conflicts"] = [
+        {
+            "id": str(item[2].get("id") or ""),
+            "resource_kind": str(item[2].get("resource_kind") or ""),
+            "priority": item[0],
+            "matched_trigger": str(item[2].get("matched_trigger") or ""),
+        }
+        for item in matches[1:4]
+    ]
+    return selected
+
+
+async def execute_simple_get_spec_route(
+    *,
+    api_base: str,
+    args: dict[str, Any],
+    query: str,
+    project: str,
+    limit: int,
+    state: str,
+    route: dict[str, Any],
+    dependencies: SimpleReadDependencies,
+) -> dict[str, Any] | None:
+    route_id = str(route.get("id") or "").strip()
+    resource_kind = str(route.get("resource_kind") or route_id).strip()
+    matched_trigger = str(route.get("matched_trigger") or "").strip()
+    simple_interface = {
+        "tool": "get",
+        "mode": "query",
+        "route": route_id,
+        "route_source": "simple_get_routes",
+        "matched_trigger": matched_trigger,
+    }
+    simple_interface = {key: value for key, value in simple_interface.items() if value not in (None, "", [], {})}
+
+    if resource_kind == "storage_trust":
+        endpoint = str(route.get("endpoint") or "/admin/storage-trust").strip() or "/admin/storage-trust"
+        storage_path = endpoint
+        if project:
+            separator = "&" if "?" in storage_path else "?"
+            storage_path = f"{storage_path}{separator}project={quote(project, safe='')}"
+        data = await dependencies.get(api_base, storage_path)
+        result = data if isinstance(data, dict) else {}
+        if not _full_detail_requested(args):
+            result = compact_storage_trust_query_result(result)
+        next_safe_action = (
+            "Review storage trust warnings as system maintenance context; "
+            "do not treat hygiene cleanup as current-project work unless explicitly promoted."
+        )
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Natural read query resolved through storage trust.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "matched_trigger": matched_trigger,
+                "next_safe_action": next_safe_action,
+            },
+            "result": result,
+            "simple_interface": simple_interface,
+            "next_safe_action": next_safe_action,
+            "details_available": True,
+        }
+
+    if resource_kind == "context_cues":
+        if not project:
+            next_safe_action = adherence_query_next_action(has_project=False)
+            receipt = {
+                "status": "needs_project",
+                "message": "Adherence cue queries require an explicit project or session project.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "matched_trigger": matched_trigger,
+                "missing_fields": ["project"],
+                "next_safe_action": next_safe_action,
+            }
+            return {
+                "state": state,
+                "project": "",
+                "receipt": attach_public_diagnostic_incident(receipt=receipt, kind="missing_project_scope"),
+                "simple_interface": simple_interface,
+                "next_safe_action": next_safe_action,
+                "details_available": True,
+            }
+        cues = context_cues_for_query(query=query, project=project, state=state, max_cues=limit)
+        if not cues:
+            cues = context_cues_for_state(state=state, project=project, max_cues=limit)
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Natural adherence query resolved through context cues.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "matched_trigger": matched_trigger,
+                "count": len(cues),
+                "next_safe_action": adherence_query_next_action(has_project=True),
+            },
+            "result": {
+                "status": "ok",
+                "query": query,
+                "context_cues": cues,
+                "no_verification_execution": True,
+            },
+            "simple_interface": simple_interface,
+            "next_safe_action": adherence_query_next_action(has_project=True),
+            "details_available": True,
+        }
+
+    if resource_kind == "cognitive_health":
+        if not project:
+            next_safe_action = "Call get again with project set so cognitive health can check project-scoped workflow recall."
+            receipt = {
+                "status": "needs_project",
+                "message": "Cognitive health checks require an explicit project or session project.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "matched_trigger": matched_trigger,
+                "missing_fields": ["project"],
+                "next_safe_action": next_safe_action,
+            }
+            return {
+                "state": state,
+                "project": "",
+                "receipt": attach_public_diagnostic_incident(receipt=receipt, kind="missing_project_scope"),
+                "simple_interface": simple_interface,
+                "next_safe_action": next_safe_action,
+                "details_available": True,
+            }
+        packet = build_cognitive_health_packet(project=project, state=state, query=query, limit=limit)
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Natural read query resolved through cognitive health self-check.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "matched_trigger": matched_trigger,
+                "count": len(packet.get("checks") or []),
+                "next_safe_action": packet.get("next_safe_action"),
+            },
+            "result": packet,
+            "simple_interface": simple_interface,
+            "next_safe_action": packet.get("next_safe_action"),
+            "details_available": True,
+        }
+
+    return None
+
+
 def _artifact_lookup_spec() -> dict[str, Any]:
     try:
         return load_named_json_spec("search/artifact_lookup.json")
@@ -1043,17 +1185,13 @@ def _query_contains_alias(text: str, alias: str) -> bool:
 
 
 def explicit_storage_trust_query(query: str) -> bool:
-    text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
-    for route in (_simple_get_route_spec().get("routes") or []):
-        if not isinstance(route, dict) or str(route.get("id") or "") != "storage_trust":
-            continue
-        return any(str(term or "").casefold() in text for term in route.get("trigger_terms") or [])
-    return False
+    return str(select_simple_get_spec_route(query).get("id") or "") == "storage_trust"
 
 
 def compact_storage_trust_query_result(result: dict[str, Any]) -> dict[str, Any]:
     signals = result.get("signals") if isinstance(result.get("signals"), dict) else {}
     hygiene = result.get("data_hygiene") if isinstance(result.get("data_hygiene"), dict) else {}
+    maintenance = result.get("maintenance_suggestion") if isinstance(result.get("maintenance_suggestion"), dict) else {}
     playbook = result.get("playbook") if isinstance(result.get("playbook"), dict) else {}
     workflow = playbook.get("workflow") if isinstance(playbook.get("workflow"), dict) else {}
     scope_summary = hygiene.get("scope_summary") if isinstance(hygiene.get("scope_summary"), dict) else {}
@@ -1061,6 +1199,7 @@ def compact_storage_trust_query_result(result: dict[str, Any]) -> dict[str, Any]
     compact = {
         "status": result.get("status"),
         "summary": result.get("summary"),
+        "maintenance_suggestion": maintenance or None,
         "signals": {
             key: signals.get(key)
             for key in (
@@ -1069,16 +1208,15 @@ def compact_storage_trust_query_result(result: dict[str, Any]) -> dict[str, Any]
                 "manual_review_pending",
                 "quarantine_candidates",
                 "delete_ready",
-                "hygiene_scope_warnings",
             )
             if signals.get(key) not in (None, "", [], {})
         },
         "data_hygiene": {
             key: hygiene.get(key)
-            for key in ("status", "active_findings", "scope_summary")
+            for key in ("status", "active_findings")
             if hygiene.get(key) not in (None, "", [], {})
         },
-        "workflow_scope": workflow_scope or scope_summary,
+        "workflow_scope": None if maintenance else (workflow_scope or scope_summary),
         "next_actions": list(result.get("next_actions") or [])[:5],
     }
     return {key: value for key, value in compact.items() if value not in (None, "", [], {})}

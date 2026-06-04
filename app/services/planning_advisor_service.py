@@ -6,6 +6,7 @@ from typing import Any
 
 from app.services.mcp_workflow_specs import load_named_json_spec
 from app.services.stage_applicability_service import stage_allows_block
+from app.services.data_hygiene_service import build_maintenance_suggestion
 
 
 @lru_cache(maxsize=1)
@@ -130,7 +131,7 @@ def build_next_work_advisor(
     else:
         rule_id = "request_new_improvement"
         chosen = []
-    return {
+    advisor = {
         "status": "ready" if chosen else "empty",
         "project": project,
         "advisor": "planning_next_work",
@@ -142,4 +143,34 @@ def build_next_work_advisor(
             if chosen
             else "Create or import an improvement before starting implementation work."
         ),
+    }
+    maintenance_suggestion = _next_work_maintenance_suggestion(project=project)
+    if maintenance_suggestion:
+        advisor["maintenance_suggestion"] = maintenance_suggestion
+    return advisor
+
+
+def _next_work_maintenance_suggestion(*, project: str) -> dict[str, Any]:
+    try:
+        suggestion = build_maintenance_suggestion(current_project=project)
+    except Exception:
+        return {}
+    if str(suggestion.get("status") or "") != "warning":
+        return {}
+    return {
+        key: value
+        for key, value in suggestion.items()
+        if key
+        in {
+            "status",
+            "active_findings",
+            "top_dataset_classes",
+            "top_recommended_actions",
+            "scope",
+            "why_it_matters",
+            "next_safe_action",
+            "destructive_action_allowed",
+            "expand_refs",
+        }
+        and value not in (None, "", [], {})
     }

@@ -5,6 +5,7 @@
     {
       "id": "storage_trust",
       "resource_kind": "storage_trust",
+      "priority": 70,
       "trigger_terms": [
         "storage trust",
         "storage health",
@@ -22,6 +23,7 @@
     {
       "id": "adherence_cues",
       "resource_kind": "context_cues",
+      "priority": 60,
       "trigger_terms": [
         "adherence",
         "adherence cues",
@@ -40,6 +42,23 @@
         "do i remember the project rules",
         "am i following the workflow",
         "workflow adherence"
+      ],
+      "scope": "project_context_read"
+    },
+    {
+      "id": "cognitive_health",
+      "resource_kind": "cognitive_health",
+      "priority": 80,
+      "trigger_terms": [
+        "cognitive health",
+        "context recall health",
+        "agent context recall",
+        "orientation check",
+        "agent self check",
+        "self check packet",
+        "do i remember context",
+        "context health check",
+        "workflow memory check"
       ],
       "scope": "project_context_read"
     }

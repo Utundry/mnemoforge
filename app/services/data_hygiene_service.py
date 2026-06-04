@@ -2110,6 +2110,90 @@ def build_workflow_summary(*, limit: int = 1000, current_project: str | None = N
     }
 
 
+def build_maintenance_suggestion(*, current_project: str | None = None, limit: int = 1000) -> dict[str, Any]:
+    store = get_data_hygiene_store()
+    overview = store.overview(current_project=current_project)
+    workflow = build_workflow_summary(limit=limit, current_project=current_project)
+    scope_summary = workflow.get("scope_summary") if isinstance(workflow.get("scope_summary"), dict) else {}
+    active_findings = int(overview.get("active_findings") or 0)
+    manual_review_pending = workflow.get("manual_review_pending") if isinstance(workflow.get("manual_review_pending"), dict) else {}
+    quarantine_candidates = workflow.get("quarantine_candidates") if isinstance(workflow.get("quarantine_candidates"), dict) else {}
+    delete_ready = workflow.get("delete_ready") if isinstance(workflow.get("delete_ready"), dict) else {}
+    by_class = overview.get("by_class") if isinstance(overview.get("by_class"), dict) else {}
+    by_action = overview.get("by_action") if isinstance(overview.get("by_action"), dict) else {}
+    scope_warnings = scope_summary.get("warnings") if isinstance(scope_summary.get("warnings"), list) else []
+
+    if active_findings <= 0:
+        return {
+            "status": "ok",
+            "scope": _maintenance_scope_notice(scope_summary=scope_summary, current_project=current_project),
+            "why_it_matters": "No active hygiene pressure is currently known; normal project work can continue.",
+            "next_safe_action": "Continue normal workflow; rerun hygiene audit only when storage trust or search quality looks suspicious.",
+            "destructive_action_allowed": False,
+        }
+
+    next_action = "Review hygiene overview before promoting cleanup into current work."
+    if scope_warnings:
+        next_action = "Review scope warnings first; do not present system or other-project hygiene as current-project work."
+    elif manual_review_pending:
+        next_action = "Review manual-review hygiene findings before any destructive cleanup."
+    elif quarantine_candidates:
+        next_action = "Preview reviewed-delete remediation for quarantined synthetic/test traces before execution."
+    elif delete_ready:
+        next_action = "Run delete-dry-run before approved delete for live memories."
+
+    return {
+        "status": "warning",
+        "active_findings": active_findings,
+        "top_dataset_classes": _top_counts(by_class),
+        "top_recommended_actions": _top_counts(by_action),
+        "manual_review_pending": manual_review_pending,
+        "quarantine_candidates": quarantine_candidates,
+        "delete_ready": delete_ready,
+        "scope": _maintenance_scope_notice(scope_summary=scope_summary, current_project=current_project),
+        "sample_scope_warnings": scope_warnings[:3],
+        "why_it_matters": (
+            "Hygiene findings can pollute search, learned routes, context cues, and next-work selection; "
+            "maintenance should be explicit and scoped before cleanup."
+        ),
+        "next_safe_action": next_action,
+        "destructive_action_allowed": False,
+        "expand_refs": [
+            "admin:data-hygiene/workflow",
+            "admin:data-hygiene/findings",
+            "admin:data-hygiene/retention-report",
+        ],
+    }
+
+
+def _top_counts(values: dict[str, int], *, limit: int = 3) -> dict[str, int]:
+    ordered = sorted(
+        ((str(key), int(value or 0)) for key, value in values.items()),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return {key: value for key, value in ordered[:limit] if value > 0}
+
+
+def _maintenance_scope_notice(*, scope_summary: dict[str, Any], current_project: str | None = None) -> dict[str, Any]:
+    by_relation = scope_summary.get("by_relation") if isinstance(scope_summary.get("by_relation"), dict) else {}
+    relation = "system_or_unknown"
+    if by_relation:
+        relation = max(by_relation.items(), key=lambda item: int(item[1] or 0))[0]
+    notice = "Hygiene maintenance may affect system-wide or cross-project data; confirm scope before cleanup."
+    if current_project and relation == "current_project":
+        notice = f"Hygiene findings appear scoped to current project {current_project}."
+    elif current_project and relation == "outside_current_project":
+        notice = f"Hygiene findings mostly target other projects, not current project {current_project}."
+    elif current_project and relation == "system_or_unknown_scope":
+        notice = f"Hygiene findings have system/unknown scope; do not treat them as current project {current_project} work."
+    return {
+        "current_project": str(current_project or ""),
+        "dominant_relation": relation,
+        "total_findings": int(scope_summary.get("total_findings") or 0),
+        "notice": notice,
+    }
+
+
 def build_ai_hygiene_resolution_plan(*, limit: int = 1000, sample_size: int = 10) -> dict[str, Any]:
     store = get_data_hygiene_store()
     overview = store.overview()

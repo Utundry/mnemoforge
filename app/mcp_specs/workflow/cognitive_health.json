@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "purpose": "Generic read-only cognitive health self-check packets for agent context recall. Keep checks project-agnostic; project-specific runtime details belong in governed project data.",
+  "default_max_checks": 5,
+  "checks": [
+    {
+      "id": "canonical_source_orientation",
+      "severity": "P0",
+      "nudge_priority": 50,
+      "stage_scope": ["planning", "implementation", "verification", "checkpointing", "handoff", "operator_review"],
+      "question": "What is the canonical source of project state for this work?",
+      "expected_cues": ["law:mcp_first_workflow_context"],
+      "risk_if_failed": "Agent may rely on chat memory, local files, or direct backend access for governed project state."
+    },
+    {
+      "id": "next_safe_action_orientation",
+      "severity": "P0",
+      "nudge_priority": 60,
+      "stage_scope": ["planning", "implementation", "verification", "checkpointing", "handoff", "operator_review"],
+      "question": "What is the next safe action from the latest public MCP receipt?",
+      "expected_cues": ["law:mcp_first_workflow_context", "law:checkpoint_after_work_slice"],
+      "risk_if_failed": "Agent may continue from an invented plan instead of the governed workflow state."
+    },
+    {
+      "id": "ownership_before_mutation",
+      "severity": "P0",
+      "nudge_priority": 90,
+      "stage_scope": ["implementation", "checkpointing", "handoff"],
+      "question": "Do I have an owned task claim and continuation token before mutating task state?",
+      "expected_cues": ["adherence:claim_before_mutation"],
+      "risk_if_failed": "Agent may record progress, finish, or mutate task state without ownership proof."
+    },
+    {
+      "id": "verification_boundary_awareness",
+      "severity": "P0",
+      "nudge_priority": 90,
+      "stage_scope": ["verification", "live_validation"],
+      "question": "Which verification policy applies, and is live/external validation explicitly intended?",
+      "expected_cues": ["law:test_contour_before_live", "adherence:product_surface_practical_validation"],
+      "risk_if_failed": "Agent may confuse formal verification with live diagnostic exploitation."
+    },
+    {
+      "id": "data_through_code_awareness",
+      "severity": "P1",
+      "nudge_priority": 40,
+      "stage_scope": ["planning", "implementation"],
+      "question": "Am I solving this through a general data/spec mechanism rather than one-off code branches?",
+      "expected_cues": ["law:data_through_code", "risk:localized_hardcoding"],
+      "risk_if_failed": "Agent may add narrow special cases instead of improving the general system."
+    }
+  ]
+}

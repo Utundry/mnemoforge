@@ -4,6 +4,27 @@
   "purpose": "Declarative project_context route examples and scoring hints.",
   "routes": [
     {
+      "intent_type": "task_status_list",
+      "tool": "list_artifacts",
+      "mutating": false,
+      "examples": [
+        "list completed tasks",
+        "show done tasks",
+        "find latest implemented tasks",
+        "show resolved task list",
+        "list finished project tasks"
+      ],
+      "bonus_terms": ["task", "tasks", "done", "completed", "finished", "implemented", "resolved", "closed"],
+      "payload_template": {
+        "project": "{project}",
+        "type": "task",
+        "status": "{status_filter}",
+        "query": "{topic_intent}",
+        "limit": "{limit:50:200}"
+      },
+      "reason": "Task lifecycle list requests map to status-filtered artifact search, not single-task replay."
+    },
+    {
       "intent_type": "artifact_lookup",
       "tool": "list_artifacts",
       "mutating": false,

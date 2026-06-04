@@ -86,8 +86,11 @@ from app.services.mcp_mailbox_read import (
 from app.services.mcp_simple_read_actions import (
     PublicRefDependencies,
     SimpleReadDependencies,
+    artifact_list_status_filter,
+    artifact_topic_query,
     build_simple_get_query_response,
     build_simple_public_ref_response,
+    explicit_artifact_list_type,
 )
 from app.services.mcp_simple_surface_actions import (
     SimpleSurfaceDependencies,
@@ -155,6 +158,7 @@ from app.services.mcp_grouped_tool_dispatch_actions import (
     execute_grouped_memory_or_runtime_action,
 )
 from app.services.mcp_workflow_specs import load_route_catalog_spec, load_tool_family_registry, load_tool_surface_spec
+from app.services.data_hygiene_service import build_maintenance_suggestion
 from app.services.mcp_handoff_actions import (
     HANDOFF_ACTIONS,
     HandoffActionDependencies,
@@ -3191,6 +3195,9 @@ def _project_context_route(
     project = str(args.get("project_id") or args.get("project") or "mnemoforge").strip() or "mnemoforge"
     task_id = str(args.get("task_id") or _extract_task_id_like_from_text(intent)).strip()
     task_id_is_full = _is_full_uuid(task_id)
+    artifact_list_type = explicit_artifact_list_type(intent)
+    artifact_status = artifact_list_status_filter(intent) if artifact_list_type else ""
+    artifact_topic = artifact_topic_query(intent, artifact_list_type) if artifact_list_type else ""
     task = str(args.get("task") or intent or "Retrieve project context.").strip()
     detail = str(args.get("detail") or "compact").strip().lower()
     if detail not in {"compact", "full"}:
@@ -3217,20 +3224,37 @@ def _project_context_route(
 
     route_args = {**args, "task_id": task_id} if task_id else args
     catalog_route, route_candidates = _selected_catalog_route(intent, _PROJECT_CONTEXT_ROUTE_CATALOG, route_args)
+    if artifact_list_type:
+        catalog_route = _catalog_route_by_intent(_PROJECT_CONTEXT_ROUTE_CATALOG, "task_status_list" if artifact_list_type == "task" and artifact_status else "artifact_lookup") or catalog_route
+        route_candidates = [
+            {
+                "intent_type": str(catalog_route.get("intent_type") if catalog_route else "artifact_lookup"),
+                "tool": "list_artifacts",
+                "score": 1.0,
+                "matched_example": "status-filtered artifact list" if artifact_status else "artifact list",
+                "scorer": "lexical",
+            },
+            *[
+                item
+                for item in route_candidates
+                if item.get("intent_type") not in {"artifact_lookup", "task_status_list"}
+            ],
+        ][:3]
     if llm_decision and _catalog_route_by_intent(_PROJECT_CONTEXT_ROUTE_CATALOG, str(llm_decision.get("intent_type") or "")):
         chosen = _catalog_route_by_intent(_PROJECT_CONTEXT_ROUTE_CATALOG, str(llm_decision.get("intent_type") or ""))
         assert chosen is not None
-        catalog_route = chosen
-        route_candidates = [
-            {
-                "intent_type": chosen["intent_type"],
-                "tool": chosen["tool"],
-                "score": round(float(llm_decision.get("confidence") or 0.0), 3),
-                "matched_example": str(llm_decision.get("matched_example") or "llm_disambiguation"),
-                "scorer": "llm",
-            },
-            *[item for item in route_candidates if item.get("intent_type") != chosen["intent_type"]],
-        ][:3]
+        if not artifact_list_type:
+            catalog_route = chosen
+            route_candidates = [
+                {
+                    "intent_type": chosen["intent_type"],
+                    "tool": chosen["tool"],
+                    "score": round(float(llm_decision.get("confidence") or 0.0), 3),
+                    "matched_example": str(llm_decision.get("matched_example") or "llm_disambiguation"),
+                    "scorer": "llm",
+                },
+                *[item for item in route_candidates if item.get("intent_type") != chosen["intent_type"]],
+            ][:3]
     route["route_candidates"] = route_candidates
     if catalog_route and route_candidates:
         route.update(
@@ -3269,7 +3293,22 @@ def _project_context_route(
                 "limit": min(max(10, int(args.get("limit") or 50)), 200),
             },
         )
-    elif route["intent_type"] == "task_details" or (task_id and route["intent_type"] == "enrich_context"):
+    elif artifact_list_type:
+        route.update(
+            tool="list_artifacts",
+            intent_type="task_status_list" if artifact_list_type == "task" and artifact_status else "artifact_lookup",
+            structural_match=True,
+            confidence=max(0.9, float(route.get("confidence") or 0.0)),
+            reason="Task or artifact list requests map to unified artifact search; single-task replay requires an explicit task_id.",
+            payload={
+                "project": project,
+                "type": None if artifact_list_type == "all" else artifact_list_type,
+                "status": artifact_status,
+                "query": artifact_topic,
+                "limit": min(max(1, int(args.get("limit") or 50)), 200),
+            },
+        )
+    elif task_id_is_full and (route["intent_type"] == "task_details" or route["intent_type"] == "enrich_context"):
         route.update(
             tool="pull_task_context",
             intent_type="task_details",
@@ -4049,8 +4088,9 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         args=args,
     )
     await _session_observe(session_id, "project_work:route", {"route_telemetry": route_telemetry})
+    maintenance_suggestion = _project_work_maintenance_suggestion(route=route, args=args)
 
-    return {
+    payload = {
         "status": "executed" if executed else "planned",
         "action_status": action_card["action_status"],
         "facade": "project_work",
@@ -4078,6 +4118,40 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         "warnings": warnings,
         "next_safe_action": next_safe_action,
         "weak_model_guardrail": weak_model_guardrail,
+    }
+    if maintenance_suggestion:
+        payload["maintenance_suggestion"] = maintenance_suggestion
+    return payload
+
+
+def _project_work_maintenance_suggestion(*, route: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    if str(route.get("intent_type") or "") != "next_priority":
+        return {}
+    project = str((route.get("payload") or {}).get("project") or args.get("project") or "").strip()
+    if not project:
+        return {}
+    try:
+        suggestion = build_maintenance_suggestion(current_project=project)
+    except Exception:
+        return {}
+    if str(suggestion.get("status") or "") != "warning":
+        return {}
+    return {
+        key: value
+        for key, value in suggestion.items()
+        if key
+        in {
+            "status",
+            "active_findings",
+            "top_dataset_classes",
+            "top_recommended_actions",
+            "scope",
+            "why_it_matters",
+            "next_safe_action",
+            "destructive_action_allowed",
+            "expand_refs",
+        }
+        and value not in (None, "", [], {})
     }
 
 
