@@ -2171,6 +2171,7 @@ class TestMcpToolExecution:
         class FakeRoutePatternStore:
             def hygiene_report(self, *, known_tools: set[str] | None = None, limit: int = 100, stale_after_days: int = 30):
                 assert "list_open_tasks" in (known_tools or set())
+                assert "project_work" in (known_tools or set())
                 return {
                     "status": "ok",
                     "summary": {"active_patterns": 1, "disabled_patterns": 0, "findings": 1},
@@ -2196,6 +2197,44 @@ class TestMcpToolExecution:
         assert data["receipt"]["status"] == "accepted"
         assert data["result"]["summary"]["facade_filter"] == "project_work"
         assert data["result"]["summary"]["returned_findings"] == 1
+
+    async def test_mailbox_submit_diagnostic_inspection_returns_read_only_packet(self, monkeypatch):
+        from app.services import mcp_mailbox_actions
+
+        def fake_inspection_packet(*, project: str, payload: dict, diagnostic: bool = False):
+            assert project == "alpha"
+            assert payload["target"] == "routing"
+            assert diagnostic is True
+            return {
+                "status": "ok",
+                "target": "routing",
+                "read_only": True,
+                "summary": {"sections": ["routing"], "findings": 1, "likely_source": "route_pattern_store"},
+                "findings": [{"section": "routing", "type": "unknown_tool", "severity": "high"}],
+                "sections": {"routing": {"summary": {"active_patterns": 1}}},
+                "next_diagnostic_action": "Use route_feedback only after confirming a concrete misroute.",
+            }
+
+        monkeypatch.setattr(mcp_mailbox_actions, "build_diagnostic_inspection_packet", fake_inspection_packet)
+
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "operator_review",
+                "runtime_profile_id": "diagnostic_operator",
+                "diagnostic": True,
+                "form_id": "diagnostic_inspection",
+                "payload": {"project": "alpha", "target": "routing", "facade": "project_work"},
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["mode"] == "read"
+        assert data["result"]["read_only"] is True
+        assert data["result"]["summary"]["likely_source"] == "route_pattern_store"
 
     async def test_mailbox_submit_record_progress_without_task_records_memory(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
@@ -3369,7 +3408,7 @@ class TestMcpToolExecution:
         result = json.loads(
             await mcp_sse._execute_tool(
                 "get",
-                {"project": "alpha", "query": "найди реализованную задачу alpha", "limit": 5},
+                {"project": "alpha", "query": "find implemented task alpha", "limit": 5},
                 "http://test",
             )
         )

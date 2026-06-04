@@ -26,6 +26,28 @@ def test_route_pattern_store_reuses_exact_pattern(tmp_path):
     assert match["tool"] == "get_project_readiness"
 
 
+def test_route_pattern_store_preview_match_does_not_record_hit(tmp_path):
+    store = RoutePatternStore(tmp_path / "route_patterns.db")
+    pattern_id = store.record(
+        facade="project_context",
+        pattern="find recent implemented tasks",
+        intent_type="artifact_lookup",
+        tool="list_artifacts",
+        confidence=0.86,
+    )
+
+    preview = store.preview_match(
+        facade="project_context",
+        pattern="find recent implemented tasks",
+        allowed_intent_types={"artifact_lookup"},
+    )
+
+    assert preview is not None
+    assert preview["pattern_id"] == pattern_id
+    pattern = store.list_patterns(facade="project_context", disabled=False)[0]
+    assert pattern["hit_count"] == 0
+
+
 def test_route_pattern_store_reuses_semantic_pattern(tmp_path):
     store = RoutePatternStore(tmp_path / "route_patterns.db")
     store.record(

@@ -1,0 +1,57 @@
+{
+  "id": "diagnostic_inspection",
+  "title": "Diagnostic inspection",
+  "purpose": "Read a compact diagnostic packet for routing, learning eligibility, and public-ref resolution without mutating learned routes or project data.",
+  "states": ["operator_review"],
+  "mode": "read",
+  "required_fields": ["project"],
+  "optional_fields": [
+    "target",
+    "facade",
+    "query",
+    "ref",
+    "artifact_type",
+    "source",
+    "metadata",
+    "include_disabled",
+    "limit",
+    "stale_after_days"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "target": {
+        "type": "string",
+        "enum": ["all", "routing", "route_pattern", "learning", "eligibility", "artifact", "ref", "public_ref"],
+        "default": "all"
+      },
+      "facade": {"type": "string"},
+      "query": {"type": "string"},
+      "ref": {"type": "string"},
+      "artifact_type": {"type": "string"},
+      "source": {"type": "string"},
+      "metadata": {"type": "object"},
+      "include_disabled": {"type": "boolean", "default": false},
+      "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+      "stale_after_days": {"type": "integer", "minimum": 1, "maximum": 365, "default": 30}
+    },
+    "required": ["project"]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "none"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["route_hygiene", "route_feedback"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "diagnostic_inspection_packet",
+      "mutation": false
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status"]
+  },
+  "public_hint": "Use in operator_review after a concrete routing, learning, or public-ref issue is observed; do not use it as a normal project context packet."
+}

@@ -312,6 +312,61 @@ class RoutePatternStore:
         self._record_hit(str(best[1]["id"]))
         return _row_to_route(best[1], backend_used="learned_semantic", score=best[0], matched_by="semantic")
 
+    def preview_match(
+        self,
+        *,
+        facade: str,
+        pattern: str,
+        allowed_intent_types: set[str] | None = None,
+        semantic_threshold: float = 0.6,
+    ) -> dict[str, Any] | None:
+        normalized = _normalize_pattern(pattern)
+        if not facade or not normalized:
+            return None
+        allowed = set(allowed_intent_types or set())
+        pattern_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        tokens = set(_pattern_tokens(normalized))
+        simhash = _simhash64(list(tokens))
+        with self._lock:
+            exact = self._conn.execute(
+                """
+                SELECT * FROM route_patterns
+                WHERE facade = ? AND pattern_hash = ? AND disabled = 0
+                """,
+                (facade, pattern_hash),
+            ).fetchone()
+            if exact and (not allowed or exact["intent_type"] in allowed):
+                return _row_to_route(exact, backend_used="learned_exact", score=1.0, matched_by="exact")
+
+            rows = self._conn.execute(
+                """
+                SELECT * FROM route_patterns
+                WHERE facade = ? AND disabled = 0
+                ORDER BY updated_at DESC
+                LIMIT 200
+                """,
+                (facade,),
+            ).fetchall()
+
+        best: tuple[float, sqlite3.Row] | None = None
+        for row in rows:
+            if allowed and row["intent_type"] not in allowed:
+                continue
+            try:
+                row_tokens = set(json.loads(row["tokens_json"] or "[]"))
+                row_simhash = int(row["simhash64"] or "0")
+            except Exception:
+                continue
+            score = _jaccard(tokens, row_tokens)
+            if tokens and row_tokens and _hamming64(simhash, row_simhash) <= 8:
+                score = max(score, 0.78)
+            if score >= semantic_threshold and (best is None or score > best[0]):
+                best = (score, row)
+
+        if not best:
+            return None
+        return _row_to_route(best[1], backend_used="learned_semantic", score=best[0], matched_by="semantic")
+
     def _record_hit(self, pattern_id: str) -> None:
         with self._lock:
             self._conn.execute(

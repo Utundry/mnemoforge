@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
 from app.services.evidence_classification_service import classify_evidence_items
+from app.services.diagnostic_inspection_service import build_diagnostic_inspection_packet
 from app.services.mcp_mailbox import (
     build_mailbox_mutation_packet,
     build_mailbox_submit_receipt,
@@ -166,6 +167,8 @@ async def build_mailbox_submit_packet(
         )
     if form_id == "set_feature_gate":
         return mailbox_set_feature_gate(**common)
+    if form_id == "diagnostic_inspection":
+        return mailbox_diagnostic_inspection(**common)
     if form_id == "route_hygiene":
         return mailbox_route_hygiene(**common)
     if form_id == "route_feedback":
@@ -1319,6 +1322,35 @@ def mailbox_route_hygiene(
     }
 
 
+def mailbox_diagnostic_inspection(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+) -> dict[str, Any]:
+    result = build_diagnostic_inspection_packet(
+        project=project,
+        payload=payload,
+        diagnostic=diagnostic,
+    )
+    return {
+        "state": state,
+        "project": project,
+        "receipt": {
+            "status": "accepted",
+            "form_id": form.id,
+            "mode": form.mode,
+            "message": "Diagnostic inspection packet generated.",
+            "next_safe_action": result.get("next_diagnostic_action", "Continue normal workflow."),
+        },
+        "result": result,
+        "next_safe_action": result.get("next_diagnostic_action", "Continue normal workflow."),
+    }
+
+
 def mailbox_route_feedback(
     *,
     form,
@@ -1490,6 +1522,11 @@ def _known_route_tools() -> set[str]:
     tools.update(
         {
             "ask_project",
+            "project_work",
+            "project_rules",
+            "project_context",
+            "project_verify",
+            "project_capture",
             "get",
             "submit",
             "state",

@@ -26,10 +26,7 @@
     "last",
     "newest",
     "project",
-    "of",
-    "последн",
-    "проект",
-    "по"
+    "of"
   ],
   "alias_groups": [
     {
@@ -76,10 +73,7 @@
       "in progress",
       "not done",
       "not completed",
-      "not resolved",
-      "открыт",
-      "актив",
-      "нереш"
+      "not resolved"
     ],
     "done": [
       "done",
@@ -89,11 +83,7 @@
       "completed",
       "finished",
       "implemented",
-      "realized",
-      "закрыт",
-      "решен",
-      "решён",
-      "реализ"
+      "realized"
     ]
   },
   "status_weights": {
