@@ -128,6 +128,67 @@ def test_route_pattern_store_records_positive_feedback_for_user_phrasing(tmp_pat
     )
 
 
+def test_route_pattern_store_blocks_diagnostic_learning_events(tmp_path):
+    store = RoutePatternStore(tmp_path / "route_patterns.db")
+
+    pattern_id = store.record(
+        facade="ask_project",
+        pattern="why did this route misroute to project_work?",
+        intent_type="project_work",
+        tool="project_work",
+        confidence=0.92,
+        source="llm",
+        metadata={"diagnostic": True, "source_event_class": "diagnostic"},
+    )
+
+    assert pattern_id == ""
+    assert store.match(
+        facade="ask_project",
+        pattern="why did this route misroute to project_work?",
+        allowed_intent_types={"project_work"},
+    ) is None
+
+
+def test_route_pattern_store_blocks_synthetic_test_learning_events(tmp_path):
+    store = RoutePatternStore(tmp_path / "route_patterns.db")
+
+    pattern_id = store.record(
+        facade="project_context",
+        pattern="synthetic weak model scenario should not become production route",
+        intent_type="artifact_lookup",
+        tool="list_artifacts",
+        confidence=0.9,
+        source="synthetic_test",
+        metadata={"source_event_class": "synthetic_test"},
+    )
+
+    assert pattern_id == ""
+    assert store.list_patterns(facade="project_context", disabled=False) == []
+
+
+def test_route_pattern_store_explicit_allow_overrides_blocked_diagnostic_context(tmp_path):
+    store = RoutePatternStore(tmp_path / "route_patterns.db")
+
+    pattern_id = store.record(
+        facade="ask_project",
+        pattern="operator approved diagnostic phrase as stable alias",
+        intent_type="project_context",
+        tool="project_context",
+        confidence=0.8,
+        source="llm",
+        metadata={"diagnostic": True, "allow_learning": True},
+    )
+
+    assert pattern_id
+    match = store.match(
+        facade="ask_project",
+        pattern="operator approved diagnostic phrase as stable alias",
+        allowed_intent_types={"project_context"},
+    )
+    assert match is not None
+    assert match["metadata"]["learning_eligibility"]["decision"] == "explicit_allow"
+
+
 def test_route_pattern_store_hygiene_report_flags_unknown_tools(tmp_path):
     store = RoutePatternStore(tmp_path / "route_patterns.db")
     pattern_id = store.record(

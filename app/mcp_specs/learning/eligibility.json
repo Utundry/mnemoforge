@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "purpose": "Declarative eligibility policy for route-pattern and self-learning writes.",
+  "default_decision": "allow",
+  "approved_sources": [
+    "operator_feedback",
+    "user_feedback"
+  ],
+  "blocked_sources": [
+    "diagnostic",
+    "synthetic_test",
+    "test",
+    "problem_report",
+    "failed_route"
+  ],
+  "blocked_event_classes": [
+    "diagnostic",
+    "operator_review",
+    "synthetic_test",
+    "test",
+    "problem_report",
+    "failed_route",
+    "misroute_analysis",
+    "hygiene_review"
+  ],
+  "blocked_states": [
+    "operator_review"
+  ],
+  "diagnostic_markers": [
+    "diagnostic",
+    "route_hygiene",
+    "misroute",
+    "problem_report",
+    "failed_route"
+  ],
+  "explicit_allow_keys": [
+    "allow_learning",
+    "learning_approved"
+  ],
+  "explicit_block_keys": [
+    "do_not_train",
+    "exclude_from_learning"
+  ]
+}

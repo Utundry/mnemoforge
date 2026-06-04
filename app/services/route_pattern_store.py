@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+from app.services.learning_eligibility_service import evaluate_learning_eligibility
 from app.services.system_data_root import data_path
 
 _DB_PATH = data_path("route_patterns.db")
@@ -183,6 +184,14 @@ class RoutePatternStore:
         source: str = "llm",
         metadata: dict[str, Any] | None = None,
     ) -> str:
+        eligibility = evaluate_learning_eligibility(
+            source=source,
+            metadata=metadata or {},
+            pattern=pattern,
+        )
+        if not eligibility.get("eligible"):
+            return ""
+        metadata = eligibility.get("metadata") if isinstance(eligibility.get("metadata"), dict) else metadata
         normalized = _normalize_pattern(pattern)
         if not facade or not normalized or not intent_type or not tool:
             return ""

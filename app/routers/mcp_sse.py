@@ -382,6 +382,9 @@ async def _recover_unknown_tool_call(name: str, args: dict[str, Any]) -> dict[st
                 "matched_example": normalized,
                 "reason": decision.get("reason") or "Recovered unknown tool through expert routing.",
                 "intent": decision.get("intent") or "",
+                "diagnostic": bool(args.get("diagnostic", False)),
+                "response_format": str(args.get("response_format") or "").strip(),
+                "source_event_class": str(args.get("source_event_class") or args.get("event_class") or "").strip(),
             },
         )
     except Exception:
@@ -1751,6 +1754,7 @@ async def _normalize_mcp_intent(intent: str, *, project_id: str = "", top_n: int
         text=str(intent or "").strip(),
         route={"intent_type": resolved_tool, "tool": resolved_tool, "mutating": False, "confidence": result["confidence"], "reason": result["rationale"]},
         decision={"confidence": result["confidence"], "matched_example": str(intent or "").strip()[:120], "reason": result["rationale"]},
+        args={"project": project_id},
     )
     result["route_telemetry"] = {"backend_used": "llm", "learned_pattern_id": pattern_id or ""}
     return result
@@ -2765,6 +2769,7 @@ async def _ask_project_select_route(args: dict[str, Any]) -> dict[str, Any]:
         text=question,
         route={"intent_type": llm_route["facade"], "tool": llm_route["facade"], "mutating": False, "confidence": llm_route["confidence"], "reason": llm_route["reason"]},
         decision={"confidence": llm_route["confidence"], "matched_example": question[:120], "reason": llm_route["reason"]},
+        args=args,
     )
     llm_route["scorer"] = {
         "backend_requested": "auto",
@@ -2992,9 +2997,11 @@ def _record_learned_route_pattern(
     text: str,
     route: dict[str, Any],
     decision: dict[str, Any],
+    args: dict[str, Any] | None = None,
 ) -> str:
     if not text.strip() or not route.get("intent_type") or not route.get("tool"):
         return ""
+    request_args = args if isinstance(args, dict) else {}
     try:
         return get_route_pattern_store().record(
             facade=facade,
@@ -3007,6 +3014,10 @@ def _record_learned_route_pattern(
             metadata={
                 "matched_example": decision.get("matched_example") or route.get("matched_example") or "",
                 "reason": decision.get("reason") or route.get("reason") or "",
+                "state": str(request_args.get("state") or "").strip(),
+                "diagnostic": bool(request_args.get("diagnostic", False)),
+                "response_format": str(request_args.get("response_format") or "").strip(),
+                "source_event_class": str(request_args.get("source_event_class") or request_args.get("event_class") or "").strip(),
             },
         )
     except Exception:
@@ -3163,7 +3174,7 @@ async def _facade_route_with_backend(
             "llm_reason": str(decision.get("reason") or "").strip(),
         },
     )
-    pattern_id = _record_learned_route_pattern(facade=facade, text=text, route=route, decision=decision)
+    pattern_id = _record_learned_route_pattern(facade=facade, text=text, route=route, decision=decision, args=args)
     if pattern_id:
         route.setdefault("scorer", {})["learned_pattern_id"] = pattern_id
     return route
@@ -3881,7 +3892,7 @@ async def _project_work_route_with_backend(args: dict[str, Any]) -> dict[str, An
             "llm_reason": str(decision.get("reason") or "").strip(),
         },
     )
-    pattern_id = _record_learned_route_pattern(facade="project_work", text=text, route=route, decision=decision)
+    pattern_id = _record_learned_route_pattern(facade="project_work", text=text, route=route, decision=decision, args=args)
     if pattern_id:
         route.setdefault("scorer", {})["learned_pattern_id"] = pattern_id
     return route

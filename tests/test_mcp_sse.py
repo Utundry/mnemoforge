@@ -7286,6 +7286,35 @@ class TestMcpToolExecution:
         assert '"resolved_tool": "list_open_tasks"' in result
         assert '"learned_pattern_id": "learned-norm-1"' in result
 
+    async def test_diagnostic_ask_project_llm_route_does_not_train_route_pattern(self, monkeypatch, tmp_path):
+        from app.services.route_pattern_store import RoutePatternStore
+
+        store = RoutePatternStore(tmp_path / "route_patterns.db")
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        monkeypatch.setattr(mcp_sse, "_learned_route_match", lambda **kwargs: None)
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: store)
+
+        async def fake_llm_route(args: dict):
+            return {
+                "facade": "project_work",
+                "confidence": 0.91,
+                "reason": "Diagnostic query about a misroute should not become a production route.",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_ask_project_llm_route", fake_llm_route)
+        route = await mcp_sse._ask_project_select_route(
+            {
+                "project": "alpha",
+                "question": "why did this route misroute to project_work?",
+                "diagnostic": True,
+                "response_format": "diagnostic",
+            }
+        )
+
+        scorer = route.get("scorer") if isinstance(route.get("scorer"), dict) else {}
+        assert scorer.get("learned_pattern_id") == ""
+        assert store.list_patterns(facade="ask_project", disabled=False) == []
+
     async def test_list_tool_families_returns_compact_catalog(self, monkeypatch):
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
 
