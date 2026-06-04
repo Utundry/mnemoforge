@@ -56,6 +56,7 @@
     "operator_review": [
       "get_task_context",
       "diagnostic_inspection",
+      "developer_feedback_packet",
       "route_hygiene",
       "route_feedback",
       "create_law",

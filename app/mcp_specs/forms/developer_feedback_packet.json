@@ -1,0 +1,70 @@
+{
+  "id": "developer_feedback_packet",
+  "title": "Developer feedback packet",
+  "purpose": "Build a compact read-only packet for an unresolved system issue so an operator can review and send it to project maintainers without automatic external reporting.",
+  "states": ["operator_review"],
+  "mode": "read",
+  "required_fields": ["project", "title", "observed_behavior", "expected_behavior"],
+  "optional_fields": [
+    "area",
+    "severity",
+    "impact",
+    "reproduction_steps",
+    "evidence_refs",
+    "next_action",
+    "include_diagnostic",
+    "diagnostic_payload",
+    "facade",
+    "query",
+    "ref",
+    "artifact_type",
+    "limit"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "title": {"type": "string"},
+      "area": {
+        "type": "string",
+        "enum": ["routing", "learning", "hygiene", "public_ref", "lifecycle", "mcp_surface", "storage", "other"],
+        "default": "other"
+      },
+      "severity": {
+        "type": "string",
+        "enum": ["info", "low", "medium", "high", "critical"],
+        "default": "medium"
+      },
+      "observed_behavior": {"type": "string"},
+      "expected_behavior": {"type": "string"},
+      "impact": {"type": "string"},
+      "reproduction_steps": {"type": "array", "items": {"type": "string"}},
+      "evidence_refs": {"type": "array", "items": {"type": "string"}},
+      "next_action": {"type": "string"},
+      "include_diagnostic": {"type": "boolean", "default": true},
+      "diagnostic_payload": {"type": "object"},
+      "facade": {"type": "string"},
+      "query": {"type": "string"},
+      "ref": {"type": "string"},
+      "artifact_type": {"type": "string"},
+      "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10}
+    },
+    "required": ["project", "title", "observed_behavior", "expected_behavior"]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "none"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["diagnostic_inspection", "create_improvement"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "developer_feedback_packet",
+      "mutation": false
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status"]
+  },
+  "public_hint": "Use after a concrete unresolved system issue is observed; review the packet before sending it to maintainers or promoting it into an improvement."
+}

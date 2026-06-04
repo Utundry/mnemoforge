@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
+from app.services.developer_feedback_packet_service import build_developer_feedback_packet
 from app.services.evidence_classification_service import classify_evidence_items
 from app.services.diagnostic_inspection_service import build_diagnostic_inspection_packet
 from app.services.mcp_mailbox import (
@@ -169,6 +170,8 @@ async def build_mailbox_submit_packet(
         return mailbox_set_feature_gate(**common)
     if form_id == "diagnostic_inspection":
         return mailbox_diagnostic_inspection(**common)
+    if form_id == "developer_feedback_packet":
+        return mailbox_developer_feedback_packet(**common)
     if form_id == "route_hygiene":
         return mailbox_route_hygiene(**common)
     if form_id == "route_feedback":
@@ -1348,6 +1351,35 @@ def mailbox_diagnostic_inspection(
         },
         "result": result,
         "next_safe_action": result.get("next_diagnostic_action", "Continue normal workflow."),
+    }
+
+
+def mailbox_developer_feedback_packet(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+) -> dict[str, Any]:
+    result = build_developer_feedback_packet(
+        project=project,
+        payload=payload,
+        diagnostic=diagnostic,
+    )
+    return {
+        "state": state,
+        "project": project,
+        "receipt": {
+            "status": result.get("status", "ready"),
+            "form_id": form.id,
+            "mode": form.mode,
+            "message": "Developer feedback packet generated.",
+            "next_safe_action": result.get("next_safe_action", "Review the packet before sending it to maintainers."),
+        },
+        "result": result,
+        "next_safe_action": result.get("next_safe_action", "Review the packet before sending it to maintainers."),
     }
 
 

@@ -1267,6 +1267,18 @@ def test_diagnostic_inspection_form_is_operator_review_only() -> None:
     assert "postconditions" not in form
 
 
+def test_developer_feedback_packet_form_is_operator_review_only() -> None:
+    planning = build_mailbox_state_packet(state="planning", project="mnemoforge", detail="full")
+    operator_review = build_mailbox_state_packet(state="operator_review", project="mnemoforge")
+
+    assert not any(form["form_id"] == "developer_feedback_packet" for form in planning["forms"])
+    form = next(item for item in operator_review["forms"] if item["form_id"] == "developer_feedback_packet")
+    assert form["mode"] == "read"
+    assert {"project", "title", "observed_behavior", "expected_behavior"} <= set(form["required_fields"])
+    assert {"diagnostic_payload", "evidence_refs", "reproduction_steps"} <= set(form["optional_fields"])
+    assert "postconditions" not in form
+
+
 def test_mailbox_state_internal_diagnostics_include_runtime_feature_gate_overrides() -> None:
     from app.services.mcp_feature_gates import get_mcp_feature_gate_store
 

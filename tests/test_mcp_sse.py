@@ -2236,6 +2236,56 @@ class TestMcpToolExecution:
         assert data["result"]["read_only"] is True
         assert data["result"]["summary"]["likely_source"] == "route_pattern_store"
 
+    async def test_mailbox_submit_developer_feedback_packet_returns_reviewable_report(self, monkeypatch):
+        from app.services import mcp_mailbox_actions
+
+        def fake_feedback_packet(*, project: str, payload: dict, diagnostic: bool = False):
+            assert project == "alpha"
+            assert payload["area"] == "routing"
+            assert diagnostic is True
+            return {
+                "status": "ready",
+                "read_only": True,
+                "auto_submitted": False,
+                "project": "alpha",
+                "area": "routing",
+                "severity": "high",
+                "title": payload["title"],
+                "missing_fields": [],
+                "learning_guardrail": {"eligible": False, "decision": "explicit_block"},
+                "developer_summary": "Project: alpha\nArea: routing\nSeverity: high",
+                "next_safe_action": "Review the packet, then send it to the project maintainer or create an improvement if the operator approves.",
+            }
+
+        monkeypatch.setattr(mcp_mailbox_actions, "build_developer_feedback_packet", fake_feedback_packet)
+
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "operator_review",
+                "runtime_profile_id": "diagnostic_operator",
+                "diagnostic": True,
+                "form_id": "developer_feedback_packet",
+                "payload": {
+                    "project": "alpha",
+                    "title": "Completed task query misroutes",
+                    "area": "routing",
+                    "severity": "high",
+                    "observed_behavior": "A completed-task query returned open tasks.",
+                    "expected_behavior": "The query should return done task artifacts.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "ready"
+        assert data["receipt"]["mode"] == "read"
+        assert data["result"]["read_only"] is True
+        assert data["result"]["auto_submitted"] is False
+        assert data["result"]["learning_guardrail"]["eligible"] is False
+
     async def test_mailbox_submit_record_progress_without_task_records_memory(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
 
