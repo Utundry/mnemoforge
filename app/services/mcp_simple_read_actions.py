@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
+from app.services.adherence_query_routing import adherence_query_next_action, explicit_adherence_cue_query
 from app.services.public_ref_index import (
     AmbiguousPublicRefError,
     PublicRefNotFoundError,
@@ -14,7 +15,7 @@ from app.services.public_ref_index import (
     is_short_public_id,
     public_artifact_matches_short_id,
 )
-from app.services.context_cue_service import expand_context_cue
+from app.services.context_cue_service import context_cues_for_query, context_cues_for_state, expand_context_cue
 from app.services.memory_store import get_memory_store
 from app.services.planning_advisor_service import build_next_work_advisor, is_planning_advisor_query
 from app.services.stage_applicability_service import stage_applicability_metadata
@@ -518,6 +519,45 @@ async def build_simple_get_query_response(
                 "Review storage trust warnings as system maintenance context; "
                 "do not treat hygiene cleanup as current-project work unless explicitly promoted."
             ),
+            "details_available": True,
+        }
+    if explicit_adherence_cue_query(query):
+        if not project:
+            return {
+                "state": state,
+                "project": "",
+                "receipt": {
+                    "status": "needs_project",
+                    "message": "Adherence cue queries require an explicit project or session project.",
+                    "resource_kind": "context_cues",
+                    "missing_fields": ["project"],
+                    "next_safe_action": adherence_query_next_action(has_project=False),
+                },
+                "simple_interface": {"tool": "get", "mode": "query", "route": "adherence_cues"},
+                "next_safe_action": adherence_query_next_action(has_project=False),
+                "details_available": True,
+            }
+        cues = context_cues_for_query(query=query, project=project, state=state, max_cues=limit)
+        if not cues:
+            cues = context_cues_for_state(state=state, project=project, max_cues=limit)
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Natural adherence query resolved through context cues.",
+                "resource_kind": "context_cues",
+                "count": len(cues),
+                "next_safe_action": adherence_query_next_action(has_project=True),
+            },
+            "result": {
+                "status": "ok",
+                "query": query,
+                "context_cues": cues,
+                "no_verification_execution": True,
+            },
+            "simple_interface": {"tool": "get", "mode": "query", "route": "adherence_cues"},
+            "next_safe_action": adherence_query_next_action(has_project=True),
             "details_available": True,
         }
     memory_lookup_id = explicit_memory_lookup_id(query)

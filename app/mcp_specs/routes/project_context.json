@@ -68,6 +68,22 @@
       "reason": "Rule/constraint context belongs to the project_rules facade."
     },
     {
+      "intent_type": "adherence_context",
+      "tool": "enrich_task_with_context",
+      "mutating": false,
+      "examples": [
+        "what rules should i remember before verification",
+        "show workflow adherence cues",
+        "what context cues apply now",
+        "am i following the governed workflow",
+        "which constraints should i keep in mind"
+      ],
+      "arg_bonus": ["adherence_context"],
+      "bonus_terms": ["adherence", "cue", "cues", "remember", "forgot", "workflow", "constraint", "constraints"],
+      "structural_arg": "adherence_context",
+      "reason": "Adherence-only natural reads need context and cue guidance, not verification execution."
+    },
+    {
       "intent_type": "reconstruction_bundle",
       "tool": "get_project_reconstruction_bundle",
       "mutating": false,

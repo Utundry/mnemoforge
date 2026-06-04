@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Callable
 
+from app.services.adherence_query_routing import explicit_adherence_cue_query
+
 
 TaskIdDetector = Callable[[str], Any]
 
@@ -98,6 +100,14 @@ def select_ask_project_lexical_route(
         artifact_type = artifact_lookup_type(text)
         if artifact_type:
             route["payload"]["artifact_type"] = artifact_type
+    elif explicit_adherence_cue_query(question):
+        route.update(
+            facade="project_context",
+            reason="Question asks for workflow adherence or context cues; route to project_context instead of verification execution.",
+            confidence=0.9,
+        )
+        route["structural_match"] = True
+        route["payload"]["adherence_context"] = True
     elif any(term in text for term in ("memory", "find in memory", "search memory", "recall", "remember", "memory_store", "memory_search")):
         route.update(
             facade="project_context",

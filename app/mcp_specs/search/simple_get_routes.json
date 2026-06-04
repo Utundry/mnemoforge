@@ -18,6 +18,30 @@
       ],
       "endpoint": "/admin/storage-trust",
       "scope": "system_with_current_project_context"
+    },
+    {
+      "id": "adherence_cues",
+      "resource_kind": "context_cues",
+      "trigger_terms": [
+        "adherence",
+        "adherence cues",
+        "context cues",
+        "cue refs",
+        "workflow cues",
+        "remember rules",
+        "remember project rules",
+        "forgot rules",
+        "agent context recall",
+        "what should i remember",
+        "what rules should i remember",
+        "which rules apply now",
+        "which laws apply now",
+        "what constraints should i keep in mind",
+        "do i remember the project rules",
+        "am i following the workflow",
+        "workflow adherence"
+      ],
+      "scope": "project_context_read"
     }
   ]
 }

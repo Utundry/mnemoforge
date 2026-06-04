@@ -3324,6 +3324,29 @@ class TestMcpToolExecution:
         assert result["result"]["signals"]["active_hygiene_findings"] == 30
         assert result["result"]["workflow_scope"]["current_project"] == "alpha"
 
+    async def test_simple_get_adherence_query_returns_context_cues_without_project_verify(self, monkeypatch):
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("adherence cue query should not route through ask_project or project_verify")
+
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {
+                    "project": "alpha",
+                    "state": "implementation",
+                    "query": "what rules should I remember before verification",
+                    "limit": 5,
+                },
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["resource_kind"] == "context_cues"
+        assert result["result"]["no_verification_execution"] is True
+        assert result["result"]["context_cues"]
+
     async def test_simple_get_query_lists_improvements_via_artifact_surface(self, monkeypatch):
         seen: dict[str, str] = {}
 
@@ -5655,6 +5678,39 @@ class TestMcpToolExecution:
         assert "Project readiness" in text
         assert calls[0][0] == "project_context"
         assert calls[0][1]["response_format"] == "answer"
+
+    async def test_ask_project_routes_adherence_question_to_project_context_not_verify(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            calls.append((tool_name, args))
+            return "SloplessCode answer\nAnswer: context cues route executed."
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {"project": "alpha", "question": "what rules should I remember before verification"},
+            "http://test",
+        )
+
+        assert "context cues" in text
+        assert calls[0][0] == "project_context"
+        assert calls[0][1]["adherence_context"] is True
+        assert calls[0][1]["response_format"] == "answer"
+
+    def test_project_context_adherence_structural_arg_selects_adherence_context(self):
+        route = mcp_sse._project_context_route(
+            {
+                "project": "alpha",
+                "intent": "what rules should I remember before verification",
+                "adherence_context": True,
+            }
+        )
+
+        assert route["tool"] == "enrich_task_with_context"
+        assert route["intent_type"] == "adherence_context"
+        assert route["structural_match"] is True
 
     async def test_ask_project_routes_next_priority_to_project_work(self, monkeypatch):
         original_execute = mcp_sse._execute_tool

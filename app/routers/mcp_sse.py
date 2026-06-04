@@ -3284,6 +3284,20 @@ def _project_context_route(
                 "include_replay_bundle": bool(args.get("include_replay_bundle", detail == "full")),
             },
         )
+    elif route["intent_type"] == "adherence_context":
+        route.update(
+            tool="enrich_task_with_context",
+            intent_type="adherence_context",
+            confidence=max(0.9, float(route.get("confidence") or 0.0)),
+            reason="Adherence-only natural reads need context and cue guidance, not verification execution.",
+            payload={
+                "project_id": project,
+                "task": task,
+                "detail": detail,
+                "context_profile": args.get("context_profile") or "hot_path",
+                "max_components": max(1, min(20, int(args.get("max_components") or 5))),
+            },
+        )
     elif route["intent_type"] == "rules_context" or any(term in text for term in ("law", "laws", "rule", "rules", "constraint", "constraints")):
         route.update(
             tool="project_rules",
