@@ -3687,7 +3687,13 @@ class TestMcpToolExecution:
         assert seen["path"] == "/artifacts?project=alpha&status=open&limit=5"
         assert result["receipt"]["resource_kind"] == "planning_advisor"
         assert result["result"]["selection_rule"] == "prefer_open_tasks"
+        control = result["result"]["collaborative_control"]
+        assert control["approval_intent"] == "user_approved_start"
+        assert control["approval_alias_source"] == "semantic_adaptation_or_learned_aliases"
+        assert control["approval_required_before_claim"] is True
+        assert "user_approved_start" in result["result"]["next_safe_action"]
         assert result["result"]["next_work_candidates"][0]["ref"] == "task:alpha:task-1"
+        assert result["result"]["next_work_candidates"][0]["recommended_next_call"]["form_id"] == "get_task_context"
         suggestion = result["result"]["maintenance_suggestion"]
         assert suggestion["active_findings"] == 9
         assert suggestion["destructive_action_allowed"] is False

@@ -12,6 +12,18 @@
     "planning advisor"
   ],
   "max_candidates": 5,
+  "collaborative_control": {
+    "mode": "collaborative_control",
+    "framing_required": true,
+    "approval_required_before_claim": true,
+    "approval_intent": "user_approved_start",
+    "approval_alias_source": "semantic_adaptation_or_learned_aliases",
+    "autonomous_override": "explicit_autonomous_mode",
+    "review_first_tool": "submit",
+    "review_first_form_id": "get_task_context",
+    "claim_form_id": "start_task",
+    "why": "Normal agent sessions should keep the operator in the loop: frame the selected work, wait for an approved start intent, then claim the task for implementation."
+  },
   "framing_fields": [
     {
       "field": "objective",

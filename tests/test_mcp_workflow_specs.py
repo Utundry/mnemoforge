@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from app.services.mcp_mailbox import (
@@ -35,6 +36,7 @@ from app.services.mcp_workflow_specs import (
     list_mailbox_forms_for_state,
     load_clerk_capture_registry,
     load_feature_toggle_registry,
+    load_named_json_spec,
     load_mailbox_form_policy_spec,
     load_packet_template,
     load_response_envelope_spec,
@@ -1127,6 +1129,12 @@ async def test_next_work_advisor_surfaces_improvements_when_no_tasks(monkeypatch
     assert packet is not None
     assert packet["receipt"]["resource_kind"] == "planning_advisor"
     assert packet["result"]["selection_rule"] == "promote_open_improvements"
+    control = packet["result"]["collaborative_control"]
+    assert control["framing_required"] is True
+    assert control["approval_required_before_claim"] is True
+    assert control["approval_intent"] == "user_approved_start"
+    assert control["approval_alias_source"] == "semantic_adaptation_or_learned_aliases"
+    assert "user_approved_start" in packet["result"]["next_safe_action"]
     assert packet["result"]["next_work_candidates"][0]["type"] == "improvement"
     assert packet["result"]["next_work_candidates"][0]["ref"] == "improvement:sloplesscode:imp-1"
     suggestion = packet["result"]["maintenance_suggestion"]
@@ -1134,6 +1142,16 @@ async def test_next_work_advisor_surfaces_improvements_when_no_tasks(monkeypatch
     assert suggestion["destructive_action_allowed"] is False
     assert "maintenance_suggestion" not in packet["result"]["next_work_candidates"][0]
     assert "pollute search" in suggestion["why_it_matters"]
+
+
+def test_planning_advisor_collaborative_control_uses_internal_english_contracts() -> None:
+    spec = load_named_json_spec("planning/advisor.json")
+    text = json.dumps(spec, ensure_ascii=False)
+
+    assert spec["collaborative_control"]["approval_intent"] == "user_approved_start"
+    assert spec["collaborative_control"]["approval_alias_source"] == "semantic_adaptation_or_learned_aliases"
+    assert "приступ" not in text.casefold()
+    assert "начинай" not in text.casefold()
 
 
 def test_task_compact_resource_includes_spec_driven_framing_gaps() -> None:
@@ -1373,6 +1391,7 @@ def test_mailbox_state_packet_orders_forms_by_workflow_not_filename() -> None:
     assert form_ids.index("claim_task") > form_ids.index("start_task")
     forms = {form["form_id"]: form for form in packet["forms"]}
     assert "before any real implementation work" in forms["start_task"]["hint"]
+    assert "user_approved_start" in forms["start_task"]["hint"]
     assert packet["hidden_forms"] == []
 
 

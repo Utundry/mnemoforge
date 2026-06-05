@@ -544,9 +544,9 @@ def _next_safe_action(state: str, forms: list[MailboxFormSpec]) -> str:
     if state == "checkpointing" and any(form.id == "finish_task" for form in forms):
         return "Submit finish_task when closeout evidence is ready, or record_progress if work should continue."
     if state == "planning" and any(form.id == "get_task_context" for form in forms):
-        return "Submit get_task_context first, then start_task when task identity and scope are clear."
+        return "Submit get_task_context first; after reviewed task framing satisfies user_approved_start, submit start_task."
     if any(form.id == "start_task" for form in forms):
-        return "Submit start_task before editing when you are beginning real implementation work."
+        return "Submit start_task only after reviewed task framing satisfies user_approved_start or explicit autonomous mode."
     if any(form.id == "claim_task" for form in forms):
         return "Submit claim_task before editing when you are taking ownership of a task."
     if any(form.id == "get_task_context" for form in forms):

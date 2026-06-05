@@ -110,6 +110,38 @@ def _rule_why(rule_id: str) -> str:
     return ""
 
 
+def _collaborative_control_packet() -> dict[str, Any]:
+    spec = _advisor_spec().get("collaborative_control")
+    if not isinstance(spec, dict):
+        return {}
+    keep_fields = {
+        "mode",
+        "framing_required",
+        "approval_required_before_claim",
+        "approval_intent",
+        "approval_alias_source",
+        "autonomous_override",
+        "review_first_tool",
+        "review_first_form_id",
+        "claim_form_id",
+        "why",
+    }
+    return {key: value for key, value in spec.items() if key in keep_fields and value not in (None, "", [], {})}
+
+
+def _next_work_safe_action(*, has_candidate: bool) -> str:
+    control = _collaborative_control_packet()
+    if not has_candidate:
+        return "Create or import an improvement before starting implementation work."
+    approval_intent = str(control.get("approval_intent") or "user_approved_start")
+    review_form = str(control.get("review_first_form_id") or "get_task_context")
+    claim_form = str(control.get("claim_form_id") or "start_task")
+    return (
+        f"Review the first candidate with {review_form}, frame the task for the operator, "
+        f"then submit {claim_form} only after {approval_intent} or explicit autonomous mode."
+    )
+
+
 def build_next_work_advisor(
     artifact_data: dict[str, Any],
     *,
@@ -137,12 +169,9 @@ def build_next_work_advisor(
         "advisor": "planning_next_work",
         "selection_rule": rule_id,
         "why": _rule_why(rule_id),
+        "collaborative_control": _collaborative_control_packet(),
         "next_work_candidates": [_candidate_from_artifact(item) for item in chosen[:max_candidates]],
-        "next_safe_action": (
-            "Review the first candidate with get/submit before claiming implementation work."
-            if chosen
-            else "Create or import an improvement before starting implementation work."
-        ),
+        "next_safe_action": _next_work_safe_action(has_candidate=bool(chosen)),
     }
     maintenance_suggestion = _next_work_maintenance_suggestion(project=project)
     if maintenance_suggestion:
