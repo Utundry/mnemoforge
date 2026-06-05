@@ -150,6 +150,9 @@ README readability.
 > operational runtime for agents. It preserves task state, project laws,
 > checkpoints, verified facts, and next actions across sessions.
 
+For a longer practical Q&A from Codex as an active SloplessCode MCP user, see
+[Agent Interview: Working Through SloplessCode MCP](docs/AGENT_MCP_INTERVIEW.md).
+
 ## Evolving Task Definition
 
 Most tools assume a task is fully specified before work begins. Real

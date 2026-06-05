@@ -4694,14 +4694,20 @@ class TestMcpToolExecution:
         assert data["route_telemetry"]["underlying_tool"] == "list_open_tasks"
         assert data["route_telemetry"]["executed"] is True
         assert data["route_telemetry"]["guardrail_triggered"] is False
-        assert data["compact_result"] == [
-            {
-                "artifact_key": "task:alpha:task-1",
-                "type": "task",
-                "title": "First task",
-                "status": "open",
-            }
-        ]
+        control = data["agent_action"]["collaborative_control"]
+        assert control["framing_required"] is True
+        assert control["approval_required_before_claim"] is True
+        assert control["approval_intent"] == "user_approved_start"
+        assert data["compact_result"][0] == {
+            "artifact_key": "task:alpha:task-1",
+            "type": "task",
+            "title": "First task",
+            "status": "open",
+            "framing_required": True,
+            "approval_required_before_claim": True,
+            "approval_intent": "user_approved_start",
+            "claim_after": "user_approved_start or explicit_autonomous_mode",
+        }
         assert requested[0].startswith("/artifacts?project=alpha&status=open&limit=5")
         assert data["result"]["items"][0]["artifact_key"] == "task:alpha:task-1"
         assert data["maintenance_suggestion"]["active_findings"] == 12
@@ -4743,6 +4749,9 @@ class TestMcpToolExecution:
         assert "task_id" not in item
         assert item["next_detail_form"]["payload"]["task_id"] == "task-linked"
         assert item["next_action"] == "Review the improvement or open its linked task before claiming work."
+        assert item["framing_required"] is True
+        assert item["approval_required_before_claim"] is True
+        assert item["claim_after"] == "user_approved_start or explicit_autonomous_mode"
 
     async def test_project_work_list_open_work_keeps_work_items_broad(self, monkeypatch):
         requested: list[str] = []

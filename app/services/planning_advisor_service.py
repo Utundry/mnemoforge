@@ -110,7 +110,7 @@ def _rule_why(rule_id: str) -> str:
     return ""
 
 
-def _collaborative_control_packet() -> dict[str, Any]:
+def collaborative_control_packet() -> dict[str, Any]:
     spec = _advisor_spec().get("collaborative_control")
     if not isinstance(spec, dict):
         return {}
@@ -130,7 +130,7 @@ def _collaborative_control_packet() -> dict[str, Any]:
 
 
 def _next_work_safe_action(*, has_candidate: bool) -> str:
-    control = _collaborative_control_packet()
+    control = collaborative_control_packet()
     if not has_candidate:
         return "Create or import an improvement before starting implementation work."
     approval_intent = str(control.get("approval_intent") or "user_approved_start")
@@ -169,7 +169,7 @@ def build_next_work_advisor(
         "advisor": "planning_next_work",
         "selection_rule": rule_id,
         "why": _rule_why(rule_id),
-        "collaborative_control": _collaborative_control_packet(),
+        "collaborative_control": collaborative_control_packet(),
         "next_work_candidates": [_candidate_from_artifact(item) for item in chosen[:max_candidates]],
         "next_safe_action": _next_work_safe_action(has_candidate=bool(chosen)),
     }

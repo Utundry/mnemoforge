@@ -105,6 +105,7 @@ from app.services.mcp_project_work_routing import (
     project_work_needs_llm_disambiguation as _project_work_needs_llm_disambiguation,
     project_work_route as _project_work_route,
 )
+from app.services.planning_advisor_service import collaborative_control_packet
 from app.services.mcp_project_rules_routing import (
     PROJECT_RULES_ROUTE_CATALOG as _PROJECT_RULES_ROUTE_CATALOG,
     project_rules_route,
@@ -2153,6 +2154,10 @@ def _project_context_rule_refs(args: dict[str, Any]) -> list[dict[str, Any]]:
 def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
     if route.get("tool") == "list_open_tasks" and isinstance(result, dict):
         items = result.get("items") or []
+        control = collaborative_control_packet()
+        approval_intent = str(control.get("approval_intent") or "").strip()
+        autonomous_override = str(control.get("autonomous_override") or "").strip()
+        claim_after = " or ".join(part for part in (approval_intent, autonomous_override) if part)
         compact_items: list[dict[str, Any]] = []
         for item in items[:5]:
             if not isinstance(item, dict):
@@ -2168,6 +2173,11 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
                 "linked_artifact_key": item.get("linked_artifact_key"),
                 "linked_status": item.get("linked_status"),
             }
+            if control:
+                compact_item["framing_required"] = control.get("framing_required")
+                compact_item["approval_required_before_claim"] = control.get("approval_required_before_claim")
+                compact_item["approval_intent"] = control.get("approval_intent")
+                compact_item["claim_after"] = claim_after
             if linked_task_id:
                 compact_item["linked_task_id"] = linked_task_id
             if item_type == "improvement" and not compact_item.get("task_id"):
@@ -2178,7 +2188,7 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
                 )
             if compact_item.get("task_id"):
                 compact_item["next_detail_form"] = {
-                    "tool": "mailbox_submit",
+                    "tool": control.get("review_first_tool") or "mailbox_submit",
                     "form_id": "get_task_context",
                     "payload": {
                         "project": item.get("project") or result.get("project"),
@@ -2188,7 +2198,7 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
                 }
             elif linked_task_id:
                 compact_item["next_detail_form"] = {
-                    "tool": "mailbox_submit",
+                    "tool": control.get("review_first_tool") or "mailbox_submit",
                     "form_id": "get_task_context",
                     "payload": {
                         "project": item.get("project") or result.get("project"),
@@ -3722,7 +3732,7 @@ def _project_work_action_card(
     elif route.get("tool") == "project_rules":
         do_not_call = ["promote_rule_candidate", "revise_law_from_rule_candidate"]
 
-    return {
+    action_card = {
         "action_status": action_status,
         "one_sentence_summary": one_sentence_summary,
         "recommended_next_call": recommended_next_call,
@@ -3733,6 +3743,11 @@ def _project_work_action_card(
         "compact_result": _compact_project_work_result(route, result),
         "warnings": warnings,
     }
+    if route.get("tool") == "list_open_tasks":
+        control = collaborative_control_packet()
+        if control:
+            action_card["collaborative_control"] = control
+    return action_card
 
 
 def _weak_model_mutation_guardrail(route: dict[str, Any], executed: bool, action_card: dict[str, Any]) -> dict[str, Any] | None:
