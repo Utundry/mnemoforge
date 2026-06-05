@@ -667,6 +667,9 @@ SloplessCode also supports explicit full-catalog discovery for clients that need
 debug or deep access. Start with the compact thematic catalog unless you are
 building or debugging a specialized integration.
 
+For a practical cold-start-to-finish workflow, see
+[docs/MCP_USAGE_BEST_PRACTICES.md](docs/MCP_USAGE_BEST_PRACTICES.md).
+
 Expert helpers should reduce routine tool operation, not hardcode one project's
 runtime. For example, this repository uses Docker-backed verification, but that
 is SloplessCode project knowledge; helpers should obtain such details from project
@@ -712,6 +715,8 @@ remote MCP validation notes live in [docs/CONTAINER_STATUS.md](docs/CONTAINER_ST
 
 - [SETUP.md](SETUP.md): server setup and local development notes
 - [CLIENT_SETUP.md](CLIENT_SETUP.md): client-only MCP setup
+- [docs/MCP_USAGE_BEST_PRACTICES.md](docs/MCP_USAGE_BEST_PRACTICES.md):
+  practical MCP workflow guide for users and agents
 - [STATUS.md](STATUS.md): current alpha status and known rough edges
 - [docs/CLOUD_LLM_PROVIDERS.md](docs/CLOUD_LLM_PROVIDERS.md): cloud LLM setup
 - [docs/I18N_POLICY.md](docs/I18N_POLICY.md): documentation language policy
