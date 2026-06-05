@@ -15,7 +15,12 @@ from app.services.public_ref_index import (
     is_short_public_id,
     public_artifact_matches_short_id,
 )
-from app.services.context_cue_service import context_cues_for_query, context_cues_for_state, expand_context_cue
+from app.services.context_cue_service import (
+    context_cues_for_query,
+    context_cues_for_state,
+    expand_context_cue,
+    governed_law_to_cue,
+)
 from app.services.cognitive_health_service import build_cognitive_health_packet
 from app.services.memory_store import get_memory_store
 from app.services.planning_advisor_service import build_next_work_advisor, is_planning_advisor_query
@@ -1146,6 +1151,54 @@ async def execute_simple_get_spec_route(
             "details_available": True,
         }
 
+    if resource_kind == "boundary_action_cues":
+        if not project:
+            next_safe_action = "Call get again with project set so boundary-action cues can resolve project-scoped laws."
+            receipt = {
+                "status": "needs_project",
+                "message": "Boundary-action cue queries require an explicit project or session project.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "matched_trigger": matched_trigger,
+                "missing_fields": ["project"],
+                "next_safe_action": next_safe_action,
+            }
+            return {
+                "state": state,
+                "project": "",
+                "receipt": attach_public_diagnostic_incident(receipt=receipt, kind="missing_project_scope"),
+                "simple_interface": simple_interface,
+                "next_safe_action": next_safe_action,
+                "details_available": True,
+            }
+        packet = await build_boundary_action_cue_packet(
+            api_base=api_base,
+            project=project,
+            query=query,
+            state=state,
+            route=route,
+            limit=limit,
+            dependencies=dependencies,
+        )
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Natural read query resolved through boundary-action governed law cues.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "matched_trigger": matched_trigger,
+                "action_class": packet.get("action_class"),
+                "count": len(packet.get("context_cues") or []),
+                "next_safe_action": packet.get("next_safe_action"),
+            },
+            "result": packet,
+            "simple_interface": simple_interface,
+            "next_safe_action": packet.get("next_safe_action"),
+            "details_available": True,
+        }
+
     if resource_kind == "live_runtime_preflight":
         if not project:
             next_safe_action = "Call get again with project set so live-runtime preflight can resolve project-scoped policy cues."
@@ -1318,6 +1371,135 @@ def learned_route_payload(route: dict[str, Any]) -> dict[str, Any]:
             if isinstance(expected, dict):
                 return dict(expected)
     return {}
+
+
+async def build_boundary_action_cue_packet(
+    *,
+    api_base: str,
+    project: str,
+    query: str,
+    state: str,
+    route: dict[str, Any],
+    limit: int,
+    dependencies: SimpleReadDependencies,
+) -> dict[str, Any]:
+    try:
+        spec = load_named_json_spec("workflow/boundary_action_cues.json")
+    except Exception:
+        spec = {}
+    action_classes = spec.get("action_classes") if isinstance(spec.get("action_classes"), dict) else {}
+    action_class = select_boundary_action_class(query=query, route=route, spec=spec)
+    action_spec = action_classes.get(action_class) if isinstance(action_classes.get(action_class), dict) else {}
+    laws = await read_active_project_laws(api_base=api_base, project=project, dependencies=dependencies)
+    cues = boundary_action_law_cues(
+        laws,
+        project=project,
+        query=query,
+        action_class=action_class,
+        action_spec=action_spec,
+        limit=max(1, min(int(limit or spec.get("default_limit") or 5), 10)),
+    )
+    next_safe_action = str(spec.get("next_safe_action") or "").strip() or (
+        "Review compact governed-law cues for this boundary action; expand only refs that are needed before proceeding."
+    )
+    return {
+        "status": "ok" if cues else "no_matching_governed_law_cues",
+        "project": project,
+        "query": query,
+        "state": state,
+        "action_class": action_class,
+        "action_title": action_spec.get("title") or action_class,
+        "read_only": True,
+        "context_cues": cues,
+        "expand_only_if_needed": True,
+        "next_safe_action": next_safe_action,
+    }
+
+
+def select_boundary_action_class(*, query: str, route: dict[str, Any], spec: dict[str, Any]) -> str:
+    text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
+    classes = spec.get("action_classes") if isinstance(spec.get("action_classes"), dict) else {}
+    best: tuple[int, str] | None = None
+    for class_id, item in classes.items():
+        if not isinstance(item, dict):
+            continue
+        score = 0
+        for term in item.get("trigger_terms") or []:
+            value = str(term or "").strip().casefold()
+            if value and _query_contains_alias(text, value):
+                score += max(1, len(value.split()))
+        if score and (best is None or score > best[0]):
+            best = (score, str(class_id))
+    if best:
+        return best[1]
+    return str(spec.get("default_action_class") or route.get("id") or "boundary_action").strip() or "boundary_action"
+
+
+async def read_active_project_laws(
+    *,
+    api_base: str,
+    project: str,
+    dependencies: SimpleReadDependencies,
+) -> list[dict[str, Any]]:
+    try:
+        data = await dependencies.get(
+            api_base,
+            f"/laws?project={quote(project, safe='')}&status=active&include_promoted=true&limit=100",
+        )
+    except Exception:
+        return []
+    items = data.get("items") if isinstance(data, dict) else []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def boundary_action_law_cues(
+    laws: list[dict[str, Any]],
+    *,
+    project: str,
+    query: str,
+    action_class: str,
+    action_spec: dict[str, Any],
+    limit: int,
+) -> list[dict[str, Any]]:
+    query_text = re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
+    action_terms = [
+        str(term or "").casefold()
+        for term in action_spec.get("trigger_terms") or []
+        if str(term or "").strip()
+    ]
+    action_terms.extend(str(action_class or "").replace("_", " ").casefold().split())
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for law in laws:
+        cue = governed_law_to_cue(law, current_project=project)
+        if not cue:
+            continue
+        haystack = " ".join(
+            str(value or "")
+            for value in (
+                law.get("title"),
+                law.get("statement"),
+                law.get("rationale"),
+                law.get("topic_path"),
+                " ".join(str(tag) for tag in (law.get("tags") or [])),
+            )
+        ).casefold()
+        score = 0
+        for term in action_terms:
+            if term and term in haystack:
+                score += max(1, len(term.split()))
+        for token in query_text.split():
+            if len(token) >= 4 and token in haystack:
+                score += 1
+        if score:
+            compact = {
+                key: value
+                for key, value in cue.items()
+                if key not in {"full_text", "scope", "tags", "trigger_terms"} and value not in (None, "", [], {})
+            }
+            compact["reason"] = f"action_boundary:{action_class}"
+            scored.append((score, compact))
+    scored.sort(key=lambda item: (item[0], str(item[1].get("severity") or "")), reverse=True)
+    return [cue for _, cue in scored[:limit]]
 
 
 def build_live_runtime_preflight_packet(*, project: str, query: str, state: str = "", limit: int = 5) -> dict[str, Any]:

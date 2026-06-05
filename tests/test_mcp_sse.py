@@ -3150,6 +3150,163 @@ class TestMcpToolExecution:
         assert diagnostic_help["simple_interface"]["tools"] == ["help", "state", "get", "submit"]
         assert diagnostic_help["stage"]
 
+    async def test_submit_knowledge_refinement_blocks_static_spec_runtime_mutation(self):
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "submit",
+                {
+                    "project": "alpha",
+                    "state": "operator_review",
+                    "form_id": "knowledge_refinement_feedback",
+                    "payload": {
+                        "project": "alpha",
+                        "target_ref": "spec:workflow/boundary_action_cues.json",
+                        "target_type": "spec",
+                        "refinement_type": "spec_change_request",
+                        "reason": "Spec changes must go through development work.",
+                        "apply": True,
+                    },
+                },
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "accepted"
+        assert result["receipt"]["refinement_status"] == "blocked_static_spec"
+        assert result["receipt"]["mutation_executed"] is False
+        assert result["result"]["mutation_executed"] is False
+        assert result["result"]["recommended_next_call"]["form_id"] == "developer_feedback_packet"
+        assert result["result"]["recommended_next_call"]["payload"]["next_action"].startswith("Review the packet")
+
+    async def test_submit_knowledge_refinement_applies_law_metadata_through_public_patch(self, monkeypatch):
+        calls: list[tuple[str, str, dict | None]] = []
+
+        async def fake_get(api_base: str, path: str):
+            calls.append(("GET", path, None))
+            assert path == "/laws/law-1"
+            return {"id": "law-1", "tags": ["project_law", "stage:planning"], "supersedes": []}
+
+        async def fake_patch(api_base: str, path: str, payload: dict | None = None):
+            calls.append(("PATCH", path, payload))
+            assert path == "/laws/law-1"
+            assert payload == {
+                "tags": [
+                    "project_law",
+                    "action:external_publication",
+                    "stage:handoff",
+                    "evidence:conversation:test",
+                ],
+                "topic_path": "governance/publication",
+            }
+            return {"id": "law-1", "tags": payload["tags"], "topic_path": payload["topic_path"], "status": "active"}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_patch", fake_patch)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "submit",
+                {
+                    "project": "alpha",
+                    "state": "operator_review",
+                    "form_id": "knowledge_refinement_feedback",
+                    "payload": {
+                        "project": "alpha",
+                        "target_ref": "law:alpha:law-1",
+                        "refinement_type": "applicability_update",
+                        "reason": "Apply this law only to publication handoff moments.",
+                        "apply": True,
+                        "remove_tags": ["stage:planning"],
+                        "action_applicability": ["external_publication"],
+                        "stage_applicability": ["handoff"],
+                        "topic_path": "governance/publication",
+                        "evidence_refs": ["conversation:test"],
+                    },
+                },
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "accepted"
+        assert result["receipt"]["mutation_executed"] is True
+        assert result["result"]["applied_action"] == "law_metadata_update"
+        assert calls[0][0] == "GET"
+        assert calls[1][0] == "PATCH"
+
+    async def test_submit_knowledge_refinement_preview_rejects_unsupported_task_metadata_update(self):
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "submit",
+                {
+                    "project": "alpha",
+                    "state": "operator_review",
+                    "form_id": "knowledge_refinement_feedback",
+                    "payload": {
+                        "project": "alpha",
+                        "target_ref": "task:alpha:task-123",
+                        "target_type": "task",
+                        "refinement_type": "metadata_update",
+                        "reason": "Task framing needs a Definition of Done.",
+                        "apply": False,
+                    },
+                },
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "accepted"
+        assert result["receipt"]["refinement_status"] == "preview_unsupported"
+        assert result["receipt"]["mutation_executed"] is False
+        assert result["result"]["safe_to_apply"] is False
+        assert result["result"]["apply_required"] is False
+        assert result["result"]["planned_action"] == "unsupported_task_or_improvement_refinement"
+        assert "do not resubmit apply=true" in result["result"]["next_safe_action"]
+
+    async def test_submit_knowledge_refinement_resolves_task_through_unified_artifact_lifecycle(self, monkeypatch):
+        calls: list[tuple[str, str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            calls.append(("POST", path, payload))
+            assert path == "/artifacts/task%3Aalpha%3Atask-123/resolve"
+            assert payload["action_source"] == "mailbox_submit.knowledge_refinement_feedback"
+            return {"artifact_key": "task:alpha:task-123", "status": "done"}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "submit",
+                {
+                    "project": "alpha",
+                    "state": "operator_review",
+                    "form_id": "knowledge_refinement_feedback",
+                    "payload": {
+                        "project": "alpha",
+                        "target_ref": "task:alpha:task-123",
+                        "refinement_type": "resolve",
+                        "reason": "Task was completed by existing work.",
+                        "apply": True,
+                    },
+                },
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "accepted"
+        assert result["result"]["applied_action"] == "artifact_resolve"
+        assert result["result"]["result"]["status"] == "done"
+        assert calls == [
+            (
+                "POST",
+                "/artifacts/task%3Aalpha%3Atask-123/resolve",
+                {
+                    "acted_by": "codex",
+                    "action_source": "mailbox_submit.knowledge_refinement_feedback",
+                    "reason": "Task was completed by existing work.",
+                },
+            )
+        ]
+
     async def test_simple_get_compacts_task_payload_by_default_and_full_keeps_details(self, monkeypatch):
         seen_args: list[dict] = []
 
@@ -3512,6 +3669,50 @@ class TestMcpToolExecution:
         assert "context_cues" not in result
         assert any(check["id"] == "operator_intent" for check in result["result"]["checks"])
         assert "120" not in str(result["result"])
+
+    async def test_simple_get_boundary_action_cues_read_governed_project_laws(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {
+                "items": [
+                    {
+                        "id": "law-publish",
+                        "project": "alpha",
+                        "status": "active",
+                        "scope": "project",
+                        "title": "Project publication policy",
+                        "statement": "Before external publication, review the project-specific release policy and evidence.",
+                        "rationale": "Published artifacts affect users outside the current agent session.",
+                        "tags": ["publication", "release", "P1"],
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {
+                    "project": "alpha",
+                    "query": "which laws apply before external publication",
+                    "limit": 5,
+                    "response_format": "json",
+                },
+                "http://test",
+            )
+        )
+
+        assert seen["path"] == "/laws?project=alpha&status=active&include_promoted=true&limit=100"
+        assert result["receipt"]["resource_kind"] == "boundary_action_cues"
+        assert result["receipt"]["action_class"] == "external_publication"
+        assert result["result"]["read_only"] is True
+        assert result["result"]["context_cues"][0]["expand_ref"] == "law:alpha:law-publish"
+        assert result["result"]["context_cues"][0]["reason"] == "action_boundary:external_publication"
+        assert "full_text" not in result["result"]["context_cues"][0]
+        assert "trigger_terms" not in result["result"]["context_cues"][0]
 
     async def test_simple_get_cognitive_health_query_returns_self_check_packet(self, monkeypatch):
         async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):

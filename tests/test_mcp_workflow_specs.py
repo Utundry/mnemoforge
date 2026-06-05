@@ -175,6 +175,7 @@ def test_default_workflow_specs_validate() -> None:
         "store_memory",
         "get_task_context",
         "set_feature_gate",
+        "knowledge_refinement_feedback",
     } <= set(summary["mailbox_forms"])
 
 
@@ -756,6 +757,17 @@ def test_live_runtime_preflight_spec_stays_universal_and_compact() -> None:
     assert "Docker" not in text
     assert "memory-server-dev" not in text
     assert "120 seconds" not in text
+
+
+def test_boundary_action_cues_spec_stays_project_agnostic() -> None:
+    spec = load_named_json_spec("workflow/boundary_action_cues.json")
+    text = json.dumps(spec, ensure_ascii=False).casefold()
+
+    assert "external_publication" in spec["action_classes"]
+    assert "release_boundary" in spec["action_classes"]
+    assert "dockerhub" not in text
+    assert "docker push" not in text
+    assert "publish_docker_image" not in text
 
 
 def test_context_cues_for_query_remind_post_commit_checkpoint() -> None:

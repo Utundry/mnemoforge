@@ -59,6 +59,7 @@
       "developer_feedback_packet",
       "route_hygiene",
       "route_feedback",
+      "knowledge_refinement_feedback",
       "create_law",
       "confirm_law",
       "finish_task",

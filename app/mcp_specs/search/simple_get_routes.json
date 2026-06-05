@@ -3,6 +3,28 @@
   "purpose": "Declarative canonical topic routes for public get(query) before generic memory search or project expert fallback.",
   "routes": [
     {
+      "id": "boundary_action_cues",
+      "resource_kind": "boundary_action_cues",
+      "priority": 85,
+      "trigger_terms": [
+        "boundary action cues",
+        "action boundary cues",
+        "before external publication",
+        "before publication",
+        "publication",
+        "publish",
+        "external publication rules",
+        "publication rules",
+        "publication boundary",
+        "release boundary rules",
+        "before release",
+        "operator handoff rules",
+        "which laws apply before publication",
+        "which rules apply before release"
+      ],
+      "scope": "project_context_read"
+    },
+    {
       "id": "live_runtime_preflight",
       "resource_kind": "live_runtime_preflight",
       "priority": 90,

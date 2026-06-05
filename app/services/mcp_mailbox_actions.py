@@ -24,6 +24,10 @@ from app.services.mcp_simple_read_actions import (
     compact_public_ref_matches,
     resolve_public_artifact_short_ref,
 )
+from app.services.knowledge_refinement_service import (
+    build_knowledge_refinement_packet,
+    build_knowledge_refinement_request,
+)
 from app.services.stage_applicability_service import stage_allows_block
 from app.services.public_ref_index import AmbiguousPublicRefError, is_short_public_id
 from app.services.public_diagnostic_service import attach_public_diagnostic_incident
@@ -177,6 +181,12 @@ async def build_mailbox_submit_packet(
         return mailbox_route_hygiene(**common)
     if form_id == "route_feedback":
         return mailbox_route_feedback(**common)
+    if form_id == "knowledge_refinement_feedback":
+        return await mailbox_knowledge_refinement_feedback(
+            **common,
+            api_base=api_base,
+            dependencies=dependencies,
+        )
 
     return preflight
 
@@ -1390,6 +1400,97 @@ def mailbox_developer_feedback_packet(
         "result": result,
         "next_safe_action": result.get("next_safe_action", "Review the packet before sending it to maintainers."),
     }
+
+
+async def mailbox_knowledge_refinement_feedback(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+    api_base: str,
+    dependencies: MailboxActionDependencies,
+) -> dict[str, Any]:
+    request = build_knowledge_refinement_request(
+        project=project,
+        payload=payload,
+        actor=mailbox_actor(payload),
+    )
+    result = await build_knowledge_refinement_packet(
+        request=request,
+        api_base=api_base,
+        get=dependencies.get,
+        patch=dependencies.patch,
+        post=dependencies.post,
+    )
+    if result.get("status") == "needs_input":
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "needs_input",
+                "form_id": form.id,
+                "target_ref": result.get("target_ref"),
+                "target_type": result.get("target_type"),
+                "refinement_type": result.get("refinement_type"),
+                "message": result.get("message", "Knowledge refinement needs more input."),
+                "next_safe_action": result.get("next_safe_action", "Review the refinement request and resubmit."),
+            },
+        }
+
+    packet = build_mailbox_mutation_packet(
+        form=form,
+        payload=payload,
+        state=state,
+        project=project,
+        actual_metadata={
+            "result_kind": "knowledge_refinement_feedback",
+            "mutation": bool(result.get("mutation_executed", False)),
+            "target_type": result.get("target_type"),
+            "refinement_type": result.get("refinement_type"),
+            "internal_tool": "knowledge_refinement_service",
+            "route_id": "mailbox.knowledge_refinement_feedback.v1",
+        },
+        result={
+            "id": str(result.get("target_ref") or request.target_ref),
+            "artifact_key": str(result.get("target_ref") or request.target_ref),
+        },
+        runtime_profile_id=runtime_profile_id,
+        diagnostic=diagnostic,
+    )
+    packet["result"] = result
+    packet["receipt"].update(
+        _compact(
+            {
+                "target_ref": result.get("target_ref") or request.target_ref,
+                "target_type": result.get("target_type") or request.target_type,
+                "refinement_type": result.get("refinement_type") or request.refinement_type,
+                "refinement_status": result.get("status"),
+                "mutation_executed": bool(result.get("mutation_executed", False)),
+                "message": _knowledge_refinement_receipt_message(result),
+            }
+        )
+    )
+    packet["next_safe_action"] = str(result.get("next_safe_action") or packet["next_safe_action"])
+    packet["receipt"]["next_safe_action"] = packet["next_safe_action"]
+    return packet
+
+
+def _knowledge_refinement_receipt_message(result: dict[str, Any]) -> str:
+    status = str(result.get("status") or "").strip()
+    if status == "preview":
+        return "Knowledge refinement preview built; no mutation was executed."
+    if status == "preview_unsupported":
+        return "Knowledge refinement preview found this target/refinement combination is not safely applicable."
+    if status == "blocked_static_spec":
+        return "Static spec refinement was not applied at runtime; development work is recommended."
+    if status == "applied":
+        return "Knowledge refinement was applied through a governed live-DB service."
+    if status == "unsupported_target":
+        return "Target type is not yet supported by the universal refinement contour."
+    return "Knowledge refinement request was processed."
 
 
 def mailbox_route_feedback(

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "purpose": "Generic action-boundary cue retrieval for public MCP read packets. Project-specific commands and publication targets belong in governed project laws, not in this universal spec.",
+  "default_action_class": "boundary_action",
+  "default_limit": 5,
+  "action_classes": {
+    "boundary_action": {
+      "title": "Boundary action",
+      "summary": "An action that may cross a workflow, publication, external system, or handoff boundary.",
+      "trigger_terms": ["boundary", "before action", "before external action", "action rules", "action cues"]
+    },
+    "external_publication": {
+      "title": "External publication",
+      "summary": "An action that updates externally visible artifacts, release surfaces, or published operator-facing resources.",
+      "trigger_terms": ["external publication", "publication", "publish", "public artifact", "published artifact", "external artifact", "release surface"]
+    },
+    "release_boundary": {
+      "title": "Release boundary",
+      "summary": "An action that moves work from internal implementation into a released or externally consumable state.",
+      "trigger_terms": ["release", "release boundary", "before release", "release rules", "release handoff"]
+    },
+    "operator_handoff": {
+      "title": "Operator handoff",
+      "summary": "An action where responsibility, review, or execution context passes to a human/operator or another agent.",
+      "trigger_terms": ["handoff", "operator handoff", "human review", "approval boundary", "review boundary"]
+    }
+  },
+  "next_safe_action": "Review compact governed-law cues for this boundary action; expand only refs that are needed before proceeding."
+}

@@ -1,0 +1,85 @@
+{
+  "id": "knowledge_refinement_feedback",
+  "title": "Knowledge refinement feedback",
+  "purpose": "Operator form for previewing or applying safe live-DB knowledge refinements without mutating published runtime specs.",
+  "states": ["operator_review"],
+  "mode": "transition",
+  "required_fields": ["project", "target_ref", "refinement_type", "reason"],
+  "optional_fields": [
+    "target_type",
+    "apply",
+    "patch",
+    "status",
+    "tags",
+    "remove_tags",
+    "topic_path",
+    "action_applicability",
+    "stage_applicability",
+    "superseded_by",
+    "evidence_refs",
+    "updated_by"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "target_ref": {
+        "type": "string",
+        "description": "Public artifact ref such as law:project:id, task:project:id, improvement:project:id, route_pattern:facade:id, or spec:path."
+      },
+      "target_type": {
+        "type": "string",
+        "enum": ["law", "task", "improvement", "route_pattern", "memory", "alias", "cue", "spec", "unknown"]
+      },
+      "refinement_type": {
+        "type": "string",
+        "enum": [
+          "metadata_update",
+          "applicability_update",
+          "status_update",
+          "resolve",
+          "reopen",
+          "supersede",
+          "quarantine",
+          "spec_change_request"
+        ]
+      },
+      "reason": {"type": "string"},
+      "apply": {
+        "type": "boolean",
+        "default": false,
+        "description": "false returns a preview packet; true applies only safe live-DB changes."
+      },
+      "patch": {
+        "type": "object",
+        "description": "Optional explicit safe metadata patch. Unsupported fields are ignored or rejected by target type.",
+        "additionalProperties": true
+      },
+      "status": {"type": "string"},
+      "tags": {"type": "array", "items": {"type": "string"}},
+      "remove_tags": {"type": "array", "items": {"type": "string"}},
+      "topic_path": {"type": "string"},
+      "action_applicability": {"type": "array", "items": {"type": "string"}},
+      "stage_applicability": {"type": "array", "items": {"type": "string"}},
+      "superseded_by": {"type": "string"},
+      "evidence_refs": {"type": "array", "items": {"type": "string"}},
+      "updated_by": {"type": "string", "default": "codex"}
+    },
+    "required": ["project", "target_ref", "refinement_type", "reason"]
+  },
+  "assistance": {
+    "clerk_available": true,
+    "can_use_stenography": true,
+    "default_mode": "validate"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["route_feedback", "create_law", "confirm_law", "close_task", "store_memory"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "knowledge_refinement_feedback"
+    },
+    "forbidden_metadata": {},
+    "required_receipt_fields": ["status", "target_ref", "refinement_type"]
+  },
+  "public_hint": "Use in operator_review to refine live DB knowledge. Published specs are static at runtime; spec feedback creates development work instead of editing JSON."
+}
