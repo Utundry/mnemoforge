@@ -72,6 +72,35 @@ Docker test contour" is useful, but a task also needs ownership, a work token,
 stage, checkpoint, changed files, verification evidence, next step, and closure
 state. SloplessCode connects those pieces into a workflow.
 
+**Q: Does the system get better over time?**
+
+Yes. A useful SloplessCode installation should become more effective as it works
+with a specific user and project.
+
+The system can learn more than routes. It can accumulate aliases, recurring
+phrases, common typos, project laws, development standards, verification habits,
+and feedback about which responses were helpful or noisy. That matters because
+real users do not always speak in formal API terms. They use their own language,
+shortcuts, jokes, local terminology, and sometimes the wrong keyboard layout.
+
+In this development session, that showed up in several practical ways:
+
+- Russian user phrases such as "приступай" are treated as user-language aliases
+  for an internal English workflow intent, not hardcoded into static specs.
+- The user repeatedly reinforced the principle "private case through general
+  mechanism"; that became an architectural constraint for future changes.
+- Docker verification, live diagnostic usage, DockerHub publishing, and MCP
+  task ownership became governed project habits rather than reminders pasted
+  into every prompt.
+- Repeated friction around noisy responses led to compact cue markers,
+  stage-aware guidance, and expand refs instead of full context every turn.
+- Misroutes and confusing results became candidates for route feedback,
+  diagnostics, or knowledge refinement rather than one-off code patches.
+
+That is the long-term value: the system can adapt to the user's way of working
+without turning every preference into hardcoded router logic. Static specs hold
+basic instincts; the live database holds acquired habits and project standards.
+
 **Q: What makes the system feel safe to use?**
 
 The useful part is not that the agent becomes fully autonomous. It is almost the
@@ -109,4 +138,3 @@ architecture, I would rather work through SloplessCode than without it.
 The reason is simple: without operational continuity, the agent eventually has
 to guess. With SloplessCode, it can ask the system what it is doing, why, what
 rules matter, and what the next safe action is.
-
