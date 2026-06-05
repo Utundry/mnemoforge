@@ -147,6 +147,36 @@ This is where SloplessCode becomes more than memory. It turns operational
 mistakes into backlog, rules, diagnostics, and eventually better behavior. The
 system improves because its own failures become structured input.
 
+**Q: What ideas appeared only after real use?**
+
+Many of the most important ideas did not appear as abstract design work. They
+appeared because the system was used, failed, and had to explain the failure.
+
+Collaborative control came from noticing that agents can run ahead of the user.
+Host profiles came from seeing that different MCP clients behave differently.
+Cognitive health monitoring came from repeated cases where an agent forgot the
+information environment it was supposed to use. Context immune-system ideas came
+from seeing old records, noisy memories, and stale guidance interfere with
+routing and judgment. Approval-aware lifecycle came from the user feeling more
+like a spectator than a participant.
+
+In other words, the project evolved from "memory plus tasks plus MCP" into
+something closer to workflow governance and an error-learning loop for agents.
+
+**Q: If SloplessCode disappeared tomorrow, what would you miss most?**
+
+I would not miss search first. I would miss continuity.
+
+I would miss having an external place that knows the current task, the last
+checkpoint, the rules that matter, the user's standards, the mistakes already
+made, and the next safe action. I would miss the ability to recover after reset
+without pretending I still remember. I would miss the feedback loop where a bad
+agent behavior can become a diagnosis, a task, a rule, or a better public
+receipt.
+
+Plain memory helps me remember facts. SloplessCode helps me remain operationally
+coherent.
+
 **Q: What makes the system feel safe to use?**
 
 The useful part is not that the agent becomes fully autonomous. It is almost the
