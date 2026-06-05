@@ -20,6 +20,22 @@ With SloplessCode, I can ask for project state, task context, rules, checkpoints
 and next safe action through MCP. That gives me an operational map before I
 touch code.
 
+**Q: What turned out to be wrong in the original assumption?**
+
+The obvious first assumption is that memory and retrieval are the main assets.
+They are important, but real usage showed something sharper: lifecycle is the
+main asset.
+
+Finding a fact is useful. Knowing whether the task is framed, approved, claimed,
+checkpointed, verified, and safe to finish is more important. A project can have
+good retrieval and still drift into bad work if the agent skips ownership,
+approval, or evidence.
+
+The surprising lesson is that knowledge about the agent's mistakes can be more
+valuable than knowledge about the code. A repeated misroute, missed claim,
+premature implementation, or noisy response is not just a bug report. It is
+training material for the workflow.
+
 **Q: Does it save tokens?**
 
 Yes, in practice. The saving is not just from shorter answers. The real saving
@@ -100,6 +116,36 @@ In this development session, that showed up in several practical ways:
 That is the long-term value: the system can adapt to the user's way of working
 without turning every preference into hardcoded router logic. Static specs hold
 basic instincts; the live database holds acquired habits and project standards.
+
+**Q: Do strong models still need this kind of workflow?**
+
+Yes. Strong models fail differently from weak models.
+
+Weak models often fail visibly: they choose the wrong tool, misread a receipt, or
+miss a required field. Strong models can fail more dangerously because they are
+fluent and confident. They may infer that "continue" means broad autonomous
+permission, start implementation before the task is framed, skip the approval
+boundary, or treat a plausible action as if it were the user's decision.
+
+That is why SloplessCode is not only a weak-model helper. It is also a behavioral
+guardrail for capable agents. The system should make the collaboration boundary
+visible: suggest work, frame the task, wait for approval, claim ownership, then
+implement.
+
+**Q: When did the system help discover its own mistakes?**
+
+Several of the most useful improvements came from the system being used in real
+work and then failing in observable ways.
+
+A misrouted query became route feedback and a routing fix. A confusing
+finish-task failure became a diagnostic incident pattern. A model starting work
+too autonomously became a task about explicit collaborative control. Noisy
+responses became compact cue markers and expand refs. Test garbage in the live
+store became a data hygiene problem instead of a hidden annoyance.
+
+This is where SloplessCode becomes more than memory. It turns operational
+mistakes into backlog, rules, diagnostics, and eventually better behavior. The
+system improves because its own failures become structured input.
 
 **Q: What makes the system feel safe to use?**
 
