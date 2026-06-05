@@ -21,7 +21,6 @@ Agent:
 **One command turns a chat into a working system.**
 
 ### Project Rename
-
 **Mnemoforge** is now **SloplessCode**.
 
 The rename was made to avoid a naming collision with an unrelated internal tool
