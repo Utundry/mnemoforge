@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "purpose": "Allowlisted read-only payload parameters that route_feedback may teach as learned route metadata. User-language phrases normalize to canonical route ids and these stable English payload symbols; do not add language-specific aliases here.",
+  "allowed_payload_fields": {
+    "get": {
+      "task_status_list": {
+        "type": ["task"],
+        "status": ["open", "done", "archived", "resolved", "obsolete"],
+        "include_query": [false]
+      },
+      "artifact_lookup": {
+        "type": ["task", "improvement", "all"],
+        "include_query": [false]
+      }
+    },
+    "project_context": {
+      "task_status_list": {
+        "type": ["task"],
+        "status": ["open", "done", "archived", "resolved", "obsolete"],
+        "include_query": [false]
+      },
+      "artifact_lookup": {
+        "type": ["task", "improvement", "all"],
+        "include_query": [false]
+      }
+    },
+    "project_work": {
+      "next_priority": {
+        "type": ["task", "improvement", "all"]
+      }
+    }
+  }
+}

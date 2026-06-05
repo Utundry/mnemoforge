@@ -20,6 +20,7 @@ from app.services.cognitive_health_service import build_cognitive_health_packet
 from app.services.memory_store import get_memory_store
 from app.services.planning_advisor_service import build_next_work_advisor, is_planning_advisor_query
 from app.services.public_diagnostic_service import attach_public_diagnostic_incident
+from app.services.route_pattern_store import get_route_pattern_store
 from app.services.stage_applicability_service import stage_applicability_metadata
 from app.services.mcp_workflow_specs import load_named_json_spec
 
@@ -517,6 +518,25 @@ async def build_simple_get_query_response(
             limit=limit,
             state=state,
             route=spec_route,
+            dependencies=dependencies,
+        )
+        if routed is not None:
+            return routed
+    learned_route = get_route_pattern_store().match(
+        facade="get",
+        pattern=query,
+        allowed_intent_types={"artifact_lookup", "task_status_list"},
+        semantic_threshold=0.82,
+    )
+    if learned_route and not bool(learned_route.get("mutating")):
+        routed = await execute_learned_get_route(
+            api_base=api_base,
+            args=args,
+            query=query,
+            project=project,
+            limit=limit,
+            state=state,
+            route=learned_route,
             dependencies=dependencies,
         )
         if routed is not None:
@@ -1126,6 +1146,45 @@ async def execute_simple_get_spec_route(
             "details_available": True,
         }
 
+    if resource_kind == "live_runtime_preflight":
+        if not project:
+            next_safe_action = "Call get again with project set so live-runtime preflight can resolve project-scoped policy cues."
+            receipt = {
+                "status": "needs_project",
+                "message": "Live-runtime preflight requires an explicit project or session project.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "matched_trigger": matched_trigger,
+                "missing_fields": ["project"],
+                "next_safe_action": next_safe_action,
+            }
+            return {
+                "state": state,
+                "project": "",
+                "receipt": attach_public_diagnostic_incident(receipt=receipt, kind="missing_project_scope"),
+                "simple_interface": simple_interface,
+                "next_safe_action": next_safe_action,
+                "details_available": True,
+            }
+        packet = build_live_runtime_preflight_packet(project=project, query=query, state=state, limit=limit)
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Natural read query resolved through live-runtime preflight.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "matched_trigger": matched_trigger,
+                "count": len(packet.get("context_cues") or []),
+                "next_safe_action": packet.get("next_safe_action"),
+            },
+            "result": packet,
+            "simple_interface": simple_interface,
+            "next_safe_action": packet.get("next_safe_action"),
+            "details_available": True,
+        }
+
     if resource_kind == "cognitive_health":
         if not project:
             next_safe_action = "Call get again with project set so cognitive health can check project-scoped workflow recall."
@@ -1166,6 +1225,150 @@ async def execute_simple_get_spec_route(
         }
 
     return None
+
+
+async def execute_learned_get_route(
+    *,
+    api_base: str,
+    args: dict[str, Any],
+    query: str,
+    project: str,
+    limit: int,
+    state: str,
+    route: dict[str, Any],
+    dependencies: SimpleReadDependencies,
+) -> dict[str, Any] | None:
+    tool = str(route.get("tool") or "").strip()
+    intent_type = str(route.get("intent_type") or "").strip()
+    if tool not in {"project_context", "list_artifacts"} or intent_type not in {"artifact_lookup", "task_status_list"}:
+        return None
+    if not project:
+        next_safe_action = "Call get again with project set to the target project."
+        receipt = {
+            "status": "needs_project",
+            "message": "Learned project-scoped read route requires an explicit project or session project.",
+            "resource_kind": "artifact_list",
+            "route_source": "learned_route_pattern",
+            "missing_fields": ["project"],
+            "next_safe_action": next_safe_action,
+        }
+        return {
+            "state": state,
+            "project": "",
+            "receipt": attach_public_diagnostic_incident(receipt=receipt, kind="missing_project_scope"),
+            "simple_interface": {"tool": "get", "mode": "query", "route": "learned_route_pattern"},
+            "next_safe_action": next_safe_action,
+            "details_available": True,
+        }
+
+    payload = learned_route_payload(route)
+    artifact_type = str(payload.get("type") or ("task" if intent_type == "task_status_list" else "all")).strip() or "all"
+    status = str(payload.get("status") or "").strip()
+    include_query = bool(payload.get("include_query", True))
+    type_query = "" if artifact_type == "all" else f"&type={quote(artifact_type, safe='')}"
+    status_query = f"&status={quote(status, safe='')}" if status else ""
+    search_query = f"&query={quote(query, safe='')}" if include_query else ""
+    data = await dependencies.get(
+        api_base,
+        f"/artifacts?project={quote(project, safe='')}{status_query}&limit={limit}{type_query}{search_query}",
+    )
+    if not isinstance(data, dict):
+        return None
+    return {
+        "state": state,
+        "project": project,
+        "receipt": {
+            "status": "accepted",
+            "message": "Natural read query resolved through a learned route pattern.",
+            "resource_kind": "artifact_list",
+            "route_source": "learned_route_pattern",
+            "pattern_id": route.get("pattern_id"),
+            "matched_by": route.get("matched_by"),
+            "artifact_type": artifact_type,
+            "status_filter": status,
+            "count": len(data.get("items") or []) if isinstance(data.get("items"), list) else 0,
+            "next_safe_action": "Use get with a returned artifact ref for more detail.",
+        },
+        "result": compact_artifact_list_results(data, limit=limit),
+        "simple_interface": {
+            "tool": "get",
+            "mode": "query",
+            "route": "learned_route_pattern",
+            "intent_type": intent_type,
+        },
+        "next_safe_action": "Use get with a returned artifact ref for more detail.",
+        "details_available": True,
+    }
+
+
+def learned_route_payload(route: dict[str, Any]) -> dict[str, Any]:
+    metadata = route.get("metadata") if isinstance(route.get("metadata"), dict) else {}
+    learned = metadata.get("learned_payload")
+    if isinstance(learned, dict) and learned:
+        return dict(learned)
+    events = metadata.get("feedback_events")
+    if isinstance(events, list):
+        for event in reversed(events):
+            if not isinstance(event, dict):
+                continue
+            context = event.get("context")
+            if not isinstance(context, dict):
+                continue
+            expected = context.get("expected_payload")
+            if isinstance(expected, dict):
+                return dict(expected)
+    return {}
+
+
+def build_live_runtime_preflight_packet(*, project: str, query: str, state: str = "", limit: int = 5) -> dict[str, Any]:
+    try:
+        spec = load_named_json_spec("workflow/live_runtime_preflight.json")
+    except Exception:
+        spec = {}
+    preflight_state = str(state or spec.get("default_state") or "live_validation").strip() or "live_validation"
+    cue_limit = max(1, min(int(limit or 5), 10))
+    cues = [
+        *context_cues_for_query(query=query, project=project, state=preflight_state, max_cues=cue_limit),
+        *context_cues_for_state(state=preflight_state, project=project, max_cues=cue_limit),
+    ]
+    compact_cues: list[dict[str, Any]] = []
+    seen_cues: set[str] = set()
+    for cue in cues:
+        if not isinstance(cue, dict):
+            continue
+        cue_id = str(cue.get("cue") or "").strip()
+        if not cue_id or cue_id in seen_cues:
+            continue
+        seen_cues.add(cue_id)
+        compact_cues.append({key: value for key, value in cue.items() if key != "full_text" and value not in (None, "", [], {})})
+        if len(compact_cues) >= cue_limit:
+            break
+    checks = []
+    for item in spec.get("checks") or []:
+        if not isinstance(item, dict):
+            continue
+        checks.append(
+            {
+                key: item.get(key)
+                for key in ("id", "severity", "question", "why")
+                if item.get(key) not in (None, "", [], {})
+            }
+        )
+    next_safe_action = str(spec.get("next_safe_action") or "").strip() or (
+        "Review preflight cues before live-runtime action; expand refs only when recall is insufficient."
+    )
+    return {
+        "status": "needs_preflight_review",
+        "project": project,
+        "query": query,
+        "preflight_state": preflight_state,
+        "read_only": True,
+        "no_live_action_executed": True,
+        "context_cues": compact_cues,
+        "checks": checks,
+        "expand_only_if_needed": True,
+        "next_safe_action": next_safe_action,
+    }
 
 
 def _artifact_lookup_spec() -> dict[str, Any]:

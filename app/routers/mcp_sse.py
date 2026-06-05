@@ -1847,12 +1847,17 @@ def _render_route_payload_template(
     project: str,
     intent: str,
     limit: int,
+    learned_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     rendered: dict[str, Any] = {}
+    learned = learned_payload if isinstance(learned_payload, dict) else {}
+    topic_intent = "" if learned.get("include_query") is False else _route_topic_intent(intent)
     context = {
         "project": project,
         "intent": intent,
-        "topic_intent": _route_topic_intent(intent),
+        "topic_intent": topic_intent,
+        "status_filter": learned.get("status") or args.get("status_filter") or artifact_list_status_filter(intent),
+        "artifact_type": learned.get("type") or args.get("artifact_type") or explicit_artifact_list_type(intent),
         "limit": limit,
     }
     for key, raw_value in template.items():
@@ -1867,11 +1872,37 @@ def _render_route_payload_template(
                 value = min(max(1, int(args.get("limit") or default_limit)), max_limit)
             elif name in context:
                 value = context[name]
+            elif name in learned:
+                value = learned.get(name)
             else:
                 value = args.get(name)
         if value not in (None, "", []):
             rendered[key] = value
     return rendered
+
+
+def _learned_payload_from_decision(decision: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(decision, dict):
+        return {}
+    metadata = decision.get("metadata")
+    if not isinstance(metadata, dict):
+        return {}
+    learned_payload = metadata.get("learned_payload")
+    if isinstance(learned_payload, dict):
+        return learned_payload
+    feedback_events = metadata.get("feedback_events")
+    if not isinstance(feedback_events, list):
+        return {}
+    for event in reversed(feedback_events):
+        if not isinstance(event, dict):
+            continue
+        context = event.get("context")
+        if not isinstance(context, dict):
+            continue
+        expected_payload = context.get("expected_payload")
+        if isinstance(expected_payload, dict):
+            return expected_payload
+    return {}
 
 
 def _route_topic_intent(intent: str) -> str:
@@ -3273,6 +3304,7 @@ def _project_context_route(
                 project=project,
                 intent=intent,
                 limit=limit,
+                learned_payload=_learned_payload_from_decision(llm_decision),
             )
         if catalog_route.get("structural_arg") and args.get(str(catalog_route.get("structural_arg"))):
             route["structural_match"] = True

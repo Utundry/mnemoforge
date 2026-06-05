@@ -10,6 +10,7 @@ from app.main import _should_suppress_asyncio_transport_error
 from app.routers import mcp_sse
 from app.services import planning_advisor_service
 from app.services.mcp_mailbox_actions import MailboxActionDependencies, mailbox_finish_task, mailbox_start_task
+from app.services import mcp_simple_read_actions
 from app.services.mcp_simple_read_actions import explicit_artifact_list_type
 from mcp import server as mcp_stdio
 
@@ -2222,6 +2223,59 @@ class TestMcpToolExecution:
         assert calls[2][1]["metadata"]["keyboard_layout_terms"] == ["gjrf;b"]
         assert calls[2][1]["metadata"]["typo_terms"] == ["pflfxb"]
 
+    async def test_mailbox_submit_route_feedback_records_allowlisted_expected_payload(self, monkeypatch):
+        from app.services import mcp_mailbox_actions
+
+        calls: list[tuple[str, dict]] = []
+
+        class FakeRoutePatternStore:
+            def match(self, *, facade: str, pattern: str, allowed_intent_types=None, semantic_threshold: float = 0.6):
+                calls.append(("match", {"facade": facade, "pattern": pattern}))
+                return None
+
+            def record(self, **kwargs):
+                calls.append(("record", kwargs))
+                return "alias-route-status"
+
+            def record_feedback(self, pattern_id: str, *, vote: str, reason: str = "", metadata: dict | None = None):
+                calls.append(("feedback", {"pattern_id": pattern_id, "vote": vote, "reason": reason, "metadata": metadata or {}}))
+                return {"pattern_id": pattern_id, "positive_feedback": 1, "negative_feedback": 0}
+
+        monkeypatch.setattr(mcp_mailbox_actions, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "operator_review",
+                "form_id": "route_feedback",
+                "payload": {
+                    "project": "alpha",
+                    "facade": "get",
+                    "query": "custom user phrase for completed task list",
+                    "vote": "positive",
+                    "expected_tool": "project_context",
+                    "expected_intent_type": "task_status_list",
+                    "expected_payload": {
+                        "type": "task",
+                        "status": "done",
+                        "include_query": False,
+                        "dangerous": "ignored",
+                    },
+                    "language": "mixed",
+                    "phrase_family": "completed task list",
+                    "reason": "User phrase should list completed task artifacts.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert calls[1][0] == "record"
+        assert calls[1][1]["metadata"]["learned_payload"] == {"type": "task", "status": "done", "include_query": False}
+        assert calls[2][1]["metadata"]["expected_payload"] == {"type": "task", "status": "done", "include_query": False}
+
     async def test_mailbox_submit_route_hygiene_returns_operator_report(self, monkeypatch):
         from app.services import mcp_mailbox_actions
 
@@ -3429,6 +3483,36 @@ class TestMcpToolExecution:
         assert result["result"]["no_verification_execution"] is True
         assert result["result"]["context_cues"]
 
+    async def test_simple_get_live_runtime_preflight_returns_compact_cues_without_execution(self, monkeypatch):
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("live-runtime preflight should not route through ask_project or execute verification")
+
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {
+                    "project": "alpha",
+                    "state": "verification",
+                    "query": "preflight before restart and live smoke after restart",
+                    "limit": 5,
+                },
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["resource_kind"] == "live_runtime_preflight"
+        assert result["receipt"]["route_source"] == "simple_get_routes"
+        assert result["result"]["read_only"] is True
+        assert result["result"]["no_live_action_executed"] is True
+        assert result["result"]["preflight_state"] == "verification"
+        assert result["result"]["context_cues"]
+        assert all("full_text" not in cue for cue in result["result"]["context_cues"])
+        assert "context_cues" not in result
+        assert any(check["id"] == "operator_intent" for check in result["result"]["checks"])
+        assert "120" not in str(result["result"])
+
     async def test_simple_get_cognitive_health_query_returns_self_check_packet(self, monkeypatch):
         async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
             raise AssertionError("cognitive health query should not route through ask_project")
@@ -3562,6 +3646,74 @@ class TestMcpToolExecution:
         assert result["receipt"]["resource_kind"] == "artifact_list"
         assert result["receipt"]["artifact_type"] == "task"
         assert result["receipt"]["status_filter"] == "done"
+        assert result["result"]["items"][0]["status"] == "done"
+
+    async def test_simple_get_query_applies_learned_status_route_before_memory_search(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        class FakeRoutePatternStore:
+            def match(self, **kwargs):
+                return {
+                    "pattern_id": "pattern-fr-done",
+                    "intent_type": "task_status_list",
+                    "tool": "project_context",
+                    "mutating": False,
+                    "confidence": 1.0,
+                    "matched_by": "exact",
+                    "metadata": {
+                        "learned_payload": {},
+                        "feedback_events": [
+                            {
+                                "vote": "positive",
+                                "context": {
+                                    "expected_payload": {
+                                        "type": "task",
+                                        "status": "done",
+                                        "include_query": False,
+                                    }
+                                },
+                            }
+                        ],
+                    },
+                }
+
+        async def fake_get(api_base: str, path: str):
+            seen["path"] = path
+            return {
+                "items": [
+                    {
+                        "artifact_key": "task:alpha:task-done",
+                        "type": "task",
+                        "task_id": "task-done",
+                        "title": "Done task",
+                        "status": "done",
+                    }
+                ]
+            }
+
+        async def forbidden_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("learned read route should execute before memory_search fallback")
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("learned read route should not require LLM/project expert routing")
+
+        monkeypatch.setattr(mcp_simple_read_actions, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", forbidden_post)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "montre la liste des tâches terminées du projet alpha", "limit": 5},
+                "http://test",
+            )
+        )
+
+        assert seen["path"] == "/artifacts?project=alpha&status=done&limit=5&type=task"
+        assert result["receipt"]["resource_kind"] == "artifact_list"
+        assert result["receipt"]["route_source"] == "learned_route_pattern"
+        assert result["receipt"]["pattern_id"] == "pattern-fr-done"
         assert result["result"]["items"][0]["status"] == "done"
 
     async def test_simple_get_query_uses_spec_status_aliases_for_task_artifacts(self, monkeypatch):
@@ -5678,6 +5830,54 @@ class TestMcpToolExecution:
         assert result["selected_route"]["scorer"]["llm_attempted"] is False
         assert result["route_telemetry"]["matched_pattern_id"] == "pattern-2"
         assert result["route_telemetry"]["matched_by"] == "semantic"
+
+    async def test_project_context_learned_route_can_apply_safe_read_payload_parameters(self, monkeypatch):
+        called: list[tuple[str, dict]] = []
+
+        class FakeRoutePatternStore:
+            def match(self, **kwargs):
+                return {
+                    "pattern_id": "pattern-status",
+                    "intent_type": "task_status_list",
+                    "tool": "list_artifacts",
+                    "confidence": 0.9,
+                    "matched_example": "operator learned completed task phrase",
+                    "reason": "Matched a learned route pattern with read-only payload hints.",
+                    "backend_used": "learned_exact",
+                    "score": 1.0,
+                    "matched_by": "exact",
+                    "metadata": {
+                        "learned_payload": {
+                            "type": "task",
+                            "status": "done",
+                            "include_query": False,
+                        }
+                    },
+                }
+
+        async def forbidden_disambiguate(**kwargs):
+            raise AssertionError("learned route should skip LLM")
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            called.append((tool_name, args))
+            return json.dumps({"items": [{"artifact_key": "task:alpha:done-1", "type": "task", "status": "done"}]})
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+        monkeypatch.setattr(mcp_sse, "_facade_llm_disambiguate", forbidden_disambiguate)
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+
+        result = await mcp_sse._build_project_context_payload(
+            "http://test",
+            {"project": "alpha", "intent": "zavershennye raboty poka"},
+        )
+
+        assert result["selected_route"]["tool"] == "list_artifacts"
+        assert result["selected_route"]["intent_type"] == "task_status_list"
+        assert result["selected_route"]["scorer"]["backend_used"] == "learned_exact"
+        assert called[0] == (
+            "list_artifacts",
+            {"project": "alpha", "type": "task", "status": "done", "limit": 50},
+        )
 
     async def test_project_context_partial_task_id_routes_to_task_lookup_without_llm(self, monkeypatch):
         called: list[tuple[str, dict]] = []

@@ -3,6 +3,25 @@
   "purpose": "Declarative canonical topic routes for public get(query) before generic memory search or project expert fallback.",
   "routes": [
     {
+      "id": "live_runtime_preflight",
+      "resource_kind": "live_runtime_preflight",
+      "priority": 90,
+      "trigger_terms": [
+        "live runtime preflight",
+        "runtime preflight",
+        "live validation preflight",
+        "preflight before restart",
+        "preflight before live smoke",
+        "before restart",
+        "before live validation",
+        "restart preflight",
+        "restart and validate",
+        "live smoke after restart",
+        "external runtime preflight"
+      ],
+      "scope": "project_context_read"
+    },
+    {
       "id": "storage_trust",
       "resource_kind": "storage_trust",
       "priority": 70,

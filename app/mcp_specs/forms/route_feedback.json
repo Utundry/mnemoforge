@@ -10,6 +10,7 @@
     "query",
     "expected_tool",
     "expected_intent_type",
+    "expected_payload",
     "actual_tool",
     "actual_intent_type",
     "vote",
@@ -30,6 +31,11 @@
       "query": {"type": "string"},
       "expected_tool": {"type": "string"},
       "expected_intent_type": {"type": "string"},
+      "expected_payload": {
+        "type": "object",
+        "description": "Allowlisted read-only route payload hints such as status or artifact type. The server ignores fields that are not allowed by the learning route parameter spec.",
+        "additionalProperties": true
+      },
       "actual_tool": {"type": "string"},
       "actual_intent_type": {"type": "string"},
       "vote": {"type": "string", "enum": ["positive", "negative"], "default": "negative"},

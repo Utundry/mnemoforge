@@ -18,7 +18,7 @@ from app.services.mcp_mailbox import (
     mailbox_form_state_names,
 )
 from app.services.mcp_tool_contracts import build_report_task_checkpoint_payload
-from app.services.mcp_workflow_specs import load_route_catalog_spec
+from app.services.mcp_workflow_specs import load_named_json_spec, load_route_catalog_spec
 from app.services.mcp_simple_read_actions import (
     PublicRefDependencies,
     compact_public_ref_matches,
@@ -1427,6 +1427,11 @@ def mailbox_route_feedback(
     if not pattern_id:
         expected_tool = str(payload.get("expected_tool") or "").strip()
         expected_intent_type = str(payload.get("expected_intent_type") or "").strip()
+        learned_payload = _route_feedback_expected_payload(
+            facade=facade,
+            intent_type=expected_intent_type,
+            payload=payload,
+        )
         if vote == "positive" and query and expected_tool and expected_intent_type:
             pattern_id = get_route_pattern_store().record(
                 facade=facade,
@@ -1440,6 +1445,7 @@ def mailbox_route_feedback(
                     "reason": str(payload.get("reason") or "operator_positive_alias").strip(),
                     "matched_example": query,
                     "alias_source": "route_feedback",
+                    "learned_payload": learned_payload,
                 },
             )
         if pattern_id:
@@ -1474,6 +1480,11 @@ def mailbox_route_feedback(
             "keyboard_layout_terms": _string_list_arg(payload.get("keyboard_layout_terms")),
             "expected_tool": str(payload.get("expected_tool") or "").strip(),
             "expected_intent_type": str(payload.get("expected_intent_type") or "").strip(),
+            "expected_payload": _route_feedback_expected_payload(
+                facade=facade,
+                intent_type=str(payload.get("expected_intent_type") or (matched_route or {}).get("intent_type") or "").strip(),
+                payload=payload,
+            ),
             "actual_tool": str(payload.get("actual_tool") or (matched_route or {}).get("tool") or "").strip(),
             "actual_intent_type": str(payload.get("actual_intent_type") or (matched_route or {}).get("intent_type") or "").strip(),
             "updated_by": mailbox_actor(payload),
@@ -1550,6 +1561,36 @@ def mailbox_route_feedback(
         packet["next_safe_action"] = "Negative feedback was recorded; use route_hygiene to decide whether to disable this pattern."
     packet["receipt"]["next_safe_action"] = packet["next_safe_action"]
     return packet
+
+
+def _route_feedback_expected_payload(*, facade: str, intent_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    raw_payload = payload.get("expected_payload")
+    if not isinstance(raw_payload, dict):
+        return {}
+    try:
+        spec = load_named_json_spec("learning/route_parameters.json")
+    except Exception:
+        return {}
+    allowed_by_facade = spec.get("allowed_payload_fields")
+    if not isinstance(allowed_by_facade, dict):
+        return {}
+    allowed_by_intent = allowed_by_facade.get(str(facade or "").strip())
+    if not isinstance(allowed_by_intent, dict):
+        return {}
+    allowed_fields = allowed_by_intent.get(str(intent_type or "").strip())
+    if not isinstance(allowed_fields, dict):
+        return {}
+    sanitized: dict[str, Any] = {}
+    for field, allowed_values in allowed_fields.items():
+        value = raw_payload.get(field)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(allowed_values, list):
+            allowed = {str(item) for item in allowed_values}
+            if str(value) not in allowed:
+                continue
+        sanitized[str(field)] = value
+    return sanitized
 
 
 def _known_route_tools() -> set[str]:

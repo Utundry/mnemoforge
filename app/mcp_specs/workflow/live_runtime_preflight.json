@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "purpose": "Read-only preflight packet for live-runtime or external-runtime actions. This spec defines universal checks only; concrete commands, service names, wait windows, and verification contours must come from governed project data.",
+  "resource_kind": "live_runtime_preflight",
+  "default_state": "live_validation",
+  "checks": [
+    {
+      "id": "operator_intent",
+      "severity": "P0",
+      "question": "Is live-runtime validation explicitly requested or approved by the operator?",
+      "why": "External runtime actions can create live-data noise and should not be inferred from ordinary code verification."
+    },
+    {
+      "id": "project_policy",
+      "severity": "P0",
+      "question": "Has the active project verification policy been resolved from governed project data?",
+      "why": "Runtime contours, commands, service names, and wait windows are project knowledge, not universal MCP behavior."
+    },
+    {
+      "id": "restart_window",
+      "severity": "P1",
+      "question": "If this action follows a restart, has the project-defined stabilization or stale-owner window been respected?",
+      "why": "Immediate checks after restart can falsely report failure while runtime ownership or health state is still stabilizing."
+    },
+    {
+      "id": "evidence_boundary",
+      "severity": "P1",
+      "question": "Will the result be recorded as live diagnostic evidence rather than formal isolated test verification?",
+      "why": "Live diagnostic exploitation complements synthetic tests but does not replace the project-approved verification contour."
+    }
+  ],
+  "next_safe_action": "Review this preflight packet, expand relevant law/cue refs if needed, then perform the live-runtime action only when operator intent and project policy are clear."
+}

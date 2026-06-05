@@ -747,6 +747,17 @@ def test_context_cues_for_query_remind_test_contour_before_live_runtime() -> Non
     assert "full_text" not in cues[0]
 
 
+def test_live_runtime_preflight_spec_stays_universal_and_compact() -> None:
+    spec = load_named_json_spec("workflow/live_runtime_preflight.json")
+    text = json.dumps(spec, ensure_ascii=False)
+
+    assert spec["resource_kind"] == "live_runtime_preflight"
+    assert any(item["id"] == "project_policy" for item in spec["checks"])
+    assert "Docker" not in text
+    assert "memory-server-dev" not in text
+    assert "120 seconds" not in text
+
+
 def test_context_cues_for_query_remind_post_commit_checkpoint() -> None:
     cues = context_cues_for_query(
         query="commit finished, record progress checkpoint with changed files and verification",
@@ -1572,6 +1583,7 @@ def test_route_feedback_form_is_operator_review_only() -> None:
         "jargon_terms",
         "typo_terms",
         "keyboard_layout_terms",
+        "expected_payload",
     } <= set(form["optional_fields"])
     assert "postconditions" not in form
 

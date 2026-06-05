@@ -145,7 +145,8 @@ async def build_simple_get_response(
         data = await dependencies.resolve_query(api_base, scoped_args, session_id)
         if data is not None:
             cues = context_cues_for_query(query=query, project=str(scoped_args.get("project") or ""))
-            if cues and not data.get("context_cues"):
+            result = data.get("result") if isinstance(data.get("result"), dict) else {}
+            if cues and not data.get("context_cues") and not result.get("context_cues"):
                 data["context_cues"] = cues
             return data
 
