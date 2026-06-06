@@ -1,0 +1,11 @@
+{
+  "name": "SloplessCode",
+  "description": "Operational Continuity Infrastructure for AI Coding Agents. Turns high-level intent into reliable, governed, interruption-resilient execution.",
+  "version": "0.2.0",
+  "license": "Apache-2.0",
+  "tags": ["mcp", "ai-agents", "operational-continuity", "governance", "intent-reconstruction", "local-first"],
+  "category": "agent-runtime",
+  "language": "Python",
+  "repository": "https://github.com/Utundry/sloplesscode",
+  "author": "Utundry"
+}

@@ -756,3 +756,5 @@ Apache License 2.0. See [LICENSE](LICENSE).
 ## Project Name
 
 `SloplessCode` is the public release name.
+
+[![sloplesscode MCP server](https://glama.ai/mcp/servers/Utundry/sloplesscode/badges/score.svg)](https://glama.ai/mcp/servers/Utundry/sloplesscode)
