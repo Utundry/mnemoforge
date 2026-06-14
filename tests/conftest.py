@@ -104,6 +104,27 @@ def _reset_mcp_feature_gate_store():
         _fg._STORE = None
 
 
+@pytest.fixture(autouse=True)
+def _reset_autonomous_mode_store():
+    """Use a fresh in-memory autonomous-mode store for each test."""
+    import app.services.autonomous_mode_service as _ams
+    from pathlib import Path
+
+    if _ams._STORE is not None:
+        try:
+            _ams._STORE.close()
+        except Exception:
+            pass
+    _ams._STORE = _ams.AutonomousModeStore(Path(":memory:"))
+    yield
+    if _ams._STORE is not None:
+        try:
+            _ams._STORE.close()
+        except Exception:
+            pass
+        _ams._STORE = None
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_learning_store():
     """Use fresh in-memory learning store for each test — avoids leaking background writer tasks."""

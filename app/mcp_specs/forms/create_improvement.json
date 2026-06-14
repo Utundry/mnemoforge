@@ -41,5 +41,5 @@
     },
     "required_receipt_fields": ["status", "artifact_key", "id", "task_id", "linked_artifact_key"]
   },
-  "public_hint": "Use this for new backlog work; Clerk may help fill fields, but final write requires reviewed form data."
+  "public_hint": "Use this for useful work outside the currently approved scope. Save the improvement as a proposal, return to the current task, and defer full task framing and implementation approval until the improvement is deliberately selected by priority."
 }

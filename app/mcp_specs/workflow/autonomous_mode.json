@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "default_mode": "collaborative_control",
+  "autonomous_mode": "explicit_autonomous_mode",
+  "approval_intent": "explicit_autonomous_mode",
+  "allowed_actions": [
+    "start_task",
+    "record_progress",
+    "finish_task",
+    "release_task_claim"
+  ],
+  "separate_permissions": [
+    "commit",
+    "live_mutation"
+  ],
+  "read_only_actions_remain_available": true,
+  "task_relations_grant_authority": false,
+  "unspecified_actions_are_denied": true,
+  "stop_conditions": [
+    "scope_drift",
+    "revoked",
+    "expired",
+    "framing_version_changed",
+    "unauthorized_task"
+  ]
+}

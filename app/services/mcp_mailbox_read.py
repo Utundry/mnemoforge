@@ -48,6 +48,7 @@ async def build_mailbox_state_response(
         diagnostic=bool(args.get("diagnostic", False)),
         detail=str(args.get("detail") or "compact"),
         governed_laws=governed_laws,
+        session_id=str(args.get("session_id") or session_id or ""),
     )
     return await _suppress_repeated_health_nudge(
         packet,

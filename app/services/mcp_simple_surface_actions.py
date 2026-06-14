@@ -264,11 +264,12 @@ def compact_simple_submit_packet(
         receipt_keys = (
             "status", "form_id", "mode", "message", "id", "artifact_key", "task_id",
             "linked_artifact_key", "stage", "data_ref", "approved_command",
+            "lifecycle_stage", "implementation_ready", "claim_allowed", "framing_required",
             "evidence_classification",
             "forbidden_patterns", "work_token", "lease", "work_session",
             "work_session_resumed", "reclaim", "recommended_reclaim_call",
             "diagnostic_incident",
-            "same_fingerprint", "recovery_options", "edit_authority", "work_guidance",
+            "same_fingerprint", "recovery_options", "edit_authority", "autonomous_mode", "work_guidance",
             "release", "next_state", "next_forms", "close_status", "task_status",
             "linked_improvement_sync", "superseded_by", "submitted_fields", "next_safe_action",
             "requested_close_status", "recommended_next_call",

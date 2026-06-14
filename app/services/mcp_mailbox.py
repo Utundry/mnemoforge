@@ -18,6 +18,7 @@ from app.services.mcp_workflow_specs import (
 from app.services.context_cue_service import context_cues_for_state
 from app.services.cognitive_health_service import build_health_nudge
 from app.services.edit_authority_service import build_edit_authority
+from app.services.autonomous_mode_service import evaluate_autonomous_mode, get_autonomous_mode_store
 from app.services.public_diagnostic_service import attach_public_diagnostic_incident
 from app.services.stage_applicability_service import stage_allows_block
 
@@ -78,6 +79,7 @@ def build_mailbox_state_packet(
     diagnostic: bool = False,
     detail: str = "compact",
     governed_laws: list[Any] | None = None,
+    session_id: str = "",
     spec_root: Path = DEFAULT_SPEC_ROOT,
 ) -> dict[str, Any]:
     state_spec = load_state_spec(state, spec_root=spec_root)
@@ -126,6 +128,12 @@ def build_mailbox_state_packet(
     }
     if stage_allows_block("edit_authority", state=state_spec.id):
         public_packet["edit_authority"] = build_edit_authority(state=state_spec.id)
+    stored_grant = (
+        get_autonomous_mode_store().get(session_id=session_id, project=project)
+        if session_id
+        else None
+    )
+    public_packet["autonomous_mode"] = evaluate_autonomous_mode(stored_grant)
     _apply_packet_limit(
         public_packet,
         forms=forms,

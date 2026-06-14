@@ -27,7 +27,7 @@
     "scope_drift_stop": {
       "editing_allowed": false,
       "instruction": "STOP PROJECT EDITING. SCOPE DRIFT OR AMBIGUITY INVALIDATED THE PREVIOUS APPROVAL. Present a new framing version and wait for explicit approval.",
-      "next_safe_action": "Continue read-only diagnosis, show the revised framing, and request explicit approval."
+      "next_safe_action": "Continue read-only diagnosis. If the finding belongs to the current goal, show a revised framing and request approval; if it is separate work, save it as an improvement and return to the current task."
     },
     "no_authority": {
       "editing_allowed": false,

@@ -32,6 +32,7 @@ def build_edit_authority(
     approval_intent: str = "",
     drift_dimensions: Iterable[str] | None = None,
     ambiguous: bool = False,
+    autonomous_mode: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     spec = _edit_authority_spec()
     drift_spec = spec.get("scope_drift") if isinstance(spec.get("scope_drift"), dict) else {}
@@ -40,10 +41,20 @@ def build_edit_authority(
     unknown_drift = sorted(set(reported_drift) - set(known_dimensions))
     has_drift = bool(reported_drift) or (ambiguous and bool(drift_spec.get("ambiguity_is_drift", True)))
     expected_approval = str(spec.get("approval_intent") or "user_approved_start")
+    autonomous_approved = bool(
+        isinstance(autonomous_mode, dict)
+        and autonomous_mode.get("authority_granted")
+        and str(autonomous_mode.get("mode") or "") == "explicit_autonomous_mode"
+    )
     approved = (
         str(state or "").strip() == "implementation"
-        and str(approval_intent or "").strip() == expected_approval
-        and bool(str(approved_framing or "").strip())
+        and (
+            (
+                str(approval_intent or "").strip() == expected_approval
+                and bool(str(approved_framing or "").strip())
+            )
+            or autonomous_approved
+        )
     )
 
     if has_drift:
@@ -67,8 +78,15 @@ def build_edit_authority(
         "ability_vs_authority": "Technical ability to edit does not grant authority to edit.",
         "instruction": str(state_spec.get("instruction") or ""),
         "task_id": str(task_id or "").strip(),
-        "framing_version": version if framing_text else "",
+        "framing_version": version if (framing_text or autonomous_approved) else "",
         "approval_intent": expected_approval,
+        "authority_source": (
+            "explicit_autonomous_mode"
+            if autonomous_approved
+            else "explicit_user_approval"
+            if approved
+            else ""
+        ),
         "approval_applies_only_to_latest_framing": True,
         "generic_continuation_is_not_approval": list(spec.get("generic_continuation_terms") or []),
         "scope_drift": {
@@ -82,6 +100,8 @@ def build_edit_authority(
     }
     if framing_text:
         packet["approved_framing"] = framing_text
+    if autonomous_approved:
+        packet["autonomous_mode"] = autonomous_mode
     if authority == "scope_drift_stop":
         packet["adherence_incident"] = build_public_diagnostic_incident(
             kind="edit_authority_scope_drift",

@@ -1939,6 +1939,73 @@ def _task_id_from_open_task_item(item: dict[str, Any]) -> str:
     return ""
 
 
+def _open_work_priority(item: dict[str, Any]) -> float:
+    explicit = item.get("importance_score")
+    if explicit is not None:
+        try:
+            return float(explicit)
+        except (TypeError, ValueError):
+            pass
+    tags = {str(tag).strip().casefold() for tag in (item.get("tags") or []) if str(tag).strip()}
+    if tags & {"priority:critical", "critical"}:
+        return 1.0
+    if tags & {"priority:high", "high_priority"}:
+        return 0.9
+    if tags & {"priority:low", "low_priority"}:
+        return 0.4
+    return 0.7
+
+
+def _prepare_open_work_items(data: dict[str, Any], *, limit: int) -> dict[str, Any]:
+    items = data.get("items") or []
+    if not isinstance(items, list):
+        return data
+
+    improvement_keys = {
+        str(item.get("artifact_key") or "").strip()
+        for item in items
+        if isinstance(item, dict) and str(item.get("type") or "").strip() == "improvement"
+    }
+    visible: list[dict[str, Any]] = []
+    suppressed_projection_count = 0
+    for raw_item in items:
+        if not isinstance(raw_item, dict):
+            continue
+        item = dict(raw_item)
+        item_type = str(item.get("type") or "").strip() or _artifact_type_from_key(item.get("artifact_key"))
+        is_projection = (
+            item_type == "task"
+            and str(item.get("source") or "").strip() == "improvement"
+            and str(item.get("linked_artifact_key") or "").strip() in improvement_keys
+        )
+        if is_projection:
+            suppressed_projection_count += 1
+            continue
+        item["work_priority"] = _open_work_priority(item)
+        if item_type == "improvement":
+            item["lifecycle_stage"] = str(item.get("stage") or "proposal")
+            item["implementation_ready"] = False
+            item["claim_allowed"] = False
+            item["framing_required"] = True
+        visible.append(item)
+
+    visible.sort(
+        key=lambda item: (
+            float(item.get("work_priority") or 0.0),
+            str(item.get("updated_at") or item.get("created_at") or ""),
+        ),
+        reverse=True,
+    )
+    visible = visible[: max(1, int(limit))]
+    enriched = dict(data)
+    enriched["items"] = visible
+    enriched["total"] = len(visible)
+    enriched["priority_policy"] = "Unified cross-type priority with lifecycle-specific next actions."
+    if suppressed_projection_count:
+        enriched["suppressed_projection_count"] = suppressed_projection_count
+    return enriched
+
+
 def _annotate_open_tasks_with_claims(data: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     claim_filter = str(args.get("claim_filter") or "available").strip().lower()
     if claim_filter not in {"available", "claimed", "all"}:
@@ -2172,6 +2239,10 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
                 "task_id": item.get("task_id"),
                 "linked_artifact_key": item.get("linked_artifact_key"),
                 "linked_status": item.get("linked_status"),
+                "work_priority": item.get("work_priority"),
+                "lifecycle_stage": item.get("lifecycle_stage"),
+                "implementation_ready": item.get("implementation_ready"),
+                "claim_allowed": item.get("claim_allowed"),
             }
             if control:
                 compact_item["framing_required"] = control.get("framing_required")
@@ -2181,11 +2252,7 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
             if linked_task_id:
                 compact_item["linked_task_id"] = linked_task_id
             if item_type == "improvement" and not compact_item.get("task_id"):
-                compact_item["next_action"] = (
-                    "Review the improvement or open its linked task before claiming work."
-                    if linked_task_id
-                    else "Review the improvement and create or promote a task before claiming work."
-                )
+                compact_item["next_action"] = "Review the improvement and complete task framing before implementation approval."
             if compact_item.get("task_id"):
                 compact_item["next_detail_form"] = {
                     "tool": control.get("review_first_tool") or "mailbox_submit",
@@ -4065,8 +4132,16 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         executed = True
         warnings.append("Mutation blocked by task lease ownership policy.")
     elif route["tool"] == "list_open_tasks":
-        query = build_list_open_tasks_query(route["payload"])
+        requested_type = str(route["payload"].get("artifact_type") or route["payload"].get("type") or "all").strip().lower()
+        retrieval_limit = (
+            max(int(route["payload"].get("limit", 50)), 100)
+            if requested_type == "all"
+            else int(route["payload"].get("limit", 50))
+        )
+        retrieval_payload = {**route["payload"], "limit": retrieval_limit}
+        query = build_list_open_tasks_query(retrieval_payload)
         result = await _get(api_base, f"/artifacts?{query}")
+        result = _prepare_open_work_items(result, limit=int(route["payload"].get("limit", 50)))
         result = _annotate_open_tasks_with_claims(result, route["payload"])
         result = _annotate_open_tasks_with_assignment_safety(result, route["payload"])
         executed = True
@@ -8109,8 +8184,12 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             ),
         )
     elif name == "list_open_tasks":
-        query = build_list_open_tasks_query(args)
+        requested_type = str(args.get("artifact_type") or args.get("type") or "all").strip().lower()
+        retrieval_limit = max(int(args.get("limit", 50)), 100) if requested_type == "all" else int(args.get("limit", 50))
+        retrieval_args = {**args, "limit": retrieval_limit}
+        query = build_list_open_tasks_query(retrieval_args)
         data = await _get(api_base, f"/artifacts?{query}")
+        data = _prepare_open_work_items(data, limit=int(args.get("limit", 50)))
         data = _annotate_open_tasks_with_claims(data, args)
         data = _annotate_open_tasks_with_assignment_safety(data, args)
         return format_list_open_tasks_response(data)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.services.mcp_mailbox import (
@@ -615,6 +616,39 @@ def test_mailbox_state_packet_surfaces_tool_independent_edit_authority() -> None
     assert implementation["edit_authority"]["status"] == "no_authority"
     assert implementation["edit_authority"]["editing_allowed"] is False
     assert "edit_authority" not in verification
+    assert planning["autonomous_mode"]["mode"] == "collaborative_control"
+    assert planning["autonomous_mode"]["active"] is False
+    assert planning["autonomous_mode"]["read_only_actions_remain_available"] is True
+
+
+def test_mailbox_state_packet_surfaces_active_session_autonomous_mode() -> None:
+    from app.services.autonomous_mode_service import get_autonomous_mode_store
+
+    get_autonomous_mode_store().save(
+        session_id="session-auto",
+        project="sloplesscode",
+        grant={
+            "mode": "explicit_autonomous_mode",
+            "approval_intent": "explicit_autonomous_mode",
+            "approval_ref": "operator:bundle-1",
+            "approved_task_ids": ["task-1"],
+            "task_framing_versions": {"task-1": "v1"},
+            "allowed_actions": ["start_task"],
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+            "permissions": {"commit": False, "live_mutation": False},
+        },
+    )
+
+    packet = build_mailbox_state_packet(
+        state="planning",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+        session_id="session-auto",
+    )
+
+    assert packet["autonomous_mode"]["active"] is True
+    assert packet["autonomous_mode"]["approved_task_ids"] == ["task-1"]
+    assert packet["autonomous_mode"]["permissions"]["commit"] is False
 
 
 def test_mailbox_state_packet_surfaces_compact_health_nudge() -> None:

@@ -61,3 +61,21 @@ def test_ambiguity_is_scope_drift() -> None:
 
     assert authority["status"] == "scope_drift_stop"
     assert authority["editing_allowed"] is False
+
+
+def test_valid_autonomous_mode_grants_bounded_authority_without_generic_continuation() -> None:
+    authority = build_edit_authority(
+        state="implementation",
+        task_id="task-1",
+        framing_version="v1",
+        autonomous_mode={
+            "mode": "explicit_autonomous_mode",
+            "authority_granted": True,
+            "approved_task_ids": ["task-1"],
+        },
+    )
+
+    assert authority["status"] == "approved_implementation"
+    assert authority["editing_allowed"] is True
+    assert authority["authority_source"] == "explicit_autonomous_mode"
+    assert authority["framing_version"] == "v1"

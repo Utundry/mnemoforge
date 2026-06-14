@@ -9,6 +9,11 @@ from urllib.parse import quote
 from app.services.developer_feedback_packet_service import build_developer_feedback_packet
 from app.services.evidence_classification_service import classify_evidence_items
 from app.services.edit_authority_service import build_edit_authority
+from app.services.autonomous_mode_service import (
+    evaluate_autonomous_mode,
+    get_autonomous_mode_store,
+    normalize_autonomous_mode,
+)
 from app.services.diagnostic_inspection_service import build_diagnostic_inspection_packet
 from app.services.mcp_mailbox import (
     build_mailbox_mutation_packet,
@@ -523,12 +528,89 @@ async def mailbox_start_task(
     session_id: str | None,
 ) -> dict[str, Any]:
     identity_defaults = await dependencies.get_session_identity_defaults(session_id)
+    lease_session_id = str(payload.get("session_id") or session_id or _generated_mailbox_session_id(payload))
+    mode_store = get_autonomous_mode_store()
+    supplied_mode = payload.get("autonomous_mode") if isinstance(payload.get("autonomous_mode"), dict) else None
+    if supplied_mode is not None and str(supplied_mode.get("mode") or "") == "collaborative_control":
+        mode_store.revoke(session_id=lease_session_id, project=project)
+    stored_mode = mode_store.get(session_id=lease_session_id, project=project)
+    candidate_mode = normalize_autonomous_mode(supplied_mode) if supplied_mode is not None else stored_mode
+    candidate_framing_version = str(payload.get("framing_version") or "").strip()
+    if not candidate_framing_version and isinstance(candidate_mode, dict):
+        candidate_framing_version = str(
+            (candidate_mode.get("task_framing_versions") or {}).get(str(payload["task_id"])) or ""
+        ).strip()
+    autonomous_mode = evaluate_autonomous_mode(
+        candidate_mode,
+        task_id=str(payload["task_id"]),
+        action="start_task",
+        framing_version=candidate_framing_version,
+    )
+    explicit_user_approval = bool(
+        str(payload.get("approved_framing") or "").strip()
+        and str(payload.get("approval_intent") or "").strip() == "user_approved_start"
+    )
+    candidate_is_autonomous = bool(normalize_autonomous_mode(candidate_mode).get("active"))
+    if candidate_is_autonomous and not autonomous_mode.get("authority_granted") and not explicit_user_approval:
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "authority_denied",
+                "form_id": form.id,
+                "message": "The explicit autonomous-mode grant does not authorize this task start.",
+                "autonomous_mode": autonomous_mode,
+                "diagnostic_incident": autonomous_mode.get("diagnostic_incident"),
+                "next_safe_action": autonomous_mode["next_safe_action"],
+            },
+            "next_safe_action": autonomous_mode["next_safe_action"],
+        }
+    explicit_framing = str(payload.get("approved_framing") or "").strip()
+    approval_intent = str(payload.get("approval_intent") or "").strip()
+    if dependencies.get is not None:
+        try:
+            task = await dependencies.get(
+                api_base,
+                f"/project/tasks/{quote(str(payload['task_id']), safe='')}?project={quote(project, safe='')}",
+            )
+        except Exception:
+            task = {}
+        if (
+            isinstance(task, dict)
+            and task.get("linked_improvement_id")
+            and bool(task.get("task_statement_incomplete"))
+            and not (
+                (explicit_framing and approval_intent == "user_approved_start")
+                or autonomous_mode.get("authority_granted")
+            )
+        ):
+            return {
+                "state": state,
+                "project": project,
+                "receipt": {
+                    "status": "framing_required",
+                    "form_id": form.id,
+                    "message": "This task is a technical projection of an improvement and is not ready for implementation.",
+                    "task_id": str(payload["task_id"]),
+                    "linked_artifact_key": f"improvement:{project}:{task['linked_improvement_id']}",
+                    "implementation_ready": False,
+                    "claim_allowed": False,
+                    "next_safe_action": (
+                        "Review the improvement, complete the task framing, obtain explicit approval, "
+                        "then submit start_task with approved_framing."
+                    ),
+                },
+                "next_safe_action": (
+                    "Review the improvement, complete the task framing, obtain explicit approval, "
+                    "then submit start_task with approved_framing."
+                ),
+            }
     start_args = {
         **payload,
         "project": project,
         "task_id": str(payload["task_id"]),
         "owner_agent": str(payload.get("owner_agent") or payload.get("agent_id") or "codex"),
-        "session_id": str(payload.get("session_id") or session_id or _generated_mailbox_session_id(payload)),
+        "session_id": lease_session_id,
         "agent_fingerprint": str(payload.get("agent_fingerprint") or identity_defaults.get("agent_fingerprint") or ""),
         "runtime_profile_id": str(payload.get("runtime_profile_id") or identity_defaults.get("runtime_profile_id") or runtime_profile_id or "unknown_cli"),
         "reason": str(payload.get("reason") or "mailbox_submit.start_task"),
@@ -565,13 +647,16 @@ async def mailbox_start_task(
     reclaim = _start_task_reclaim_payload(result=result, previous_lease=previous_lease)
     reclaimed_after_ttl = reclaim.get("reason") == "previous_lease_expired"
     resumed = bool(result.get("work_session_resumed"))
+    if supplied_mode is not None and autonomous_mode.get("authority_granted"):
+        mode_store.save(session_id=lease_session_id, project=project, grant=normalize_autonomous_mode(supplied_mode))
     approved_framing = str(payload.get("approved_framing") or payload.get("summary") or "").strip()
     edit_authority = build_edit_authority(
         state="implementation",
         task_id=str(payload["task_id"]),
         approved_framing=approved_framing,
-        framing_version=str(payload.get("framing_version") or "").strip(),
+        framing_version=candidate_framing_version,
         approval_intent=str(payload.get("approval_intent") or "user_approved_start").strip(),
+        autonomous_mode=autonomous_mode,
     )
     work_guidance = await _build_start_task_work_guidance(
         result=result,
@@ -598,6 +683,7 @@ async def mailbox_start_task(
         "work_session": result.get("work_session"),
         "work_session_resumed": resumed,
         "edit_authority": edit_authority,
+        "autonomous_mode": autonomous_mode,
         "reclaim": reclaim,
         "auto_heartbeat": result.get("auto_heartbeat"),
         "work_guidance": work_guidance,
@@ -1052,7 +1138,16 @@ async def mailbox_create_improvement(
         "agent_id": mailbox_actor(payload),
         "status": "planning",
         "source": "improvement",
-        "tags": ["mailbox", "mcp-fsm", "mcp-improvement", "entity:task", f"task_id:{task_id}", "task_status:planning"],
+        "tags": [
+            "mailbox",
+            "mcp-fsm",
+            "mcp-improvement",
+            "improvement_projection",
+            "framing_required",
+            "entity:task",
+            f"task_id:{task_id}",
+            "task_status:planning",
+        ],
         "linked_improvement_id": task_id,
     }
     if source_project and source_project != project:
@@ -1065,7 +1160,10 @@ async def mailbox_create_improvement(
             "project": project,
             "change_type": "task_created",
             "content": f"Task bootstrapped from mailbox improvement '{task_payload['title']}'.",
-            "why": "Public create_improvement must return a directly usable task_id for weak-model workflows.",
+            "why": (
+                "Public create_improvement keeps a compatibility task projection, but the improvement "
+                "must be deliberately framed and approved before implementation."
+            ),
             "agent_id": mailbox_actor(payload),
             "source": "mailbox_submit.create_improvement",
             "tags": [
@@ -1084,6 +1182,10 @@ async def mailbox_create_improvement(
         "task_id": task_id,
         "linked_artifact_key": f"task:{project}:{task_id}",
         "task_status": task_result.get("status") or "planning",
+        "lifecycle_stage": "proposal",
+        "implementation_ready": False,
+        "claim_allowed": False,
+        "framing_required": True,
     }
     actual_metadata = {
         "result_kind": "artifact_created",
@@ -1106,7 +1208,14 @@ async def mailbox_create_improvement(
     packet["receipt"]["task_id"] = task_id
     packet["receipt"]["linked_artifact_key"] = result["linked_artifact_key"]
     packet["receipt"]["task_status"] = result["task_status"]
-    packet["receipt"]["next_safe_action"] = "Use task_id for start_task, record_progress, finish_task, or close_task."
+    packet["receipt"]["lifecycle_stage"] = result["lifecycle_stage"]
+    packet["receipt"]["implementation_ready"] = False
+    packet["receipt"]["claim_allowed"] = False
+    packet["receipt"]["framing_required"] = True
+    packet["receipt"]["next_safe_action"] = (
+        "Keep this as an improvement and return to the current task. When selected by priority, "
+        "review it and complete task framing before requesting implementation approval."
+    )
     packet["next_safe_action"] = packet["receipt"]["next_safe_action"]
     return packet
 

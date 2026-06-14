@@ -74,10 +74,18 @@
     "edit_authority_scope_drift": {
       "severity": "high",
       "summary": "The approved project-editing framing no longer matches the work being considered.",
-      "why": "Explicit approval applies only to the latest user-visible framing. New causes, solution directions, subsystems, behaviors, risks, completion criteria, change sets, or ambiguity require renewed approval.",
+      "why": "Explicit approval applies only to the latest user-visible framing. New causes, solution directions, subsystems, behaviors, risks, completion criteria, change sets, or ambiguity require renewed approval; separate work should be captured as an improvement instead of expanding the current task.",
       "likely_source": "The agent discovered a new hypothesis or expanded the task after implementation authority was granted.",
       "resource_kind": "edit_authority",
       "expand_refs": ["cue:adherence:authority_before_editing", "help:workflow.scope_drift"]
+    },
+    "autonomous_mode_denied": {
+      "severity": "high",
+      "summary": "The requested task or action is outside the explicit autonomous-mode grant.",
+      "why": "Autonomous mode is deny-by-default. Only the exhaustive approved task list, matching framing versions, allowed actions, validity window, and separate commit/live permissions grant authority.",
+      "likely_source": "The grant expired, was revoked, omitted the task or action, or no longer matches the approved framing version.",
+      "resource_kind": "autonomous_mode",
+      "expand_refs": ["cue:adherence:authority_before_editing", "help:workflow.autonomous_mode"]
     }
   }
 }

@@ -13,7 +13,7 @@
       "summary": "Technical ability to edit does not grant authority; edit only the latest explicitly approved framing and stop on scope drift.",
       "expand_ref": "cue:adherence:authority_before_editing",
       "trigger_terms": ["edit", "editing", "implementation", "approval", "authority", "scope drift", "new hypothesis", "changed cause", "changed solution"],
-      "full_text": "Before editing a project, distinguish ability from authority. Diagnosis permits reading and proposing a framing, not editing. Explicit approval applies only to the latest user-visible framing. A changed goal, defect cause, solution direction, subsystem, expected behavior, risk, Definition of Done, proposed change set, or ambiguity is scope drift: stop editing, show a new framing version, and wait for explicit approval. Generic continuation language does not approve changed scope."
+      "full_text": "Before editing a project, distinguish ability from authority. Diagnosis permits reading and proposing a framing, not editing. Explicit approval applies only to the latest user-visible framing. A changed goal, defect cause, solution direction, subsystem, expected behavior, risk, Definition of Done, proposed change set, or ambiguity is scope drift: stop editing. If the finding belongs to the current goal, show a new framing version and wait for approval. If it is separate work, save it as an improvement and return to the current task. Generic continuation language does not approve changed scope."
     },
     {
       "id": "adherence:claim_before_mutation",

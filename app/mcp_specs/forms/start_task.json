@@ -5,7 +5,7 @@
   "states": ["planning", "implementation"],
   "mode": "transition",
   "required_fields": ["project", "task_id"],
-  "optional_fields": ["owner_agent", "session_id", "agent_fingerprint", "runtime_profile_id", "work_token", "lease_ttl_seconds", "auto_heartbeat", "heartbeat_seconds", "role", "summary", "approved_framing", "framing_version", "approval_intent"],
+  "optional_fields": ["owner_agent", "session_id", "agent_fingerprint", "runtime_profile_id", "work_token", "lease_ttl_seconds", "auto_heartbeat", "heartbeat_seconds", "role", "summary", "approved_framing", "framing_version", "approval_intent", "autonomous_mode"],
   "input_schema": {
     "type": "object",
     "properties": {
@@ -23,7 +23,27 @@
       "summary": {"type": "string", "default": "Task claimed; work session started."},
       "approved_framing": {"type": "string", "description": "Latest user-visible framing that received explicit approval."},
       "framing_version": {"type": "string", "description": "Stable caller-provided version of the approved framing; generated from approved_framing when omitted."},
-      "approval_intent": {"type": "string", "default": "user_approved_start"}
+      "approval_intent": {"type": "string", "default": "user_approved_start"},
+      "autonomous_mode": {
+        "type": "object",
+        "description": "Explicit operator-approved session grant. approved_task_ids is exhaustive; task relations never expand it.",
+        "properties": {
+          "mode": {"type": "string", "enum": ["collaborative_control", "explicit_autonomous_mode"], "default": "collaborative_control"},
+          "approval_intent": {"type": "string"},
+          "approval_ref": {"type": "string"},
+          "approved_task_ids": {"type": "array", "items": {"type": "string"}},
+          "task_framing_versions": {"type": "object", "additionalProperties": {"type": "string"}},
+          "allowed_actions": {"type": "array", "items": {"type": "string"}},
+          "expires_at": {"type": "string"},
+          "permissions": {
+            "type": "object",
+            "properties": {
+              "commit": {"type": "boolean", "default": false},
+              "live_mutation": {"type": "boolean", "default": false}
+            }
+          }
+        }
+      }
     },
     "required": ["project", "task_id"]
   },

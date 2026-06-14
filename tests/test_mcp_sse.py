@@ -1517,6 +1517,11 @@ class TestMcpToolExecution:
         assert data["receipt"]["id"]
         assert data["receipt"]["task_id"] == data["receipt"]["id"]
         assert data["receipt"]["linked_artifact_key"].startswith("task:alpha:")
+        assert data["receipt"]["lifecycle_stage"] == "proposal"
+        assert data["receipt"]["implementation_ready"] is False
+        assert data["receipt"]["claim_allowed"] is False
+        assert data["receipt"]["framing_required"] is True
+        assert "start_task" not in data["receipt"]["next_safe_action"]
         assert "_internal" not in data
         assert posted[0][0] == "/project/tasks"
         assert posted[1][0].startswith("/project/tasks/")
@@ -2017,7 +2022,7 @@ class TestMcpToolExecution:
                     "id": str(improvement_id),
                     "project": "alpha",
                     "title": "Mailbox-created improvement",
-                    "description": "Create a linked task immediately.",
+                    "description": "Keep a compatibility projection for later framing.",
                     "status": "open",
                 }
 
@@ -2054,6 +2059,8 @@ class TestMcpToolExecution:
         assert data["receipt"]["task_id"] == str(improvement_id)
         assert data["receipt"]["linked_artifact_key"] == f"task:alpha:{improvement_id}"
         assert data["receipt"]["task_status"] == "planning"
+        assert data["receipt"]["lifecycle_stage"] == "proposal"
+        assert data["receipt"]["claim_allowed"] is False
         assert calls[0][0] == "/project/tasks"
         assert calls[0][1]["task_id"] == str(improvement_id)
         assert calls[0][1]["linked_improvement_id"] == str(improvement_id)
@@ -4716,8 +4723,9 @@ class TestMcpToolExecution:
             "approval_required_before_claim": True,
             "approval_intent": "user_approved_start",
             "claim_after": "user_approved_start or explicit_autonomous_mode",
+            "work_priority": 0.7,
         }
-        assert requested[0].startswith("/artifacts?project=alpha&status=open&limit=5")
+        assert requested[0].startswith("/artifacts?project=alpha&status=open&limit=100")
         assert data["result"]["items"][0]["artifact_key"] == "task:alpha:task-1"
         assert data["maintenance_suggestion"]["active_findings"] == 12
         assert data["maintenance_suggestion"]["destructive_action_allowed"] is False
@@ -4751,16 +4759,200 @@ class TestMcpToolExecution:
 
         data = json.loads(result)
         assert data["selected_route"]["tool"] == "list_open_tasks"
-        assert requested[0] == "/artifacts?project=alpha&status=open&limit=5"
+        assert requested[0] == "/artifacts?project=alpha&status=open&limit=100"
         item = data["compact_result"][0]
         assert item["type"] == "improvement"
         assert item["linked_task_id"] == "task-linked"
         assert "task_id" not in item
         assert item["next_detail_form"]["payload"]["task_id"] == "task-linked"
-        assert item["next_action"] == "Review the improvement or open its linked task before claiming work."
+        assert item["next_action"] == "Review the improvement and complete task framing before implementation approval."
+        assert item["lifecycle_stage"] == "proposal"
+        assert item["implementation_ready"] is False
+        assert item["claim_allowed"] is False
         assert item["framing_required"] is True
         assert item["approval_required_before_claim"] is True
         assert item["claim_after"] == "user_approved_start or explicit_autonomous_mode"
+
+    async def test_project_work_unified_priority_suppresses_improvement_task_projection(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            return {
+                "items": [
+                    {
+                        "artifact_key": "task:alpha:imp-1",
+                        "type": "task",
+                        "task_id": "imp-1",
+                        "title": "Technical projection",
+                        "status": "open",
+                        "source": "improvement",
+                        "linked_artifact_key": "improvement:alpha:imp-1",
+                        "task_statement_incomplete": True,
+                    },
+                    {
+                        "artifact_key": "task:alpha:ready-1",
+                        "type": "task",
+                        "task_id": "ready-1",
+                        "title": "Ready task",
+                        "status": "open",
+                    },
+                    {
+                        "artifact_key": "improvement:alpha:imp-1",
+                        "type": "improvement",
+                        "title": "Higher priority improvement",
+                        "status": "open",
+                        "stage": "proposal",
+                        "importance_score": 0.95,
+                        "linked_artifact_key": "task:alpha:imp-1",
+                    },
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {"project": "alpha", "intent": "what is the next priority?", "limit": 5},
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert [item["artifact_key"] for item in data["result"]["items"]] == [
+            "improvement:alpha:imp-1",
+            "task:alpha:ready-1",
+        ]
+        assert data["result"]["suppressed_projection_count"] == 1
+        assert data["compact_result"][0]["type"] == "improvement"
+        assert data["compact_result"][0]["next_action"].startswith("Review the improvement")
+
+    async def test_mailbox_start_task_rejects_unframed_improvement_projection(self):
+        async def fake_get(api_base: str, path: str):
+            return {
+                "task_id": "imp-1",
+                "linked_improvement_id": "imp-1",
+                "task_statement_incomplete": True,
+            }
+
+        async def fail_execute(*args, **kwargs):
+            raise AssertionError("unframed projection must stop before claim")
+
+        async def fake_identity_defaults(session_id: str | None):
+            return {}
+
+        form = mcp_sse.mailbox_form_by_id("start_task")
+        assert form is not None
+        packet = await mailbox_start_task(
+            form=form,
+            payload={"project": "alpha", "task_id": "imp-1"},
+            state="planning",
+            project="alpha",
+            runtime_profile_id="strong_mcp_operator",
+            diagnostic=False,
+            api_base="http://test",
+            session_id="sess-start",
+            dependencies=MailboxActionDependencies(
+                post=lambda *args, **kwargs: None,
+                get=fake_get,
+                execute_tool=fail_execute,
+                get_session_identity_defaults=fake_identity_defaults,
+                task_mutation_guard=lambda **kwargs: None,
+            ),
+        )
+
+        assert packet["receipt"]["status"] == "framing_required"
+        assert packet["receipt"]["claim_allowed"] is False
+        assert packet["receipt"]["implementation_ready"] is False
+
+    async def test_mailbox_start_task_uses_only_explicit_bounded_autonomous_grant(self):
+        from datetime import datetime, timedelta, timezone
+
+        async def fake_get(api_base: str, path: str):
+            return {
+                "task_id": "task-1",
+                "linked_improvement_id": "task-1",
+                "task_statement_incomplete": True,
+            }
+
+        async def fake_execute(name: str, args: dict, api_base: str, session_id: str | None):
+            assert name == "start_task_session"
+            return json.dumps(
+                {
+                    "status": "started",
+                    "lease": {"lease_id": "lease-1"},
+                    "work_token": "token-1",
+                    "work_session": {"work_id": "work-1"},
+                }
+            )
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            return {"readiness": {"ready_to_enter": True}, "required_rules": [], "risk_controls": []}
+
+        async def fake_identity_defaults(session_id: str | None):
+            return {}
+
+        grant = {
+            "mode": "explicit_autonomous_mode",
+            "approval_intent": "explicit_autonomous_mode",
+            "approval_ref": "operator:bundle-1",
+            "approved_task_ids": ["task-1"],
+            "task_framing_versions": {"task-1": "v1"},
+            "allowed_actions": ["start_task", "record_progress", "finish_task"],
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        }
+        form = mcp_sse.mailbox_form_by_id("start_task")
+        assert form is not None
+        packet = await mailbox_start_task(
+            form=form,
+            payload={
+                "project": "alpha",
+                "task_id": "task-1",
+                "session_id": "sess-auto",
+                "framing_version": "v1",
+                "autonomous_mode": grant,
+            },
+            state="planning",
+            project="alpha",
+            runtime_profile_id="strong_mcp_operator",
+            diagnostic=False,
+            api_base="http://test",
+            session_id="sess-auto",
+            dependencies=MailboxActionDependencies(
+                post=fake_post,
+                get=fake_get,
+                execute_tool=fake_execute,
+                get_session_identity_defaults=fake_identity_defaults,
+                task_mutation_guard=lambda **kwargs: None,
+            ),
+        )
+
+        assert packet["receipt"]["status"] == "started"
+        assert packet["receipt"]["autonomous_mode"]["authority_granted"] is True
+        assert packet["receipt"]["edit_authority"]["authority_source"] == "explicit_autonomous_mode"
+        assert packet["receipt"]["edit_authority"]["framing_version"] == "v1"
+
+        denied = await mailbox_start_task(
+            form=form,
+            payload={
+                "project": "alpha",
+                "task_id": "linked-task",
+                "session_id": "sess-other",
+                "framing_version": "v1",
+                "autonomous_mode": grant,
+            },
+            state="planning",
+            project="alpha",
+            runtime_profile_id="strong_mcp_operator",
+            diagnostic=False,
+            api_base="http://test",
+            session_id="sess-other",
+            dependencies=MailboxActionDependencies(
+                post=fake_post,
+                get=fake_get,
+                execute_tool=fake_execute,
+                get_session_identity_defaults=fake_identity_defaults,
+                task_mutation_guard=lambda **kwargs: None,
+            ),
+        )
+
+        assert denied["receipt"]["status"] == "authority_denied"
+        assert denied["receipt"]["autonomous_mode"]["stop_reason"] == "unauthorized_task"
 
     async def test_project_work_list_open_work_keeps_work_items_broad(self, monkeypatch):
         requested: list[str] = []
@@ -4776,7 +4968,7 @@ class TestMcpToolExecution:
             "http://test",
         )
 
-        assert requested[0] == "/artifacts?project=alpha&status=open&limit=5"
+        assert requested[0] == "/artifacts?project=alpha&status=open&limit=100"
 
     async def test_project_work_next_priority_skips_claimed_tasks(self, monkeypatch):
         from pathlib import Path
@@ -7615,7 +7807,7 @@ class TestMcpToolExecution:
 
         result = await mcp_sse._execute_tool("list_open_tasks", {"project": "alpha", "limit": 5}, "http://test")
 
-        assert seen["path"] == "/artifacts?project=alpha&status=open&limit=5"
+        assert seen["path"] == "/artifacts?project=alpha&status=open&limit=100"
         assert "No open work items found." in result
 
     async def test_list_open_tasks_can_request_tasks_only(self, monkeypatch):
@@ -7638,7 +7830,7 @@ class TestMcpToolExecution:
 
     async def test_list_open_tasks_surfaces_orphan_open_improvements(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
-            assert path == "/artifacts?project=alpha&status=open&limit=5"
+            assert path == "/artifacts?project=alpha&status=open&limit=100"
             return {
                 "items": [
                     {
