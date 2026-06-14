@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.services.intent_polarity import analyze_intent_polarity
 from app.services.mcp_workflow_specs import load_route_catalog_spec
 
 PROJECT_WORK_ROUTE_CATALOG: tuple[dict[str, Any], ...] = tuple(
@@ -92,6 +93,7 @@ def project_work_route(
             }
         )
     route = _apply_payload(route, args, text)
+    route["reason"] = _finalize_route_reason(route)
     route["evidence"] = evidence
     if route.get("matched_example"):
         route["evidence"].append(f"matched_example:{route['matched_example']}")
@@ -192,9 +194,11 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
     danger_mode, danger_confirmation = _danger_bypass_args(args, intent)
 
     if route["intent_type"] == "next_priority":
-        claim_filter = str(args.get("claim_filter") or "").strip().lower()
-        if claim_filter not in {"available", "claimed", "all"}:
-            claim_filter = "claimed" if _route_tokens(text) & {"claimed", "claim", "busy", "occupied", "leased"} else "available"
+        claim_filter, filter_resolution = _resolve_claim_filter(
+            args=args,
+            text=text,
+            default="available",
+        )
         assignment_filter = str(args.get("assignment_filter") or "").strip().lower()
         if assignment_filter not in {"all", "independent", "needs_review"}:
             assignment_filter = "independent" if _route_tokens(text) & {"multi", "agent", "agents", "parallel", "another", "delegate", "handoff"} else "all"
@@ -205,11 +209,13 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
             "include_claims": True,
             "assignment_filter": assignment_filter,
         }
+        route["claim_filter_resolution"] = filter_resolution
     elif route["intent_type"] == "list_all_tasks":
-        tokens = _route_tokens(text)
-        claim_filter = str(args.get("claim_filter") or "").strip().lower()
-        if claim_filter not in {"available", "claimed", "all"}:
-            claim_filter = "claimed" if tokens & {"claimed", "claim", "busy", "occupied", "leased"} else "all"
+        claim_filter, filter_resolution = _resolve_claim_filter(
+            args=args,
+            text=text,
+            default="all",
+        )
         artifact_type = str(args.get("artifact_type") or args.get("type") or "all").strip().lower()
         if artifact_type not in {"all", "task", "improvement"}:
             artifact_type = "all"
@@ -221,6 +227,7 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
             "assignment_filter": "all",
             "artifact_type": artifact_type,
         }
+        route["claim_filter_resolution"] = filter_resolution
     elif route["intent_type"] == "pull_task_context":
         route["payload"] = {
             "project": project,
@@ -331,6 +338,76 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
             "suggested_first_tools": ["list_project_laws", "list_rule_candidates", "get_rule_candidate_review_packet"],
         }
     return route
+
+
+def _resolve_claim_filter(
+    *,
+    args: dict[str, Any],
+    text: str,
+    default: str,
+) -> tuple[str, dict[str, Any]]:
+    explicit = str(args.get("claim_filter") or "").strip().lower()
+    if explicit in {"available", "claimed", "all"}:
+        return explicit, {
+            "value": explicit,
+            "source": "explicit_argument",
+            "reason": "A valid structured claim_filter argument takes precedence over natural-language inference.",
+        }
+
+    polarity = analyze_intent_polarity(
+        text,
+        signals={
+            "available": ("available", "unclaimed", "free", "unoccupied"),
+            "claimed": ("claimed", "occupied", "busy", "leased"),
+            "all": ("all", "every", "both"),
+        },
+    )
+    available_signal = "available" in polarity.positive or "claimed" in polarity.negative
+    claimed_signal = "claimed" in polarity.positive or "available" in polarity.negative
+    all_signal = "all" in polarity.positive
+    if claimed_signal and available_signal:
+        value = "all"
+        reason = "Both claimed and available task groups were requested; include both groups."
+    elif claimed_signal:
+        value = "claimed"
+        reason = "The request explicitly targets claimed, occupied, busy, or leased tasks."
+    elif available_signal:
+        value = "available"
+        reason = "The request explicitly targets available/unclaimed tasks or negates claimed tasks."
+    elif all_signal:
+        value = "all"
+        reason = "The request explicitly asks for all task groups."
+    else:
+        value = default
+        reason = f"No lease-state preference was found; use the route default '{default}'."
+
+    return value, {
+        "value": value,
+        "source": "natural_language" if value != default or available_signal or claimed_signal or all_signal else "route_default",
+        "available_signal": available_signal,
+        "claimed_signal": claimed_signal,
+        "all_signal": all_signal,
+        "polarity": polarity.evidence(),
+        "reason": reason,
+    }
+
+
+def _finalize_route_reason(route: dict[str, Any]) -> str:
+    base_reason = str(route.get("reason") or "").strip()
+    payload = route.get("payload")
+    resolution = route.get("claim_filter_resolution")
+    if not isinstance(payload, dict) or not isinstance(resolution, dict):
+        return base_reason
+
+    claim_filter = str(payload.get("claim_filter") or "").strip().lower()
+    if claim_filter not in {"available", "claimed", "all"}:
+        return base_reason
+
+    resolution_reason = str(resolution.get("reason") or "").strip()
+    resolved = f"Final claim_filter={claim_filter}."
+    if resolution_reason:
+        resolved = f"{resolved} {resolution_reason}"
+    return f"{base_reason} {resolved}".strip()
 
 
 def _danger_bypass_args(args: dict[str, Any], intent: str) -> tuple[bool, str]:

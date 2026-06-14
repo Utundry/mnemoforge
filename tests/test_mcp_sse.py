@@ -1199,7 +1199,9 @@ class TestMcpToolExecution:
         context_route = mcp_sse._project_context_route(route["payload"])
         assert context_route["tool"] == "list_artifacts"
         assert context_route["mutating"] is False
-        assert context_route["payload"]["query"] == "HTTP download"
+        assert context_route["intent_type"] == "semantic_artifact_lookup"
+        assert context_route["payload"]["query"] == "http download"
+        assert context_route["payload"]["search_mode"] == "semantic"
 
     def test_get_find_task_query_maps_to_task_artifact_list(self):
         assert explicit_artifact_list_type("find task about HTTP download") == "task"
@@ -2584,6 +2586,8 @@ class TestMcpToolExecution:
                         "session_id": "sess-guided-start",
                         "agent_fingerprint": "agentfp:guided-start",
                         "auto_heartbeat": False,
+                        "approved_framing": "Implement the reviewed bounded task framing.",
+                        "approval_intent": "user_approved_start",
                     },
                 },
                 "http://test",
@@ -2592,6 +2596,11 @@ class TestMcpToolExecution:
             data = json.loads(result)
             guidance = data["receipt"]["work_guidance"]
             assert "Begin work" in guidance["message"]
+            authority = data["receipt"]["edit_authority"]
+            assert authority["status"] == "approved_implementation"
+            assert authority["editing_allowed"] is True
+            assert authority["framing_version"].startswith("framing:")
+            assert guidance["edit_authority"] == authority
             assert guidance["verification_policy"]["status"] == "ready"
             assert guidance["verification_policy"]["required_rules"][0]["title"] == "Alpha Docker Test Contour"
             assert "Docker-based verification contour" in guidance["verification_policy"]["risk_controls"][0]
@@ -4852,6 +4861,52 @@ class TestMcpToolExecution:
             assert data["compact_result"][0]["claimed_by"] == "claude"
         finally:
             store.close()
+
+    async def test_project_work_list_all_negated_claim_action_keeps_all_filter(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            return {"items": []}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "intent": "List all open tasks for review. Do not claim, close, or modify anything.",
+                "limit": 20,
+                "scorer_backend": "llm",
+            },
+            "http://test",
+        )
+        data = json.loads(result)
+
+        assert data["submit_payload"]["claim_filter"] == "all"
+        assert data["result"]["claim_filter"] == "all"
+        assert "Final claim_filter=all." in data["selected_route"]["reason"]
+        assert data["selected_route"]["claim_filter_resolution"]["source"] == "natural_language"
+        assert data["selected_route"]["claim_filter_resolution"]["polarity"]["positive"] == ["all"]
+
+    async def test_project_work_negative_claimed_filter_executes_available(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            return {"items": []}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "intent": "List all available unclaimed tasks; exclude claimed tasks.",
+                "limit": 20,
+                "scorer_backend": "llm",
+            },
+            "http://test",
+        )
+        data = json.loads(result)
+
+        assert data["submit_payload"]["claim_filter"] == "available"
+        assert data["result"]["claim_filter"] == "available"
+        assert "Final claim_filter=available." in data["selected_route"]["reason"]
+        assert "claim_filter=all" not in data["selected_route"]["reason"]
+        assert data["selected_route"]["claim_filter_resolution"]["polarity"]["negative"] == ["claimed"]
 
     async def test_project_work_multi_agent_assignment_requires_independent_tasks(self, monkeypatch):
         async def fake_get(api_base: str, path: str):

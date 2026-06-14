@@ -23,6 +23,11 @@
       "hide_in": ["planning", "framing", "operator_review"],
       "why": "Checkpoint and closeout reminders are useful during active work and handoff."
     },
+    "edit_authority": {
+      "show_in": ["planning", "implementation", "checkpointing", "handoff", "operator_review"],
+      "hide_in": ["verification", "live_validation"],
+      "why": "Editing authority must be explicit wherever project editing can begin, continue, pause, or drift."
+    },
     "law:test_contour_before_live": {
       "show_in": ["verification", "live_validation"],
       "hide_in": ["planning", "framing", "implementation", "checkpointing", "handoff", "operator_review"],

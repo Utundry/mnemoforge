@@ -17,6 +17,7 @@ from app.models.unified_artifact import (
     to_unified_status,
 )
 from app.services.improvements_store import get_improvements_store
+from app.services.memory_store import get_memory_store
 from app.services.project_identity_service import project_lookup_ids, resolve_project_id
 from app.services.project_task_service import _task_capture_summary_map
 from app.services.project_tasks_store import get_project_tasks_store
@@ -192,6 +193,42 @@ class UnifiedArtifactService:
         self._improvements_store = get_improvements_store()
         self._tasks_store = get_project_tasks_store()
 
+    async def _get_semantic_candidate(self, artifact_key: str) -> UnifiedArtifactRecord:
+        parts = str(artifact_key or "").split(":", 2)
+        if len(parts) != 3 or parts[0] not in {"memory", "project_tree"}:
+            return await self.get_artifact(artifact_key)
+        requested_type, project, local_id = parts
+        row = await get_memory_store().get(local_id)
+        if not row:
+            raise ValueError(f"Semantic candidate not found in SQLite: {local_id}")
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        canonical_project = resolve_project_id(project)
+        stored_project = str(metadata.get("project") or metadata.get("project_id") or "").strip()
+        if stored_project and stored_project not in project_lookup_ids(canonical_project):
+            raise ValueError(f"Semantic candidate belongs to another project: {local_id}")
+        type_ = "project_tree" if str(row.get("category") or "") == "doc_section" else "memory"
+        if requested_type == "project_tree" and type_ != requested_type:
+            logger.debug("Qdrant candidate type was stale for memory %s; SQLite category won.", local_id)
+        content = str(row.get("content") or "").strip()
+        title = str(metadata.get("title") or "").strip() or content.splitlines()[0][:256]
+        created_at = datetime.fromtimestamp(float(row.get("created_at") or 0.0), tz=timezone.utc)
+        updated_at = datetime.fromtimestamp(float(row.get("updated_at") or row.get("created_at") or 0.0), tz=timezone.utc)
+        return UnifiedArtifactRecord(
+            artifact_key=f"{type_}:{canonical_project}:{local_id}",
+            type=type_,
+            id=UUID(local_id),
+            project=canonical_project,
+            title=title or local_id,
+            description=content,
+            status=str(metadata.get("status") or "active"),
+            agent_id=str(metadata.get("agent_id") or "unknown"),
+            tags=list(metadata.get("tags") or []),
+            created_at=created_at,
+            updated_at=updated_at,
+            source=str(metadata.get("source") or row.get("category") or ""),
+            topic_path=metadata.get("topic_path"),
+        )
+
     async def get_artifact(self, artifact_key: str) -> UnifiedArtifactRecord:
         """Получить сущность по artifact_key независимо от типа."""
         key = ArtifactKey.parse(artifact_key)
@@ -265,12 +302,15 @@ class UnifiedArtifactService:
             )
             if row:
                 break
+        if not row:
+            row = self._tasks_store.get_unique_task_by_uuid(task_id=key.local_id)
 
         if not row:
             raise ValueError(f"Task not found: {key.local_id}")
 
         # Получить связанный improvement, если есть
-        summary = (await _task_capture_summary_map(canonical_project, limit_hint=1)).get(key.local_id) or {}
+        stored_project = str(row.get("project") or canonical_project)
+        summary = (await _task_capture_summary_map(stored_project, limit_hint=1)).get(key.local_id) or {}
 
         linked_artifact_key = None
         linked_status = None
@@ -319,12 +359,27 @@ class UnifiedArtifactService:
         updated_after: datetime | None = None,
         updated_before: datetime | None = None,
         limit: int = 50,
+        semantic_candidates: dict[str, float] | None = None,
     ) -> UnifiedArtifactListResponse:
         """Получить список сущностей с фильтрацией по типу и статусу."""
         canonical_project = resolve_project_id(project)
         lookup_projects = project_lookup_ids(canonical_project)
         items: list[UnifiedArtifactRecord] = []
         fetch_limit = max(limit, 100) if query else limit
+
+        if semantic_candidates is not None:
+            for artifact_key, score in semantic_candidates.items():
+                try:
+                    item = await self._get_semantic_candidate(artifact_key)
+                except (TypeError, ValueError):
+                    continue
+                if type_ and item.type != type_:
+                    continue
+                item.query_score = round(float(score), 6)
+                item.match_reason = (
+                    "Semantic candidate from Qdrant; authoritative artifact rehydrated and validated from SQLite."
+                )
+                items.append(item)
 
         # Преобразовать unified status в тип-специфичный
         improvement_status = None
@@ -336,7 +391,7 @@ class UnifiedArtifactService:
             task_status = from_unified_status("task", status)
 
         # Получить improvements
-        if type_ is None or type_ == "improvement":
+        if semantic_candidates is None and (type_ is None or type_ == "improvement"):
             improvements = []
             for lookup_project in lookup_projects:
                 improvements.extend(
@@ -354,7 +409,7 @@ class UnifiedArtifactService:
                     logger.warning(f"Failed to convert improvement {imp['id']}: {e}")
 
         # Получить tasks
-        if type_ is None or type_ == "task":
+        if semantic_candidates is None and (type_ is None or type_ == "task"):
             tasks = []
             for lookup_project in lookup_projects:
                 tasks.extend(
@@ -392,7 +447,7 @@ class UnifiedArtifactService:
                     before=updated_before,
                 )
             ]
-        if query:
+        if query and semantic_candidates is None:
             scored_items = [(item, _artifact_query_score(item, query)) for item in items]
             scored_items = [(item, score) for item, score in scored_items if score > 0]
             scored_items.sort(key=lambda pair: (pair[1], pair[0].updated_at.timestamp()), reverse=True)
@@ -404,7 +459,12 @@ class UnifiedArtifactService:
             items = [item for item, _score in scored_items]
 
         # Сортировать по updated_at (новые первыми)
-        if not query:
+        if semantic_candidates is not None:
+            items.sort(
+                key=lambda item: (float(item.query_score or 0.0), item.updated_at.timestamp()),
+                reverse=True,
+            )
+        elif not query:
             items.sort(key=lambda x: x.updated_at, reverse=True)
 
         # Ограничить количество
@@ -413,6 +473,10 @@ class UnifiedArtifactService:
         return UnifiedArtifactListResponse(
             total=len(items),
             items=items,
+            search_mode="semantic" if semantic_candidates is not None else "lexical",
+            backend_used="qdrant_candidates_sqlite_authority" if semantic_candidates is not None else "sqlite_lexical",
+            candidate_count=len(semantic_candidates or {}),
+            sqlite_validated_count=len(items) if semantic_candidates is not None else 0,
         )
 
     async def resolve_artifact(

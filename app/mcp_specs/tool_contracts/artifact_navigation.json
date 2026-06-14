@@ -25,7 +25,14 @@
         "properties": {
           "project": {"type": "string", "default": "mnemoforge"},
           "status": {"type": "string", "description": "Filter by status (open, done, paused, archived)"},
-          "type": {"type": "string", "description": "Filter by type (improvement, task, or null for both)"},
+          "type": {"type": "string", "description": "Filter by type (improvement, task, memory, project_tree, or null for all)"},
+          "query": {"type": "string", "description": "Natural-language artifact query"},
+          "search_mode": {
+            "type": "string",
+            "enum": ["lexical", "semantic"],
+            "default": "lexical",
+            "description": "semantic uses Qdrant only for candidate ranking and validates every returned artifact against SQLite"
+          },
           "created_after": {"type": "string", "description": "ISO 8601 timestamp; include artifacts with created_at >= this value"},
           "created_before": {"type": "string", "description": "ISO 8601 timestamp; include artifacts with created_at <= this value"},
           "updated_after": {"type": "string", "description": "ISO 8601 timestamp; include artifacts with updated_at >= this value"},

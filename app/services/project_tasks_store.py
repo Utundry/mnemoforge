@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 from threading import Lock
 from typing import Iterable, Optional
+from uuid import UUID
 
 from app.models.project_task import ProjectTaskChangeRecord, ProjectTaskRecord
 from app.services.system_data_root import data_path
@@ -172,6 +173,28 @@ class ProjectTasksStore:
                 (project, task_id),
             ).fetchone()
         return self._row_to_dict(row) if row else None
+
+    def get_unique_task_by_uuid(self, *, task_id: str) -> Optional[dict]:
+        """Resolve a canonical UUID across projects only when it is unambiguous."""
+        try:
+            if str(UUID(task_id)) != task_id.lower():
+                return None
+        except (AttributeError, TypeError, ValueError):
+            return None
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT *
+                FROM project_tasks
+                WHERE task_id = ?
+                ORDER BY updated_at DESC
+                LIMIT 2
+                """,
+                (task_id,),
+            ).fetchall()
+        if len(rows) != 1:
+            return None
+        return self._row_to_dict(rows[0])
 
     def list_tasks(
         self,

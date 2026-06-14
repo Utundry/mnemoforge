@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from app.services.developer_feedback_packet_service import build_developer_feedback_packet
 from app.services.evidence_classification_service import classify_evidence_items
+from app.services.edit_authority_service import build_edit_authority
 from app.services.diagnostic_inspection_service import build_diagnostic_inspection_packet
 from app.services.mcp_mailbox import (
     build_mailbox_mutation_packet,
@@ -339,6 +340,7 @@ async def _build_start_task_work_guidance(
     api_base: str,
     dependencies: MailboxActionDependencies,
     session_id: str | None,
+    edit_authority: dict[str, Any] | None = None,
     guidance_stage: str = "implementation",
 ) -> dict[str, Any]:
     if not stage_allows_block("work_guidance", state=guidance_stage):
@@ -346,6 +348,8 @@ async def _build_start_task_work_guidance(
     guidance: dict[str, Any] = {
         "message": "Begin work; remember the project-specific execution policy before implementation and verification.",
     }
+    if edit_authority and stage_allows_block("edit_authority", state=guidance_stage):
+        guidance["edit_authority"] = edit_authority
     if stage_allows_block("verification_policy", state=guidance_stage):
         guidance["verification_policy"] = await _build_public_verification_policy(
             result=result,
@@ -561,6 +565,14 @@ async def mailbox_start_task(
     reclaim = _start_task_reclaim_payload(result=result, previous_lease=previous_lease)
     reclaimed_after_ttl = reclaim.get("reason") == "previous_lease_expired"
     resumed = bool(result.get("work_session_resumed"))
+    approved_framing = str(payload.get("approved_framing") or payload.get("summary") or "").strip()
+    edit_authority = build_edit_authority(
+        state="implementation",
+        task_id=str(payload["task_id"]),
+        approved_framing=approved_framing,
+        framing_version=str(payload.get("framing_version") or "").strip(),
+        approval_intent=str(payload.get("approval_intent") or "user_approved_start").strip(),
+    )
     work_guidance = await _build_start_task_work_guidance(
         result=result,
         project=project,
@@ -568,6 +580,7 @@ async def mailbox_start_task(
         api_base=api_base,
         dependencies=dependencies,
         session_id=session_id,
+        edit_authority=edit_authority,
     )
     receipt = {
         "status": "reclaimed_after_ttl" if reclaimed_after_ttl else "started",
@@ -584,6 +597,7 @@ async def mailbox_start_task(
         "work_token": result.get("work_token"),
         "work_session": result.get("work_session"),
         "work_session_resumed": resumed,
+        "edit_authority": edit_authority,
         "reclaim": reclaim,
         "auto_heartbeat": result.get("auto_heartbeat"),
         "work_guidance": work_guidance,

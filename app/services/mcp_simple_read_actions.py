@@ -195,6 +195,34 @@ async def build_simple_public_ref_response(
             "message": dependencies.public_error_message(exc),
             "next_safe_action": next_safe_action,
         }
+        diagnostic_allowed = bool(args.get("diagnostic")) or str(
+            args.get("runtime_profile_id") or ""
+        ).strip() == "diagnostic_operator"
+        if diagnostic_allowed and kind in {"task", "improvement", "artifact"}:
+            orphan = get_public_ref_index_store().find_exact(artifact_key=normalized_ref)
+            if orphan:
+                receipt.update(
+                    status="orphan_ref",
+                    message=(
+                        "A non-authoritative historical public-ref index entry exists, "
+                        "but the artifact is absent from authoritative SQLite storage."
+                    ),
+                    orphan_reference={
+                        "artifact_key": orphan.get("artifact_key"),
+                        "ref_kind": orphan.get("ref_kind"),
+                        "project": orphan.get("project"),
+                        "local_id": orphan.get("local_id"),
+                        "title": orphan.get("title"),
+                        "last_indexed_at": orphan.get("updated_at"),
+                        "index_source": orphan.get("index_source"),
+                        "data_root": orphan.get("data_root"),
+                        "authoritative": False,
+                    },
+                    next_safe_action=(
+                        "Inspect backups or an explicitly selected historical data root; "
+                        "do not treat this index entry as a valid task and do not restore or delete automatically."
+                    ),
+                )
         return _public_ref_envelope(
             args=args,
             project=project,
@@ -288,7 +316,7 @@ async def resolve_public_artifact_short_ref(
                 "source": resolution.source,
             }
         except Exception:
-            store.remove(resolution.artifact_key)
+            pass
     except PublicRefNotFoundError:
         pass
 

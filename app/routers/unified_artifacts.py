@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status as http_status
+from qdrant_client.http import models as qmodels
 
 from app.dependencies import JobQueueDep, OllamaDep, QdrantDep
 from app.models.unified_artifact import (
@@ -27,12 +28,75 @@ from app.services.artifact_lifecycle_service import (
     build_checkpoint_scope_review_content,
     reconcile_completed_checkpoint_artifacts,
 )
+from app.services.embedding_gateway import embed_query
+from app.services.project_identity_service import project_lookup_ids, resolve_project_id
 from app.services.project_task_service import add_task_change
 from app.services.unified_artifact_service import get_unified_artifact_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/artifacts", tags=["unified-artifacts"])
+
+
+def _semantic_candidate_keys(hit, *, public_project: str) -> list[str]:
+    payload = dict(getattr(hit, "payload", None) or {})
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    tags = [str(tag or "") for tag in payload.get("tags") or []]
+    task_id = str(meta.get("task_id") or "").strip()
+    if not task_id:
+        task_tag = next((tag for tag in tags if tag.startswith("task_id:")), "")
+        task_id = task_tag.split(":", 1)[1].strip() if task_tag else ""
+    improvement_id = str(
+        meta.get("linked_improvement_id")
+        or meta.get("improvement_id")
+        or ""
+    ).strip()
+    keys: list[str] = []
+    if task_id:
+        keys.append(f"task:{public_project}:{task_id}")
+    if improvement_id:
+        keys.append(f"improvement:{public_project}:{improvement_id}")
+    if not keys:
+        category = str(payload.get("category") or "").strip()
+        candidate_type = "project_tree" if category == "doc_section" else "memory"
+        keys.append(f"{candidate_type}:{public_project}:{hit.id}")
+    return keys
+
+
+async def _semantic_artifact_candidates(
+    *,
+    qdrant,
+    ollama,
+    project: str,
+    query: str,
+    limit: int,
+) -> dict[str, float]:
+    vector, _embedding_meta = await embed_query(
+        query,
+        primary=ollama,
+        purpose="semantic_artifact_lookup",
+    )
+    canonical_project = resolve_project_id(project)
+    scores: dict[str, float] = {}
+    for lookup_project in project_lookup_ids(canonical_project):
+        hits = await qdrant._client.search(
+            collection_name=qdrant._collection,
+            query_vector=vector,
+            query_filter=qmodels.Filter(
+                must=[
+                    qmodels.FieldCondition(
+                        key="project",
+                        match=qmodels.MatchValue(value=lookup_project),
+                    )
+                ]
+            ),
+            limit=max(limit * 4, 40),
+            with_payload=True,
+        )
+        for hit in hits:
+            for artifact_key in _semantic_candidate_keys(hit, public_project=canonical_project):
+                scores[artifact_key] = max(scores.get(artifact_key, 0.0), float(hit.score))
+    return scores
 
 
 async def _sync_resolved_to_tree_node(node_id: str) -> None:
@@ -128,6 +192,8 @@ async def _run_best_effort_improvement_post_resolve(
 
 @router.get("", response_model=UnifiedArtifactListResponse)
 async def list_artifacts(
+    qdrant: QdrantDep,
+    ollama: OllamaDep,
     project: str = Query("mnemoforge", description="Project name"),
     status: Optional[str] = Query(None, description="Filter by status (open, done, etc.)"),
     artifact_status: Optional[str] = Query(None, description="Deprecated alias for status"),
@@ -137,6 +203,7 @@ async def list_artifacts(
     created_before: Optional[datetime] = Query(None, description="Filter by created_at <= timestamp"),
     updated_after: Optional[datetime] = Query(None, description="Filter by updated_at >= timestamp"),
     updated_before: Optional[datetime] = Query(None, description="Filter by updated_at <= timestamp"),
+    search_mode: str = Query("lexical", pattern="^(lexical|semantic)$"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of results"),
 ):
     """List unified artifacts with optional filtering.
@@ -152,6 +219,17 @@ async def list_artifacts(
     """
     try:
         service = get_unified_artifact_service()
+        semantic_candidates = None
+        if search_mode == "semantic":
+            if not str(query or "").strip():
+                raise ValueError("Semantic artifact lookup requires a non-empty query.")
+            semantic_candidates = await _semantic_artifact_candidates(
+                qdrant=qdrant,
+                ollama=ollama,
+                project=project,
+                query=str(query),
+                limit=limit,
+            )
         result = await service.list_artifacts(
             project=project,
             status=status or artifact_status,
@@ -162,6 +240,7 @@ async def list_artifacts(
             updated_after=updated_after,
             updated_before=updated_before,
             limit=limit,
+            semantic_candidates=semantic_candidates,
         )
         return result
     except Exception as e:

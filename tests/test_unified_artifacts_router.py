@@ -180,6 +180,44 @@ async def test_list_artifacts_uses_topic_aliases_and_ranking(client_with_unified
 
 
 @pytest.mark.asyncio
+async def test_list_artifacts_semantic_mode_reports_qdrant_candidates_and_sqlite_validation(
+    client_with_unified_artifacts,
+) -> None:
+    client, _fake_queue = client_with_unified_artifacts
+
+    created = await client.post(
+        "/api/v1/project/tasks",
+        json={
+            "project": "proj-semantic",
+            "title": "Live project reconstruction bundle generator",
+            "description": "Create a bundle that lets a fresh agent rebuild work after source loss.",
+            "agent_id": "architect",
+        },
+    )
+    assert created.status_code == 201, created.text
+    task_id = created.json()["task_id"]
+
+    listed = await client.get(
+        "/api/v1/artifacts",
+        params={
+            "project": "proj-semantic",
+            "query": "recover project knowledge after losing source code",
+            "search_mode": "semantic",
+            "type": "task",
+            "limit": 10,
+        },
+    )
+
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body["search_mode"] == "semantic"
+    assert body["backend_used"] == "qdrant_candidates_sqlite_authority"
+    assert body["candidate_count"] >= 1
+    assert body["sqlite_validated_count"] >= 1
+    assert any(item["task_id"] == task_id for item in body["items"])
+
+
+@pytest.mark.asyncio
 async def test_resolve_artifact_survives_best_effort_followup_failure(
     client_with_unified_artifacts,
     monkeypatch,

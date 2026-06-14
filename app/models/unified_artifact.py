@@ -92,6 +92,11 @@ class UnifiedArtifactListResponse:
 
     total: int
     items: list[UnifiedArtifactRecord]
+    search_mode: str = "lexical"
+    backend_used: str = "sqlite_lexical"
+    candidate_count: int = 0
+    sqlite_validated_count: int = 0
+    fallback_reason: str = ""
 
 
 @dataclass

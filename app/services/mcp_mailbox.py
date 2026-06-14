@@ -17,7 +17,9 @@ from app.services.mcp_workflow_specs import (
 )
 from app.services.context_cue_service import context_cues_for_state
 from app.services.cognitive_health_service import build_health_nudge
+from app.services.edit_authority_service import build_edit_authority
 from app.services.public_diagnostic_service import attach_public_diagnostic_incident
+from app.services.stage_applicability_service import stage_allows_block
 
 _WORKFLOW_STATE_NAMES = {
     "planning",
@@ -122,6 +124,8 @@ def build_mailbox_state_packet(
         "next_safe_action": _next_safe_action(state_spec.id, forms),
         "receipt": None,
     }
+    if stage_allows_block("edit_authority", state=state_spec.id):
+        public_packet["edit_authority"] = build_edit_authority(state=state_spec.id)
     _apply_packet_limit(
         public_packet,
         forms=forms,

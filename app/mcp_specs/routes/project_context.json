@@ -4,6 +4,26 @@
   "purpose": "Declarative project_context route examples and scoring hints.",
   "routes": [
     {
+      "intent_type": "semantic_artifact_lookup",
+      "tool": "list_artifacts",
+      "mutating": false,
+      "examples": [
+        "find task by meaning",
+        "semantic search for project work",
+        "find artifacts related to this concept",
+        "which task discussed this idea"
+      ],
+      "bonus_terms": ["semantic", "meaning", "related", "concept", "about", "discussed"],
+      "payload_template": {
+        "project": "{project}",
+        "type": "{artifact_type}",
+        "query": "{topic_intent}",
+        "search_mode": "semantic",
+        "limit": "{limit:50:200}"
+      },
+      "reason": "Meaning-based artifact lookup uses Qdrant for candidates and SQLite for authoritative rehydration."
+    },
+    {
       "intent_type": "task_status_list",
       "tool": "list_artifacts",
       "mutating": false,

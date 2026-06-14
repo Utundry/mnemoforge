@@ -566,6 +566,15 @@ async def get_project_task(qdrant, *, project: str, task_id: str, include_change
         if not include_changes:
             task.changes = []
         return _canonicalize_task_record(task, project)
+    stored = _task_store().get_unique_task_by_uuid(task_id=task_id)
+    if stored:
+        stored_project = str(stored.get("project") or project)
+        changes = await list_task_changes(qdrant, project=stored_project, task_id=task_id)
+        task = _store_row_to_task(stored, changes=changes)
+        task = _apply_task_capture_summary(task, await _task_capture_summary_map(stored_project, limit_hint=50))
+        if not include_changes:
+            task.changes = []
+        return _canonicalize_task_record(task, project)
     memory_id = await _find_task_memory_id(qdrant, project=project, task_id=task_id)
     if not memory_id:
         raise ValueError("Task not found")
@@ -824,6 +833,16 @@ async def list_task_changes(qdrant, *, project: str, task_id: str, limit: int = 
     stored_rows: list[dict] = []
     for lookup_project in _lookup_projects(project):
         stored_rows.extend(_task_store().list_changes(project=lookup_project, task_id=task_id, limit=limit))
+    if not stored_rows:
+        task = _task_store().get_unique_task_by_uuid(task_id=task_id)
+        if task:
+            stored_rows.extend(
+                _task_store().list_changes(
+                    project=str(task.get("project") or ""),
+                    task_id=task_id,
+                    limit=limit,
+                )
+            )
     stored_rows.sort(key=lambda row: float(row.get("created_at") or 0))
     stored_rows = stored_rows[:limit]
     if stored_rows:

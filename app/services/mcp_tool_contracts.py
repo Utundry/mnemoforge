@@ -1223,6 +1223,8 @@ def build_list_artifacts_query(args: dict[str, Any]) -> str:
         params.append(f"type={quote(str(args['type']), safe='')}")
     if args.get("query"):
         params.append(f"query={quote(str(args['query']), safe='')}")
+    if args.get("search_mode"):
+        params.append(f"search_mode={quote(str(args['search_mode']), safe='')}")
     if args.get("created_after"):
         params.append(f"created_after={quote(str(args['created_after']), safe='')}")
     if args.get("created_before"):

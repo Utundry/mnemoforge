@@ -37,7 +37,7 @@
         "list all tasks",
         "show all open work"
       ],
-      "reason": "Explicit list-all intent maps to list_open_tasks with claim_filter=all."
+      "reason": "Explicit list-all intent maps to the unified open-task surface."
     },
     {
       "intent_type": "pull_task_context",

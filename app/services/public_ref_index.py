@@ -209,6 +209,20 @@ class PublicRefIndexStore:
             rows = self._conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
+    def find_exact(self, *, artifact_key: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM public_ref_index WHERE artifact_key=?",
+                (str(artifact_key or "").strip(),),
+            ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["index_source"] = "public_ref_index"
+        item["data_root"] = str(_DB_PATH.parent)
+        item["authoritative"] = False
+        return item
+
 
 _STORE: PublicRefIndexStore | None = None
 

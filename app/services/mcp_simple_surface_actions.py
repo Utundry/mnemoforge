@@ -268,7 +268,7 @@ def compact_simple_submit_packet(
             "forbidden_patterns", "work_token", "lease", "work_session",
             "work_session_resumed", "reclaim", "recommended_reclaim_call",
             "diagnostic_incident",
-            "same_fingerprint", "recovery_options", "work_guidance",
+            "same_fingerprint", "recovery_options", "edit_authority", "work_guidance",
             "release", "next_state", "next_forms", "close_status", "task_status",
             "linked_improvement_sync", "superseded_by", "submitted_fields", "next_safe_action",
             "requested_close_status", "recommended_next_call",

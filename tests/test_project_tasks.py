@@ -4,6 +4,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 import json
 from urllib.parse import quote
+from uuid import uuid4
 
 import pytest
 from qdrant_client.http import models as qmodels
@@ -66,6 +67,69 @@ async def test_project_tasks_api_roundtrip(client) -> None:
     listing = listed.json()
     assert listing["total"] == 1
     assert listing["items"][0]["task_id"] == "task-alpha-1"
+
+
+@pytest.mark.asyncio
+async def test_project_task_uuid_lookup_is_not_limited_to_requested_project(client) -> None:
+    task_id = str(uuid4())
+    created = await client.post(
+        "/api/v1/project/tasks",
+        json={
+            "task_id": task_id,
+            "project": "historical-project-name",
+            "title": "Stable UUID lookup",
+            "description": "Direct UUID lookup should survive project scope changes.",
+            "agent_id": "codex",
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    change = await client.post(
+        f"/api/v1/project/tasks/{task_id}/changes",
+        json={
+            "project": "historical-project-name",
+            "change_type": "decision",
+            "content": "Use the stable UUID for direct lookup.",
+            "agent_id": "codex",
+        },
+    )
+    assert change.status_code == 201, change.text
+
+    fetched = await client.get(
+        f"/api/v1/project/tasks/{task_id}",
+        params={"project": "current-project-name"},
+    )
+
+    assert fetched.status_code == 200, fetched.text
+    body = fetched.json()
+    assert body["task_id"] == task_id
+    assert body["project"] == "current-project-name"
+    assert len(body["changes"]) == 1
+    assert "Use the stable UUID for direct lookup." in body["changes"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_project_task_uuid_lookup_fails_closed_when_ambiguous(client) -> None:
+    task_id = str(uuid4())
+    for project in ("historical-project-a", "historical-project-b"):
+        created = await client.post(
+            "/api/v1/project/tasks",
+            json={
+                "task_id": task_id,
+                "project": project,
+                "title": f"Task in {project}",
+                "description": "Duplicate UUIDs must not cross project boundaries.",
+                "agent_id": "codex",
+            },
+        )
+        assert created.status_code == 201, created.text
+
+    fetched = await client.get(
+        f"/api/v1/project/tasks/{task_id}",
+        params={"project": "current-project-name"},
+    )
+
+    assert fetched.status_code == 404, fetched.text
 
 
 @pytest.mark.asyncio

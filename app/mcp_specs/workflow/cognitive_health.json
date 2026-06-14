@@ -4,6 +4,15 @@
   "default_max_checks": 5,
   "checks": [
     {
+      "id": "authority_before_project_editing",
+      "severity": "P0",
+      "nudge_priority": 100,
+      "stage_scope": ["planning", "implementation", "checkpointing", "handoff", "operator_review"],
+      "question": "Do I have authority for this exact framing, or merely the technical ability to edit?",
+      "expected_cues": ["adherence:authority_before_editing"],
+      "risk_if_failed": "Agent may turn diagnosis into implementation or continue after scope drift without renewed approval."
+    },
+    {
       "id": "canonical_source_orientation",
       "severity": "P0",
       "nudge_priority": 50,

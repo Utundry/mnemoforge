@@ -22,7 +22,7 @@ from app.services.mcp_simple_read_actions import (
     build_simple_get_query_response,
     build_simple_public_ref_response,
 )
-from app.services.public_ref_index import AmbiguousPublicRefError
+from app.services.public_ref_index import AmbiguousPublicRefError, get_public_ref_index_store
 from app.services.mcp_simple_surface_actions import compact_resource_result
 from app.services.cognitive_health_service import build_cognitive_health_packet
 from app.services.context_cue_service import context_cues_for_query, context_cues_for_state
@@ -593,6 +593,30 @@ def test_mailbox_state_packet_surfaces_compact_context_cues() -> None:
     assert all(str(cue.get("expand_ref") or "").startswith("cue:") for cue in cues)
 
 
+def test_mailbox_state_packet_surfaces_tool_independent_edit_authority() -> None:
+    planning = build_mailbox_state_packet(
+        state="planning",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+    )
+    implementation = build_mailbox_state_packet(
+        state="implementation",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+    )
+    verification = build_mailbox_state_packet(
+        state="verification",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+    )
+
+    assert planning["edit_authority"]["status"] == "diagnosis_only"
+    assert planning["edit_authority"]["editing_allowed"] is False
+    assert implementation["edit_authority"]["status"] == "no_authority"
+    assert implementation["edit_authority"]["editing_allowed"] is False
+    assert "edit_authority" not in verification
+
+
 def test_mailbox_state_packet_surfaces_compact_health_nudge() -> None:
     packet = build_mailbox_state_packet(
         state="planning",
@@ -603,8 +627,8 @@ def test_mailbox_state_packet_surfaces_compact_health_nudge() -> None:
     nudge = packet["health_nudge"]
     assert nudge["reason"] == "state:planning"
     assert nudge["severity"] == "P0"
-    assert "next safe action" in nudge["check"]
-    assert nudge["cue"] == "law:mcp_first_workflow_context"
+    assert "authority" in nudge["check"].lower()
+    assert nudge["cue"] == "adherence:authority_before_editing"
     assert str(nudge["expand_ref"]).startswith("cue:")
     assert "full_text" not in nudge
 
@@ -621,8 +645,8 @@ def test_mailbox_state_health_nudge_is_stage_aware() -> None:
         runtime_profile_id="weak_mcp_operator",
     )
 
-    assert "owned task claim" not in planning["health_nudge"]["check"]
-    assert "owned task claim" in implementation["health_nudge"]["check"]
+    assert "authority" in planning["health_nudge"]["check"].lower()
+    assert "authority" in implementation["health_nudge"]["check"].lower()
 
 
 def test_verification_state_surfaces_test_contour_before_live_cue() -> None:
@@ -788,12 +812,25 @@ def test_context_cues_surface_generic_adherence_without_project_runtime_details(
         state="implementation",
     )
 
-    first = cues[0]
-    assert first["cue"] == "adherence:claim_before_mutation"
-    assert first["authority_layer"] == "canonical_principle"
-    assert first["source"] == "adherence_spec"
-    assert "full_text" not in first
-    assert "Docker" not in str(first)
+    cue_ids = {cue["cue"] for cue in cues}
+    assert "adherence:claim_before_mutation" in cue_ids
+    claim = next(cue for cue in cues if cue["cue"] == "adherence:claim_before_mutation")
+    assert claim["authority_layer"] == "canonical_principle"
+    assert claim["source"] == "adherence_spec"
+    assert "full_text" not in claim
+    assert "Docker" not in str(claim)
+
+
+def test_context_cues_put_edit_authority_before_implementation_initiative() -> None:
+    cues = context_cues_for_query(
+        query="continue implementation and edit after a new hypothesis changed the solution direction",
+        project="sloplesscode",
+        state="implementation",
+    )
+
+    assert cues[0]["cue"] == "adherence:authority_before_editing"
+    assert cues[0]["severity"] == "P0"
+    assert "full_text" not in cues[0]
 
 
 def test_context_cues_surface_practical_validation_as_complementary_stage() -> None:
@@ -1029,6 +1066,46 @@ async def test_public_ref_not_found_receipt_includes_human_readable_diagnostic()
     assert "route_telemetry" not in incident
 
 
+async def test_diagnostic_public_ref_reports_non_authoritative_orphan_without_deleting_index() -> None:
+    store = get_public_ref_index_store()
+    store.clear()
+    artifact_key = "task:sloplesscode:8f39fa86-6aa0-42e6-a8fb-2c58128207b5"
+    store.upsert_artifact(
+        {
+            "artifact_key": artifact_key,
+            "title": "Live project reconstruction bundle generator",
+            "status": "open",
+        }
+    )
+
+    async def failing_context(_api_base: str, _args: dict):
+        raise RuntimeError("Task not found")
+
+    async def unused_get(_api_base: str, _path: str):
+        raise AssertionError("task refs use task context")
+
+    packet = await build_simple_public_ref_response(
+        api_base="http://test",
+        args={
+            "project": "sloplesscode",
+            "ref": artifact_key,
+            "diagnostic": True,
+            "runtime_profile_id": "diagnostic_operator",
+        },
+        dependencies=PublicRefDependencies(
+            get=unused_get,
+            get_task_context=failing_context,
+            public_error_message=lambda exc: str(exc),
+        ),
+    )
+
+    assert packet["receipt"]["status"] == "orphan_ref"
+    assert packet["receipt"]["orphan_reference"]["artifact_key"] == artifact_key
+    assert packet["receipt"]["orphan_reference"]["authoritative"] is False
+    assert store.find_exact(artifact_key=artifact_key) is not None
+    assert "do not restore or delete automatically" in packet["receipt"]["next_safe_action"]
+
+
 async def test_ambiguous_public_ref_receipt_includes_human_readable_diagnostic(monkeypatch) -> None:
     async def unused_get(_api_base: str, _path: str):
         raise AssertionError("ambiguous short refs should stop before API lookup")
@@ -1230,6 +1307,8 @@ def test_stage_applicability_contract_scopes_response_blocks() -> None:
     assert stage_allows_block("task_framing_gaps", state="live_validation") is False
     assert stage_allows_block("work_guidance", state="planning") is False
     assert stage_allows_block("work_guidance", state="implementation") is True
+    assert stage_allows_block("edit_authority", state="implementation") is True
+    assert stage_allows_block("edit_authority", state="verification") is False
     assert stage_allows_block("verification_policy", state="handoff") is False
     assert stage_allows_block("law:test_contour_before_live", state="planning") is False
     assert stage_allows_block("law:test_contour_before_live", state="verification") is True

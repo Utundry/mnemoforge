@@ -15,6 +15,7 @@ from app.models.unified_artifact import (
     from_unified_status,
 )
 from app.services.improvements_store import get_improvements_store
+from app.services.memory_store import get_memory_store
 from app.services import project_identity_service
 from app.services.project_tasks_store import get_project_tasks_store
 from app.services.unified_artifact_service import UnifiedArtifactService, get_unified_artifact_service
@@ -146,6 +147,155 @@ async def test_get_artifact_task() -> None:
     assert artifact.tags == ["test"]
     assert artifact.topic_path == "/test/path"
     assert artifact.status == "active"
+
+
+@pytest.mark.asyncio
+async def test_semantic_candidates_are_rehydrated_from_sqlite_and_stale_candidates_are_dropped() -> None:
+    service = UnifiedArtifactService()
+    tasks_store = get_project_tasks_store()
+    task_id = str(uuid4())
+    missing_id = str(uuid4())
+    now = datetime.now(timezone.utc).timestamp()
+
+    tasks_store.upsert_task(
+        memory_id=str(uuid4()),
+        task_id=task_id,
+        project="semantic-project",
+        title="Live project reconstruction bundle generator",
+        description="Build a reconstruction bundle after source loss.",
+        agent_id="test-agent",
+        status="active",
+        source="manual",
+        tags=[],
+        created_at=now,
+        updated_at=now,
+    )
+
+    result = await service.list_artifacts(
+        project="semantic-project",
+        type_="task",
+        query="reconstruct a project after source loss",
+        semantic_candidates={
+            f"task:semantic-project:{task_id}": 0.91,
+            f"task:semantic-project:{missing_id}": 0.99,
+        },
+    )
+
+    assert [item.task_id for item in result.items] == [task_id]
+    assert result.search_mode == "semantic"
+    assert result.backend_used == "qdrant_candidates_sqlite_authority"
+    assert result.candidate_count == 2
+    assert result.sqlite_validated_count == 1
+    assert "validated from SQLite" in result.items[0].match_reason
+
+
+@pytest.mark.asyncio
+async def test_semantic_raw_memory_candidate_is_rehydrated_from_sqlite() -> None:
+    service = UnifiedArtifactService()
+    memory_id = str(uuid4())
+    await get_memory_store().upsert(
+        memory_id,
+        "doc_section",
+        "Live project reconstruction bundle generator after source loss.",
+        {
+            "project": "semantic-project",
+            "agent_id": "docs",
+            "source": "project_tree_doc",
+            "topic_path": "recovery/reconstruction",
+            "tags": ["source-loss"],
+        },
+    )
+
+    result = await service.list_artifacts(
+        project="semantic-project",
+        query="reconstruct a project after source loss",
+        semantic_candidates={
+            f"project_tree:semantic-project:{memory_id}": 0.88,
+        },
+    )
+
+    assert result.sqlite_validated_count == 1
+    assert result.items[0].type == "project_tree"
+    assert result.items[0].artifact_key == f"project_tree:semantic-project:{memory_id}"
+    assert result.items[0].source == "project_tree_doc"
+
+
+@pytest.mark.asyncio
+async def test_get_artifact_task_survives_project_rename_without_registered_alias() -> None:
+    service = UnifiedArtifactService()
+    tasks_store = get_project_tasks_store()
+    task_id = str(uuid4())
+    now = datetime.now(timezone.utc).timestamp()
+
+    tasks_store.upsert_task(
+        memory_id=str(uuid4()),
+        task_id=task_id,
+        project="historical-project-name",
+        title="Historical task",
+        description="The task id remains stable when the project name changes.",
+        agent_id="test-agent",
+        status="active",
+        source="manual",
+        tags=[],
+        created_at=now,
+        updated_at=now,
+    )
+
+    artifact = await service.get_artifact(f"task:current-project-name:{task_id}")
+
+    assert artifact.task_id == task_id
+    assert artifact.project == "current-project-name"
+    assert artifact.artifact_key == f"task:current-project-name:{task_id}"
+
+
+@pytest.mark.asyncio
+async def test_get_artifact_task_does_not_cross_projects_when_task_id_is_ambiguous() -> None:
+    service = UnifiedArtifactService()
+    tasks_store = get_project_tasks_store()
+    task_id = str(uuid4())
+    now = datetime.now(timezone.utc).timestamp()
+
+    for project in ("historical-project-a", "historical-project-b"):
+        tasks_store.upsert_task(
+            memory_id=str(uuid4()),
+            task_id=task_id,
+            project=project,
+            title=f"Task in {project}",
+            description="Duplicate task ids must remain project-scoped.",
+            agent_id="test-agent",
+            status="active",
+            source="manual",
+            tags=[],
+            created_at=now,
+            updated_at=now,
+        )
+
+    with pytest.raises(ValueError, match="Task not found"):
+        await service.get_artifact(f"task:current-project-name:{task_id}")
+
+
+@pytest.mark.asyncio
+async def test_get_artifact_task_does_not_cross_projects_for_non_uuid_task_id() -> None:
+    service = UnifiedArtifactService()
+    tasks_store = get_project_tasks_store()
+    now = datetime.now(timezone.utc).timestamp()
+
+    tasks_store.upsert_task(
+        memory_id=str(uuid4()),
+        task_id="human-readable-task-id",
+        project="historical-project-name",
+        title="Historical task",
+        description="Only full UUIDs may use the cross-project fallback.",
+        agent_id="test-agent",
+        status="active",
+        source="manual",
+        tags=[],
+        created_at=now,
+        updated_at=now,
+    )
+
+    with pytest.raises(ValueError, match="Task not found"):
+        await service.get_artifact("task:current-project-name:human-readable-task-id")
 
 
 @pytest.mark.asyncio

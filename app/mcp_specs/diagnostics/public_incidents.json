@@ -70,6 +70,14 @@
       "likely_source": "The agent tried to close a task as completed through a cleanup form instead of claiming the task and submitting finish_task with work_token.",
       "resource_kind": "task_completion",
       "expand_refs": ["help:submit.start_task", "help:submit.finish_task", "help:workflow.owned_claim"]
+    },
+    "edit_authority_scope_drift": {
+      "severity": "high",
+      "summary": "The approved project-editing framing no longer matches the work being considered.",
+      "why": "Explicit approval applies only to the latest user-visible framing. New causes, solution directions, subsystems, behaviors, risks, completion criteria, change sets, or ambiguity require renewed approval.",
+      "likely_source": "The agent discovered a new hypothesis or expanded the task after implementation authority was granted.",
+      "resource_kind": "edit_authority",
+      "expand_refs": ["cue:adherence:authority_before_editing", "help:workflow.scope_drift"]
     }
   }
 }

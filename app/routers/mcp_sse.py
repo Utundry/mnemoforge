@@ -3237,6 +3237,9 @@ def _project_context_route(
     task_id = str(args.get("task_id") or _extract_task_id_like_from_text(intent)).strip()
     task_id_is_full = _is_full_uuid(task_id)
     artifact_list_type = explicit_artifact_list_type(intent)
+    if not artifact_list_type and bool(args.get("artifact_lookup")):
+        requested_type = str(args.get("artifact_type") or "").strip().casefold()
+        artifact_list_type = requested_type if requested_type in {"task", "improvement", "all"} else "all"
     artifact_status = artifact_list_status_filter(intent) if artifact_list_type else ""
     artifact_topic = artifact_topic_query(intent, artifact_list_type) if artifact_list_type else ""
     task = str(args.get("task") or intent or "Retrieve project context.").strip()
@@ -3336,17 +3339,29 @@ def _project_context_route(
             },
         )
     elif artifact_list_type:
+        semantic_lookup = bool(artifact_topic and not artifact_status)
         route.update(
             tool="list_artifacts",
-            intent_type="task_status_list" if artifact_list_type == "task" and artifact_status else "artifact_lookup",
+            intent_type=(
+                "task_status_list"
+                if artifact_list_type == "task" and artifact_status
+                else "semantic_artifact_lookup"
+                if semantic_lookup
+                else "artifact_lookup"
+            ),
             structural_match=True,
             confidence=max(0.9, float(route.get("confidence") or 0.0)),
-            reason="Task or artifact list requests map to unified artifact search; single-task replay requires an explicit task_id.",
+            reason=(
+                "Meaning-based artifact lookup uses Qdrant for candidates and SQLite for authoritative rehydration."
+                if semantic_lookup
+                else "Task or artifact list requests map to unified artifact search; single-task replay requires an explicit task_id."
+            ),
             payload={
                 "project": project,
                 "type": None if artifact_list_type == "all" else artifact_list_type,
                 "status": artifact_status,
                 "query": artifact_topic,
+                **({"search_mode": "semantic"} if semantic_lookup else {}),
                 "limit": min(max(1, int(args.get("limit") or 50)), 200),
             },
         )
@@ -4166,6 +4181,8 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         "next_safe_action": next_safe_action,
         "weak_model_guardrail": weak_model_guardrail,
     }
+    if isinstance(route.get("claim_filter_resolution"), dict):
+        payload["selected_route"]["claim_filter_resolution"] = route["claim_filter_resolution"]
     if maintenance_suggestion:
         payload["maintenance_suggestion"] = maintenance_suggestion
     return payload

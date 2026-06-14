@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "purpose": "Tool-independent advisory authority gate for project editing. It distinguishes an agent's technical ability from operator-approved authority without adding friction to ordinary read-only work.",
+  "severity": "P0",
+  "approval_intent": "user_approved_start",
+  "generic_continuation_terms": ["continue", "investigate", "fix", "solve", "proceed"],
+  "state_defaults": {
+    "planning": "diagnosis_only",
+    "implementation": "no_authority",
+    "verification": "no_authority",
+    "live_validation": "no_authority",
+    "checkpointing": "no_authority",
+    "handoff": "scope_drift_stop",
+    "operator_review": "no_authority"
+  },
+  "states": {
+    "diagnosis_only": {
+      "editing_allowed": false,
+      "instruction": "PROJECT EDITING IS NOT AUTHORIZED. Read, inspect, diagnose, and propose a user-visible framing, then stop before editing.",
+      "next_safe_action": "Show the proposed framing and wait for explicit approval before starting implementation."
+    },
+    "approved_implementation": {
+      "editing_allowed": true,
+      "instruction": "PROJECT EDITING IS AUTHORIZED ONLY WITHIN THE LATEST APPROVED FRAMING. Stop immediately if the goal, cause, solution direction, subsystem, behavior, risks, Definition of Done, or proposed change set changes.",
+      "next_safe_action": "Implement only the approved framing and re-check authority before acting on any new hypothesis."
+    },
+    "scope_drift_stop": {
+      "editing_allowed": false,
+      "instruction": "STOP PROJECT EDITING. SCOPE DRIFT OR AMBIGUITY INVALIDATED THE PREVIOUS APPROVAL. Present a new framing version and wait for explicit approval.",
+      "next_safe_action": "Continue read-only diagnosis, show the revised framing, and request explicit approval."
+    },
+    "no_authority": {
+      "editing_allowed": false,
+      "instruction": "PROJECT EDITING IS NOT AUTHORIZED BY WORKFLOW STATE ALONE. Use the latest approved start receipt or return to planning.",
+      "next_safe_action": "Fetch task context and obtain explicit approval of the latest framing before editing."
+    }
+  },
+  "scope_drift": {
+    "ambiguity_is_drift": true,
+    "dimensions": [
+      "goal",
+      "defect_cause",
+      "solution_direction",
+      "affected_subsystem",
+      "expected_behavior",
+      "risks",
+      "definition_of_done",
+      "proposed_change_set"
+    ],
+    "not_drift": "Routine implementation details that stay within the approved solution and do not change any drift dimension."
+  }
+}
