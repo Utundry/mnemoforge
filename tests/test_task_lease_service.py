@@ -472,6 +472,16 @@ def test_task_lease_reentrant_claim_renews_same_owner() -> None:
         assert renewed.status == "renewed"
         assert renewed.lease.lease_id == first.lease.lease_id
         assert renewed.lease.expires_at == _now() + timedelta(seconds=70)
+        assert renewed.work_token
+        assert renewed.work_token != first.work_token
+        assert store.verify_work_token(
+            lease_id=renewed.lease.lease_id,
+            work_token=renewed.work_token,
+        )
+        assert not store.verify_work_token(
+            lease_id=renewed.lease.lease_id,
+            work_token=first.work_token,
+        )
     finally:
         store.close()
 

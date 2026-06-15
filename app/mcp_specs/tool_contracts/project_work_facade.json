@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "id": "project_work_facade",
+  "purpose": "Declarative public contract for the project_work thematic routing facade.",
+  "tools": [
+    {
+      "name": "project_work",
+      "description": "Thematic project-work routing facade. Use this as the first-contact surface for common project work requests such as next priority, continue task, create/save an improvement task, review capture drafts, close tail, save checkpoint, or route verification/restart work. It classifies intent, returns routing evidence, executes safe read-only routes, and plans guarded mutations unless allow_mutation=true.",
+      "inputSchema": {
+        "type": "object",
+        "required": ["intent"],
+        "properties": {
+          "project": {"type": "string", "default": "mnemoforge", "description": "Project name"},
+          "intent": {"type": "string", "description": "Natural-language project-work request or operator intent"},
+          "task_id": {"type": "string", "description": "Optional task id when the request belongs to a known task"},
+          "artifact_key": {"type": "string", "description": "Optional unified artifact key"},
+          "state": {
+            "type": "string",
+            "enum": ["planning", "implementation", "verification", "live_validation", "documentation", "checkpointing", "handoff", "operator_review"],
+            "description": "Optional current task state used for routing evidence"
+          },
+          "summary": {"type": "string", "description": "Optional work summary for checkpoint/closeout routes"},
+          "raw_notes": {"type": "string", "description": "Optional raw notes for capture/checkpoint routes"},
+          "draft_id": {"type": "string", "description": "Checkpoint draft id for approve/reject draft routes"},
+          "version": {"type": "integer", "description": "Checkpoint draft version for approve/reject draft routes"},
+          "reason": {"type": "string", "description": "Optional reason for mutating lifecycle routes"},
+          "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
+          "verification": {"type": "array", "items": {"type": "string"}, "default": []},
+          "allow_mutation": {
+            "type": "boolean",
+            "default": false,
+            "description": "When false, mutating routes return a plan instead of writing memory or changing lifecycle state."
+          },
+          "diagnostic": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients."
+          },
+          "answer": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return a final-answer-shaped plain-text block for small local models."
+          },
+          "response_format": {
+            "type": "string",
+            "enum": ["json", "diagnostic", "answer"],
+            "default": "json",
+            "description": "Use diagnostic for route/scorer/telemetry fields or answer for a short final-answer-shaped plain-text block instead of nested JSON."
+          },
+          "scorer_backend": {
+            "type": "string",
+            "enum": ["lexical", "auto", "llm"],
+            "default": "auto",
+            "description": "Route scorer backend. auto keeps deterministic lexical strong matches and uses cheap LLM disambiguation when no explicit route is found; lexical forces deterministic-only routing."
+          },
+          "detail": {
+            "type": "string",
+            "enum": ["compact", "full"],
+            "default": "compact",
+            "description": "Detail level for read-only route execution"
+          },
+          "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100},
+          "acted_by": {"type": "string", "default": "codex"},
+          "agent_id": {"type": "string", "default": "codex"},
+          "owner_agent": {
+            "type": "string",
+            "description": "Task lease owner identity for lifecycle routes. Defaults to agent_id."
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Stable caller session identity required by lifecycle routes when no validated work_token can recover continuity."
+          },
+          "work_id": {
+            "type": "string",
+            "description": "Concrete work session id used to resume or finish lifecycle work after process/session restart."
+          },
+          "agent_fingerprint": {
+            "type": "string",
+            "description": "Stable non-secret agent fingerprint used by task reclaim policy."
+          },
+          "runtime_profile_id": {
+            "type": "string",
+            "default": "unknown_cli",
+            "description": "Runtime capability profile used by task reclaim policy; it must not encode a specific IDE or shell."
+          },
+          "lease_ttl_seconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 86400,
+            "default": 900,
+            "description": "Lease TTL for start_task_session routes."
+          },
+          "work_token": {
+            "type": "string",
+            "default": "",
+            "description": "Secret work token from start_task_session for guarded lifecycle recovery. It is forwarded but never echoed in project_work responses."
+          }
+        }
+      }
+    }
+  ]
+}

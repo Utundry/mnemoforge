@@ -4,13 +4,17 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
+from app.services.governed_refinement_lifecycle import (
+    build_refinement_lifecycle,
+    complete_refinement_lifecycle,
+)
 
 GetCallback = Callable[[str, str], Awaitable[dict[str, Any]]]
 PatchCallback = Callable[[str, str, dict[str, Any] | None], Awaitable[dict[str, Any]]]
 PostCallback = Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
-LIVE_DB_TARGETS = {"law", "task", "improvement", "route_pattern", "memory", "alias", "cue"}
+LIVE_DB_TARGETS = {"law", "task", "improvement", "artifact", "route_pattern", "memory", "alias", "cue"}
 SPEC_TARGETS = {"spec", "spec_instinct", "runtime_spec"}
 SUPPORTED_REFINEMENT_TYPES = {
     "metadata_update",
@@ -25,7 +29,7 @@ SUPPORTED_REFINEMENT_TYPES = {
 SAFE_LAW_STATUSES = {"observed", "proposed", "reviewed", "user_confirmed", "active", "suppressed", "superseded", "archived"}
 RESOLVE_STATUSES = {"done", "resolved", "completed", "complete"}
 REOPEN_STATUSES = {"open", "active", "planning", "reopen", "reopened"}
-SUPPORTED_LIVE_TYPES = {"law", "task", "improvement"}
+SUPPORTED_LIVE_TYPES = {"law", "task", "improvement", "artifact"}
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,7 @@ class KnowledgeRefinementRequest:
     stage_applicability: tuple[str, ...]
     superseded_by: str
     evidence_refs: tuple[str, ...]
+    lifecycle: dict[str, Any]
 
 
 def build_knowledge_refinement_request(
@@ -61,10 +66,12 @@ def build_knowledge_refinement_request(
     refinement_type = str(payload.get("refinement_type") or "").strip().lower()
     raw_patch = payload.get("patch")
     patch = dict(raw_patch) if isinstance(raw_patch, dict) else {}
+    resolved_project = str(payload.get("project") or project or "").strip() or "mnemoforge"
+    resolved_target_type = target_type or "unknown"
     return KnowledgeRefinementRequest(
-        project=str(payload.get("project") or project or "").strip() or "mnemoforge",
+        project=resolved_project,
         target_ref=target_ref,
-        target_type=target_type or "unknown",
+        target_type=resolved_target_type,
         refinement_type=refinement_type,
         reason=str(payload.get("reason") or "").strip(),
         apply=bool(payload.get("apply", False)),
@@ -82,12 +89,22 @@ def build_knowledge_refinement_request(
         ),
         superseded_by=str(payload.get("superseded_by") or patch.get("superseded_by") or "").strip(),
         evidence_refs=tuple(_string_list(payload.get("evidence_refs") if "evidence_refs" in payload else patch.get("evidence_refs"))),
+        lifecycle=build_refinement_lifecycle(
+            project=resolved_project,
+            payload=payload,
+            target_ref=target_ref,
+            target_type=resolved_target_type,
+            action=refinement_type,
+            actor=actor,
+            adapter="knowledge_refinement",
+            default_expected="The governed target should match the approved refinement without bypassing its target-specific adapter.",
+        ),
     )
 
 
 def infer_target_type(target_ref: str) -> str:
     prefix = str(target_ref or "").split(":", 1)[0].strip().lower()
-    if prefix in {"law", "task", "improvement", "route_pattern", "memory", "alias", "cue", "spec"}:
+    if prefix in {"law", "task", "improvement", "artifact", "route_pattern", "memory", "alias", "cue", "spec"}:
         return prefix
     if str(target_ref or "").strip().endswith(".json"):
         return "spec"
@@ -104,16 +121,18 @@ async def build_knowledge_refinement_packet(
 ) -> dict[str, Any]:
     validation = validate_refinement_request(request)
     if validation:
-        return validation
+        return _attach_lifecycle(request, validation)
     if request.target_type in SPEC_TARGETS:
-        return _spec_change_packet(request)
-    if not request.apply:
-        return _preview_packet(request)
-    if request.target_type == "law":
-        return await _apply_law_refinement(request, api_base=api_base, get=get, patch=patch, post=post)
-    if request.target_type in {"task", "improvement"}:
-        return await _apply_unified_artifact_refinement(request, api_base=api_base, post=post)
-    return _unsupported_live_target_packet(request)
+        result = _spec_change_packet(request)
+    elif not request.apply:
+        result = _preview_packet(request)
+    elif request.target_type == "law":
+        result = await _apply_law_refinement(request, api_base=api_base, get=get, patch=patch, post=post)
+    elif request.target_type in {"task", "improvement", "artifact"}:
+        result = await _apply_unified_artifact_refinement(request, api_base=api_base, post=post)
+    else:
+        result = _unsupported_live_target_packet(request)
+    return _attach_lifecycle(request, result)
 
 
 def validate_refinement_request(request: KnowledgeRefinementRequest) -> dict[str, Any] | None:
@@ -163,12 +182,20 @@ def _preview_packet(request: KnowledgeRefinementRequest) -> dict[str, Any]:
 
 
 def _spec_change_packet(request: KnowledgeRefinementRequest) -> dict[str, Any]:
+    change_request = {
+        "target_ref": request.target_ref,
+        "target_type": request.target_type,
+        "requested_change": request.reason,
+        "evidence_refs": list(request.evidence_refs),
+        "authority": "maintainer_change_request",
+    }
     return {
         "status": "blocked_static_spec",
         "target_ref": request.target_ref,
         "target_type": request.target_type,
         "refinement_type": request.refinement_type,
         "mutation_executed": False,
+        "change_request": change_request,
         "planned_action": "Build a developer feedback packet instead of mutating published runtime specs.",
         "recommended_next_call": {
             "tool": "submit",
@@ -257,7 +284,7 @@ async def _apply_unified_artifact_refinement(
 ) -> dict[str, Any]:
     artifact_ref = _canonical_artifact_ref(request)
     if not artifact_ref:
-        return _needs_input_packet(request, "Task/improvement target_ref must use task:project:id or improvement:project:id.")
+        return _needs_input_packet(request, "Artifact target_ref must include a governed artifact key.")
     action = request.refinement_type
     status = request.status
     if action in {"resolve", "status_update"} and (not status or status in RESOLVE_STATUSES):
@@ -277,7 +304,7 @@ async def _apply_unified_artifact_refinement(
             f"/artifacts/{quote(artifact_ref, safe='')}/reopen",
             {
                 "project": request.project,
-                "status": "active" if request.target_type == "task" else "open",
+                "status": "open" if request.target_type == "improvement" else "active",
                 "acted_by": request.actor,
                 "action_source": "mailbox_submit.knowledge_refinement_feedback",
                 "reason": request.reason,
@@ -286,7 +313,7 @@ async def _apply_unified_artifact_refinement(
         return _applied_packet(request, result=result, action="artifact_reopen")
     return _needs_input_packet(
         request,
-        "Task/improvement refinement currently supports resolve/done or reopen/open lifecycle updates.",
+        "Artifact refinement currently supports resolve/done or reopen/open lifecycle updates.",
     )
 
 
@@ -312,7 +339,7 @@ def _apply_support(request: KnowledgeRefinementRequest) -> dict[str, Any]:
             "reason": "",
             "next_safe_action": "Review the planned law refinement, then resubmit with apply=true if it matches operator intent.",
         }
-    if request.target_type in {"task", "improvement"}:
+    if request.target_type in {"task", "improvement", "artifact"}:
         status = request.status
         if request.refinement_type in {"resolve", "reopen"}:
             action = "artifact_resolve" if request.refinement_type == "resolve" else "artifact_reopen"
@@ -333,7 +360,7 @@ def _apply_support(request: KnowledgeRefinementRequest) -> dict[str, Any]:
         return {
             "safe_to_apply": False,
             "planned_action": "unsupported_task_or_improvement_refinement",
-            "reason": "Task/improvement refinement currently supports only resolve/done or reopen/open lifecycle updates.",
+            "reason": "Artifact refinement currently supports only resolve/done or reopen/open lifecycle updates.",
             "next_safe_action": "Use task context or record_progress to capture framing gaps; do not resubmit apply=true for this refinement type.",
         }
     return {
@@ -375,7 +402,7 @@ def _planned_action(request: KnowledgeRefinementRequest) -> str:
         if request.refinement_type in {"status_update", "supersede", "quarantine"} or request.status:
             return "update_law_status"
         return "update_law_metadata"
-    if request.target_type in {"task", "improvement"}:
+    if request.target_type in {"task", "improvement", "artifact"}:
         return "update_unified_artifact_lifecycle"
     return "route_to_specialized_learning_surface"
 
@@ -416,12 +443,74 @@ def _recommended_specialized_call(request: KnowledgeRefinementRequest) -> dict[s
 
 def _canonical_artifact_ref(request: KnowledgeRefinementRequest) -> str:
     raw = str(request.target_ref or "").strip()
-    if raw.startswith(("task:", "improvement:")):
+    if raw.startswith(("task:", "improvement:", "artifact:")):
         return raw
     local_id = _local_id_from_ref(raw)
     if local_id and request.target_type in {"task", "improvement"}:
         return f"{request.target_type}:{request.project}:{local_id}"
     return ""
+
+
+def _attach_lifecycle(request: KnowledgeRefinementRequest, result: dict[str, Any]) -> dict[str, Any]:
+    status = str(result.get("status") or "unknown")
+    mutation_executed = bool(result.get("mutation_executed", False))
+    applied_result = result.get("result") if isinstance(result.get("result"), dict) else {}
+    if status == "applied":
+        expected = {"mutation_executed": True, "applied_action": result.get("applied_action")}
+        actual = {
+            "mutation_executed": mutation_executed,
+            "applied_action": result.get("applied_action"),
+            "target_status": applied_result.get("status"),
+        }
+        satisfied: bool | None = mutation_executed and bool(result.get("applied_action"))
+    elif status == "blocked_static_spec":
+        expected = {"runtime_mutation": False, "change_request": True}
+        actual = {
+            "runtime_mutation": mutation_executed,
+            "change_request": isinstance(result.get("change_request"), dict),
+        }
+        satisfied = not mutation_executed and actual["change_request"]
+    elif status in {"preview", "preview_unsupported", "unsupported_target"}:
+        expected = {"runtime_mutation": False}
+        actual = {"runtime_mutation": mutation_executed}
+        satisfied = not mutation_executed
+    else:
+        expected = {}
+        actual = {}
+        satisfied = None
+    reversible, reversal_action = _reversal(request, result)
+    lifecycle = complete_refinement_lifecycle(
+        request.lifecycle,
+        status=status,
+        mutation_executed=mutation_executed,
+        postcondition_expected=expected,
+        postcondition_actual=actual,
+        postcondition_satisfied=satisfied,
+        audit_evidence=[request.target_ref, *request.evidence_refs],
+        reversible=reversible,
+        reversal_action=reversal_action,
+        adapter_kind="static_change_request" if request.target_type in SPEC_TARGETS else "governed_runtime_adapter",
+    )
+    if request.target_type in SPEC_TARGETS:
+        lifecycle["authority"]["mode"] = "maintainer_change_request"
+        lifecycle["authority"]["apply_requested"] = False
+    result["lifecycle"] = lifecycle
+    return result
+
+
+def _reversal(request: KnowledgeRefinementRequest, result: dict[str, Any]) -> tuple[bool, str]:
+    if not result.get("mutation_executed"):
+        return False, ""
+    action = str(result.get("applied_action") or "")
+    if action == "artifact_resolve":
+        return True, "reopen"
+    if action == "artifact_reopen":
+        return True, "resolve"
+    if action.startswith("law_status:"):
+        return True, "status_update"
+    if action == "law_metadata_update":
+        return True, "metadata_update_with_previous_values"
+    return False, ""
 
 
 def _local_id_from_ref(target_ref: str) -> str:

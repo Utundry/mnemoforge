@@ -263,10 +263,13 @@ Common symptoms:
 Useful operator forms:
 
 - `diagnostic_inspection`: read routing, learning, artifact, or ref diagnostics;
-- `route_feedback`: reinforce or invalidate a learned route pattern;
+- `route_feedback`: route-pattern adapter for the universal governed
+  refinement lifecycle; reinforce or invalidate a learned route pattern;
 - `developer_feedback_packet`: package a maintainer-facing issue;
-- `knowledge_refinement_feedback`: preview/apply safe live-DB knowledge
-  refinements or block static spec mutations.
+- `knowledge_refinement_feedback`: universal governed-object refinement
+  contour. It records observation, target, diagnosis, proposal, authority,
+  adapter, verified postcondition, and audit evidence. Runtime objects use
+  target-specific safe adapters; static specs produce change requests.
 
 Do not patch internal route code just because one phrase failed. Prefer
 diagnostic feedback and learned aliases when the issue is a user phrase, typo,

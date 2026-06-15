@@ -19,6 +19,13 @@
     "jargon_terms",
     "typo_terms",
     "keyboard_layout_terms",
+    "observed_behavior",
+    "expected_behavior",
+    "provenance",
+    "evidence_refs",
+    "confidence",
+    "proposed_refinement",
+    "authority",
     "disable",
     "updated_by"
   ],
@@ -44,6 +51,16 @@
       "jargon_terms": {"type": "array", "items": {"type": "string"}},
       "typo_terms": {"type": "array", "items": {"type": "string"}},
       "keyboard_layout_terms": {"type": "array", "items": {"type": "string"}},
+      "observed_behavior": {"type": "string"},
+      "expected_behavior": {"type": "string"},
+      "provenance": {"type": "string"},
+      "evidence_refs": {"type": "array", "items": {"type": "string"}},
+      "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+      "proposed_refinement": {"type": "string"},
+      "authority": {
+        "type": "string",
+        "enum": ["operator_review", "explicit_operator_intent"]
+      },
       "disable": {"type": "boolean", "default": true},
       "updated_by": {"type": "string", "default": "codex"}
     },

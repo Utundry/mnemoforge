@@ -26,7 +26,11 @@
     },
     "project_work": {
       "next_priority": {
-        "type": ["task", "improvement", "all"]
+        "type": ["task", "improvement", "all"],
+        "claim_filter": ["available", "claimed", "all"]
+      },
+      "list_all_tasks": {
+        "claim_filter": ["available", "claimed", "all"]
       }
     }
   }

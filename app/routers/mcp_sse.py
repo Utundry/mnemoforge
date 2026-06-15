@@ -4007,6 +4007,49 @@ async def _project_work_route_with_backend(args: dict[str, Any]) -> dict[str, An
         },
     )
     candidates = lexical_route.get("route_candidates") or []
+    if backend_requested == "auto":
+        text = " ".join(
+            part
+            for part in (
+                str(args.get("intent") or "").strip(),
+                str(args.get("summary") or "").strip(),
+                str(args.get("raw_notes") or "").strip(),
+                str(args.get("state") or "").strip(),
+            )
+            if part
+        )
+        learned_match = _learned_route_match(
+            facade="project_work",
+            text=text,
+            allowed_intent_types={str(route["intent_type"]) for route in _PROJECT_WORK_ROUTE_CATALOG},
+        )
+    else:
+        learned_match = None
+    learned_payload = _learned_payload_from_decision(learned_match)
+    learned_intent_type = str((learned_match or {}).get("intent_type") or "").strip()
+    can_apply_early = (
+        learned_intent_type in {"next_priority", "list_all_tasks"}
+        and str(learned_payload.get("claim_filter") or "").strip().lower() in {"available", "claimed", "all"}
+    )
+    if learned_match and can_apply_early:
+        learned_args, _ = _project_work_args_with_learned_payload(
+            args=args,
+            route={"intent_type": learned_intent_type},
+            learned=learned_match,
+        )
+        return _project_work_route(
+            learned_args,
+            llm_decision=learned_match,
+            scorer_meta={
+                "backend_requested": backend_requested,
+                "backend_used": learned_match.get("backend_used") or "learned_semantic",
+                "llm_attempted": False,
+                "fallback_reason": "",
+                "matched_pattern_id": learned_match.get("pattern_id") or "",
+                "matched_pattern_score": learned_match.get("score"),
+                "matched_by": learned_match.get("matched_by") or "",
+            },
+        )
     should_try_llm = backend_requested == "llm" or (
         backend_requested == "auto" and _project_work_needs_llm_disambiguation(candidates)
     )
@@ -4030,8 +4073,13 @@ async def _project_work_route_with_backend(args: dict[str, Any]) -> dict[str, An
             allowed_intent_types={str(route["intent_type"]) for route in _PROJECT_WORK_ROUTE_CATALOG},
         )
         if learned:
+            learned_args, _ = _project_work_args_with_learned_payload(
+                args=args,
+                route={"intent_type": learned.get("intent_type")},
+                learned=learned,
+            )
             return _project_work_route(
-                args,
+                learned_args,
                 llm_decision=learned,
                 scorer_meta={
                     "backend_requested": backend_requested,
@@ -4078,6 +4126,51 @@ async def _project_work_route_with_backend(args: dict[str, Any]) -> dict[str, An
     if pattern_id:
         route.setdefault("scorer", {})["learned_pattern_id"] = pattern_id
     return route
+
+
+def _project_work_args_with_learned_payload(
+    *,
+    args: dict[str, Any],
+    route: dict[str, Any],
+    learned: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    if str(args.get("claim_filter") or "").strip():
+        return args, None
+    intent_type = str(route.get("intent_type") or "").strip()
+    if intent_type not in {"next_priority", "list_all_tasks"}:
+        return args, None
+    text = " ".join(
+        part
+        for part in (
+            str(args.get("intent") or "").strip(),
+            str(args.get("summary") or "").strip(),
+            str(args.get("raw_notes") or "").strip(),
+            str(args.get("state") or "").strip(),
+        )
+        if part
+    )
+    if learned is None:
+        learned = _learned_route_match(
+            facade="project_work",
+            text=text,
+            allowed_intent_types={intent_type},
+        )
+    if not learned:
+        return args, None
+    learned_payload = _learned_payload_from_decision(learned)
+    claim_filter = str(learned_payload.get("claim_filter") or "").strip().lower()
+    if claim_filter not in {"available", "claimed", "all"}:
+        return args, None
+    return {
+        **args,
+        "_learned_claim_filter": claim_filter,
+        "_claim_filter_learning": {
+            "pattern_id": str(learned.get("pattern_id") or ""),
+            "backend_used": str(learned.get("backend_used") or ""),
+            "matched_by": str(learned.get("matched_by") or ""),
+            "score": learned.get("score"),
+        },
+    }, learned
 
 
 async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
@@ -4247,7 +4340,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         },
         "routing_evidence": route["evidence"],
         "executed": executed,
-        "submit_payload": route["payload"],
+        "submit_payload": _redact_project_work_submit_payload(route["payload"]),
         "result": result,
         "semantic_rules": semantic_rules,
         "route_telemetry": route_telemetry,
@@ -4261,6 +4354,13 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
     if maintenance_suggestion:
         payload["maintenance_suggestion"] = maintenance_suggestion
     return payload
+
+
+def _redact_project_work_submit_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    public_payload = dict(payload)
+    if public_payload.get("work_token"):
+        public_payload["work_token"] = "[REDACTED]"
+    return public_payload
 
 
 def _project_work_maintenance_suggestion(*, route: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:

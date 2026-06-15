@@ -34,6 +34,10 @@ from app.services.knowledge_refinement_service import (
     build_knowledge_refinement_packet,
     build_knowledge_refinement_request,
 )
+from app.services.governed_refinement_lifecycle import (
+    build_refinement_lifecycle,
+    complete_refinement_lifecycle,
+)
 from app.services.stage_applicability_service import stage_allows_block
 from app.services.public_ref_index import AmbiguousPublicRefError, is_short_public_id
 from app.services.public_diagnostic_service import attach_public_diagnostic_incident
@@ -1593,6 +1597,7 @@ async def mailbox_knowledge_refinement_feedback(
                 "refinement_status": result.get("status"),
                 "mutation_executed": bool(result.get("mutation_executed", False)),
                 "message": _knowledge_refinement_receipt_message(result),
+                "postcondition_satisfied": (result.get("lifecycle") or {}).get("postcondition", {}).get("satisfied"),
             }
         )
     )
@@ -1769,12 +1774,62 @@ def mailbox_route_feedback(
         runtime_profile_id=runtime_profile_id,
         diagnostic=diagnostic,
     )
+    target_ref = f"route_pattern:{facade}:{pattern_id}"
+    action = "reinforce" if vote == "positive" else "disable" if disabled else "quarantine"
+    lifecycle = build_refinement_lifecycle(
+        project=project,
+        payload={**payload, "apply": True},
+        target_ref=target_ref,
+        target_type="route_pattern",
+        action=action,
+        actor=mailbox_actor(payload),
+        adapter="route_pattern_feedback",
+        default_observed=str(payload.get("reason") or "").strip(),
+        default_expected=(
+            "The learned route remains active with reinforced evidence."
+            if vote == "positive"
+            else "The incorrect learned route no longer influences routing."
+        ),
+    )
+    feedback_snapshot = feedback if isinstance(feedback, dict) else {}
+    expected_postcondition = {
+        "feedback_recorded": True,
+        "active": not disabled,
+    }
+    actual_postcondition = {
+        "feedback_recorded": bool(feedback_snapshot),
+        "active": not disabled,
+        "positive_feedback": feedback_snapshot.get("positive_feedback"),
+        "negative_feedback": feedback_snapshot.get("negative_feedback"),
+    }
+    lifecycle = complete_refinement_lifecycle(
+        lifecycle,
+        status="applied",
+        mutation_executed=True,
+        postcondition_expected=expected_postcondition,
+        postcondition_actual=actual_postcondition,
+        postcondition_satisfied=bool(feedback_snapshot),
+        audit_evidence=[target_ref, *_string_list_arg(payload.get("evidence_refs"))],
+        reversible=False,
+        reversal_action="Submit a reviewed positive route refinement or recreate the alias through route feedback.",
+    )
+    packet["result"] = {
+        "target_ref": target_ref,
+        "target_type": "route_pattern",
+        "refinement_type": action,
+        "mutation_executed": True,
+        "feedback": feedback_snapshot,
+        "lifecycle": lifecycle,
+    }
     packet["receipt"].update(
         {
             "pattern_id": pattern_id,
             "feedback_action": "disabled" if disabled else f"{vote}_recorded",
             "facade": facade,
             "vote": vote,
+            "target_ref": target_ref,
+            "refinement_type": action,
+            "postcondition_satisfied": lifecycle["postcondition"]["satisfied"],
         }
     )
     if vote == "positive":

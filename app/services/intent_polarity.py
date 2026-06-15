@@ -31,6 +31,8 @@ _CONTRACTIONS = {
     "wouldn't": "would not",
 }
 
+_SCOPE_BOUNDARY = "__scope_boundary__"
+
 
 @dataclass(frozen=True)
 class IntentSignalMatch:
@@ -72,7 +74,7 @@ def analyze_intent_polarity(
     signals: Mapping[str, Iterable[str]],
     negation_window: int = 4,
 ) -> IntentPolarity:
-    tokens = _intent_tokens(text)
+    tokens = _intent_tokens(text, include_boundaries=True)
     matches: list[IntentSignalMatch] = []
 
     for signal, phrases in signals.items():
@@ -105,10 +107,12 @@ def analyze_intent_polarity(
     )
 
 
-def _intent_tokens(text: str) -> list[str]:
+def _intent_tokens(text: str, *, include_boundaries: bool = False) -> list[str]:
     normalized = str(text or "").casefold()
     for contraction, expansion in _CONTRACTIONS.items():
         normalized = normalized.replace(contraction, expansion)
+    if include_boundaries:
+        normalized = re.sub(r"[.!?;:\n]+", f" {_SCOPE_BOUNDARY} ", normalized)
     return re.findall(r"[\w]+", normalized, flags=re.UNICODE)
 
 
@@ -116,6 +120,8 @@ def _negator_before(tokens: list[str], *, index: int, window: int) -> str:
     start = max(0, index - max(1, int(window)))
     preceding = tokens[start:index]
     for token in reversed(preceding):
+        if token == _SCOPE_BOUNDARY:
+            break
         if token in _NEGATORS:
             return token
     return ""

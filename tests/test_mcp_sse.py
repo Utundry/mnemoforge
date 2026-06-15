@@ -1107,6 +1107,29 @@ class TestMcpToolExecution:
         assert props["response_format"]["enum"] == ["json", "diagnostic", "answer"]
         assert "verification" in props["state"]["enum"]
         assert "live_validation" in props["state"]["enum"]
+        assert "session_id" in props
+        assert "work_id" in props
+        assert "owner_agent" in props
+        assert "agent_fingerprint" in props
+        assert props["runtime_profile_id"]["default"] == "unknown_cli"
+        assert props["lease_ttl_seconds"]["default"] == 900
+        assert "never echoed" in props["work_token"]["description"]
+
+    def test_project_work_contract_has_no_legacy_python_duplicate(self):
+        from app.services import mcp_tool_contracts
+
+        assert "project_work" in mcp_tool_contracts._DECLARATIVE_TOOL_DEFINITIONS
+        assert "project_work" not in mcp_tool_contracts._PYTHON_TOOL_DEFINITIONS
+
+    def test_tool_contract_registry_rejects_cross_source_duplicates(self):
+        from app.services.mcp_tool_contracts import _merge_unique_tool_definitions
+        from app.services.mcp_workflow_specs import WorkflowSpecError
+
+        with pytest.raises(WorkflowSpecError, match="one source"):
+            _merge_unique_tool_definitions(
+                {"project_work": {"name": "project_work"}},
+                {"project_work": {"name": "project_work"}},
+            )
 
     def test_project_reconstruction_bundle_tool_is_read_only_recovery_surface(self):
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "get_project_reconstruction_bundle")
@@ -2136,6 +2159,12 @@ class TestMcpToolExecution:
         assert data["receipt"]["status"] == "accepted"
         assert data["receipt"]["pattern_id"] == "learned-route-1"
         assert data["receipt"]["feedback_action"] == "disabled"
+        assert data["receipt"]["postcondition_satisfied"] is True
+        assert data["result"]["target_type"] == "route_pattern"
+        assert data["result"]["refinement_type"] == "disable"
+        assert data["result"]["lifecycle"]["contract"] == "governed_refinement_lifecycle"
+        assert data["result"]["lifecycle"]["adapter"]["id"] == "route_pattern_feedback"
+        assert data["result"]["lifecycle"]["postcondition"]["actual"]["active"] is False
         assert calls[0][0] == "match"
         assert calls[1][0] == "feedback"
         assert calls[2][0] == "disable"
@@ -2284,6 +2313,56 @@ class TestMcpToolExecution:
         assert calls[1][0] == "record"
         assert calls[1][1]["metadata"]["learned_payload"] == {"type": "task", "status": "done", "include_query": False}
         assert calls[2][1]["metadata"]["expected_payload"] == {"type": "task", "status": "done", "include_query": False}
+
+    async def test_mailbox_submit_route_feedback_can_teach_project_work_claim_filter(self, monkeypatch):
+        from app.services import mcp_mailbox_actions
+
+        calls: list[tuple[str, dict]] = []
+
+        class FakeRoutePatternStore:
+            def match(self, *, facade: str, pattern: str, allowed_intent_types=None, semantic_threshold: float = 0.6):
+                calls.append(("match", {"facade": facade, "pattern": pattern}))
+                return None
+
+            def record(self, **kwargs):
+                calls.append(("record", kwargs))
+                return "learned-negation-route"
+
+            def record_feedback(self, pattern_id: str, *, vote: str, reason: str = "", metadata: dict | None = None):
+                calls.append(("feedback", {"pattern_id": pattern_id, "vote": vote, "reason": reason, "metadata": metadata or {}}))
+                return {"pattern_id": pattern_id, "positive_feedback": 1, "negative_feedback": 0}
+
+        monkeypatch.setattr(mcp_mailbox_actions, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "sloplesscode",
+                "state": "operator_review",
+                "form_id": "route_feedback",
+                "payload": {
+                    "project": "sloplesscode",
+                    "facade": "project_work",
+                    "query": "Не предлагай claimed/occupied работу",
+                    "vote": "positive",
+                    "expected_tool": "list_open_tasks",
+                    "expected_intent_type": "next_priority",
+                    "expected_payload": {
+                        "claim_filter": "available",
+                        "dangerous": "ignored",
+                    },
+                    "language": "ru",
+                    "phrase_family": "exclude claimed work",
+                    "reason": "The phrase excludes claimed lease states.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert calls[1][1]["metadata"]["learned_payload"] == {"claim_filter": "available"}
+        assert calls[2][1]["metadata"]["expected_payload"] == {"claim_filter": "available"}
 
     async def test_mailbox_submit_route_hygiene_returns_operator_report(self, monkeypatch):
         from app.services import mcp_mailbox_actions
@@ -3190,7 +3269,12 @@ class TestMcpToolExecution:
         assert result["receipt"]["status"] == "accepted"
         assert result["receipt"]["refinement_status"] == "blocked_static_spec"
         assert result["receipt"]["mutation_executed"] is False
+        assert result["receipt"]["postcondition_satisfied"] is True
         assert result["result"]["mutation_executed"] is False
+        assert result["result"]["change_request"]["target_ref"] == "spec:workflow/boundary_action_cues.json"
+        assert result["result"]["lifecycle"]["adapter"]["kind"] == "static_change_request"
+        assert result["result"]["lifecycle"]["authority"]["mode"] == "maintainer_change_request"
+        assert result["result"]["lifecycle"]["postcondition"]["satisfied"] is True
         assert result["result"]["recommended_next_call"]["form_id"] == "developer_feedback_packet"
         assert result["result"]["recommended_next_call"]["payload"]["next_action"].startswith("Review the packet")
 
@@ -3245,7 +3329,10 @@ class TestMcpToolExecution:
 
         assert result["receipt"]["status"] == "accepted"
         assert result["receipt"]["mutation_executed"] is True
+        assert result["receipt"]["postcondition_satisfied"] is True
         assert result["result"]["applied_action"] == "law_metadata_update"
+        assert result["result"]["lifecycle"]["target"]["type"] == "law"
+        assert result["result"]["lifecycle"]["audit"]["reversible"] is True
         assert calls[0][0] == "GET"
         assert calls[1][0] == "PATCH"
 
@@ -3277,6 +3364,38 @@ class TestMcpToolExecution:
         assert result["result"]["apply_required"] is False
         assert result["result"]["planned_action"] == "unsupported_task_or_improvement_refinement"
         assert "do not resubmit apply=true" in result["result"]["next_safe_action"]
+
+    async def test_submit_knowledge_refinement_uses_same_contract_for_generic_artifact(self):
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "submit",
+                {
+                    "project": "alpha",
+                    "state": "operator_review",
+                    "form_id": "knowledge_refinement_feedback",
+                    "payload": {
+                        "project": "alpha",
+                        "target_ref": "artifact:alpha:item-123",
+                        "target_type": "artifact",
+                        "refinement_type": "quarantine",
+                        "reason": "The artifact was selected for an unrelated request.",
+                        "observed_behavior": "An unrelated artifact was selected.",
+                        "expected_behavior": "Only relevant artifacts should be selected.",
+                        "evidence_refs": ["diagnostic:artifact:item-123"],
+                        "apply": False,
+                    },
+                },
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["refinement_status"] == "preview_unsupported"
+        assert result["result"]["lifecycle"]["contract"] == "governed_refinement_lifecycle"
+        assert result["result"]["lifecycle"]["target"]["type"] == "artifact"
+        assert result["result"]["lifecycle"]["observation"]["evidence_refs"] == [
+            "diagnostic:artifact:item-123"
+        ]
+        assert result["result"]["lifecycle"]["postcondition"]["satisfied"] is True
 
     async def test_submit_knowledge_refinement_resolves_task_through_unified_artifact_lifecycle(self, monkeypatch):
         calls: list[tuple[str, str, dict]] = []
@@ -3311,6 +3430,9 @@ class TestMcpToolExecution:
         assert result["receipt"]["status"] == "accepted"
         assert result["result"]["applied_action"] == "artifact_resolve"
         assert result["result"]["result"]["status"] == "done"
+        assert result["result"]["lifecycle"]["target"]["type"] == "task"
+        assert result["result"]["lifecycle"]["postcondition"]["satisfied"] is True
+        assert result["result"]["lifecycle"]["audit"]["reversal_action"] == "reopen"
         assert calls == [
             (
                 "POST",
@@ -5100,6 +5222,67 @@ class TestMcpToolExecution:
         assert "claim_filter=all" not in data["selected_route"]["reason"]
         assert data["selected_route"]["claim_filter_resolution"]["polarity"]["negative"] == ["claimed"]
 
+    async def test_project_work_applies_learned_claim_filter_to_strong_lexical_route(self, monkeypatch):
+        class FakeRoutePatternStore:
+            def match(self, **kwargs):
+                assert kwargs["facade"] == "project_work"
+                assert "next_priority" in kwargs["allowed_intent_types"]
+                return {
+                    "pattern_id": "learned-negation-1",
+                    "intent_type": "next_priority",
+                    "tool": "list_open_tasks",
+                    "backend_used": "learned_exact",
+                    "matched_by": "exact",
+                    "score": 1.0,
+                    "metadata": {
+                        "learned_payload": {
+                            "claim_filter": "available",
+                        }
+                    },
+                }
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+
+        route = await mcp_sse._project_work_route_with_backend(
+            {
+                "project": "sloplesscode",
+                "intent": "Покажи следующую приоритетную работу. Не предлагай claimed/occupied элементы.",
+            }
+        )
+
+        assert route["payload"]["claim_filter"] == "available"
+        resolution = route["claim_filter_resolution"]
+        assert resolution["source"] == "learned_route_parameter"
+        assert resolution["learning"]["pattern_id"] == "learned-negation-1"
+        assert route["scorer"]["matched_pattern_id"] == "learned-negation-1"
+
+    async def test_project_work_does_not_apply_unparameterized_learned_route_early(self, monkeypatch):
+        class FakeRoutePatternStore:
+            def match(self, **kwargs):
+                return {
+                    "pattern_id": "stale-route-1",
+                    "intent_type": "finish_task_session",
+                    "tool": "finish_task_session",
+                    "backend_used": "learned_exact",
+                    "matched_by": "exact",
+                    "score": 1.0,
+                    "metadata": {},
+                }
+
+        monkeypatch.setattr(mcp_sse, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+
+        route = await mcp_sse._project_work_route_with_backend(
+            {
+                "project": "sloplesscode",
+                "intent": "what is the next priority",
+                "scorer_backend": "auto",
+            }
+        )
+
+        assert route["intent_type"] == "next_priority"
+        assert route["tool"] == "list_open_tasks"
+        assert route["payload"]["claim_filter"] == "available"
+
     async def test_project_work_multi_agent_assignment_requires_independent_tasks(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
             return {
@@ -5380,6 +5563,8 @@ class TestMcpToolExecution:
             assert data["action_status"] == "executed"
             assert data["selected_route"]["tool"] == "finish_task_session"
             assert data["result"]["status"] == "finished", data["result"]
+            assert data["submit_payload"]["work_token"] == "[REDACTED]"
+            assert calls[0][1]["work_token"] == work_token
             assert calls
         finally:
             lease_store.close()
@@ -8980,6 +9165,8 @@ class TestMcpToolExecution:
             assert resumed["lease_status"] == "renewed"
             assert resumed["work_session_resumed"] is True
             assert resumed["work_session"]["work_id"] == first["work_session"]["work_id"]
+            assert resumed["work_token"]
+            assert resumed["work_token"] != first["work_token"]
         finally:
             lease_store.close()
             stenographer_store.close()

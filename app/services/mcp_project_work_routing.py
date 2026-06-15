@@ -302,7 +302,12 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
             "project": project,
             "task_id": task_id,
             "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
+            "owner_agent": str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex",
             "session_id": str(args.get("session_id") or "").strip(),
+            "work_id": str(args.get("work_id") or "").strip(),
+            "work_token": str(args.get("work_token") or "").strip(),
+            "agent_fingerprint": str(args.get("agent_fingerprint") or "").strip(),
+            "runtime_profile_id": str(args.get("runtime_profile_id") or "unknown_cli").strip() or "unknown_cli",
             "danger_mode": danger_mode,
             "danger_confirmation": danger_confirmation,
             "lease_ttl_seconds": int(args.get("lease_ttl_seconds") or 900),
@@ -352,6 +357,16 @@ def _resolve_claim_filter(
             "value": explicit,
             "source": "explicit_argument",
             "reason": "A valid structured claim_filter argument takes precedence over natural-language inference.",
+        }
+
+    learned = str(args.get("_learned_claim_filter") or "").strip().lower()
+    if learned in {"available", "claimed", "all"}:
+        learning = args.get("_claim_filter_learning")
+        return learned, {
+            "value": learned,
+            "source": "learned_route_parameter",
+            "learning": learning if isinstance(learning, dict) else {},
+            "reason": "A governed learned route parameter resolved the lease-state preference.",
         }
 
     polarity = analyze_intent_polarity(

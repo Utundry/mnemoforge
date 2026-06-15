@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from app.services.mcp_mailbox import (
     build_mailbox_get_packet,
     build_mailbox_state_packet,
@@ -34,6 +36,7 @@ from app.services.public_diagnostic_service import (
     build_public_diagnostic_incident,
 )
 from app.services.mcp_workflow_specs import (
+    WorkflowSpecError,
     list_mailbox_forms_for_state,
     load_clerk_capture_registry,
     load_feature_toggle_registry,
@@ -46,6 +49,7 @@ from app.services.mcp_workflow_specs import (
     load_state_spec,
     load_task_lease_spec,
     load_tool_contract_catalog_spec,
+    list_tool_contract_catalog_specs,
     load_tool_family_registry,
     load_tool_surface_spec,
     validate_specs,
@@ -109,6 +113,8 @@ def test_default_workflow_specs_validate() -> None:
     assert "tool_discovery" in summary["tool_families"]
     assert summary["tool_surface_public_entrypoints"] == ["help", "state", "get", "submit"]
     assert summary["public_tool_contracts"] == ["help", "state", "get", "submit", "put"]
+    assert "project_work_facade" in summary["tool_contract_catalogs"]
+    assert summary["project_work_tool_contracts"] == ["project_work"]
     assert summary["discovery_tool_contracts"] == [
         "list_tool_families",
         "tool_family_tools",
@@ -375,6 +381,52 @@ def test_public_tool_contracts_are_declarative() -> None:
     assert list(contracts)[:4] == ["help", "state", "get", "submit"]
     assert contracts["get"].inputSchema["properties"]["response_format"]["default"] == "auto"
     assert contracts["put"].description.startswith("Compatibility alias")
+
+
+def test_project_work_tool_contract_is_declarative() -> None:
+    catalog = load_tool_contract_catalog_spec("project_work_facade")
+    contract = catalog.tools[0]
+
+    assert contract.name == "project_work"
+    assert contract.inputSchema["required"] == ["intent"]
+    properties = contract.inputSchema["properties"]
+    assert properties["session_id"]["type"] == "string"
+    assert properties["work_id"]["type"] == "string"
+    assert properties["runtime_profile_id"]["default"] == "unknown_cli"
+    assert properties["lease_ttl_seconds"]["default"] == 900
+
+
+def test_declarative_tool_catalogs_have_unique_tool_names() -> None:
+    catalogs = list_tool_contract_catalog_specs()
+    names = [tool.name for catalog in catalogs for tool in catalog.tools]
+
+    assert len(names) == len(set(names))
+
+
+def test_declarative_tool_catalogs_reject_cross_catalog_duplicates(tmp_path: Path) -> None:
+    contracts_dir = tmp_path / "tool_contracts"
+    contracts_dir.mkdir()
+    for catalog_id in ("alpha", "beta"):
+        (contracts_dir / f"{catalog_id}.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "id": catalog_id,
+                    "purpose": f"{catalog_id} contracts",
+                    "tools": [
+                        {
+                            "name": "duplicate_tool",
+                            "description": "Duplicate test contract.",
+                            "inputSchema": {"type": "object", "properties": {}},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    with pytest.raises(WorkflowSpecError, match="Duplicate tool contracts"):
+        list_tool_contract_catalog_specs(spec_root=tmp_path)
 
 
 def test_read_only_discovery_tool_contracts_are_declarative() -> None:
@@ -1416,13 +1468,12 @@ async def test_mailbox_state_response_suppresses_repeated_health_nudge_per_sessi
 
 
 async def test_mailbox_state_response_suppresses_repeated_health_nudge_for_stateless_hosts() -> None:
-    from app.services import mcp_mailbox_read
-
-    mcp_mailbox_read._STATELESS_HEALTH_NUDGE_SEEN.clear()
-
     async def fake_identity_defaults(session_id_arg: str | None) -> dict[str, str]:
         assert session_id_arg is None
-        return {"runtime_profile_id": "weak_mcp_operator"}
+        return {
+            "runtime_profile_id": "weak_mcp_operator",
+            "agent_fingerprint": "stateless-agent-a",
+        }
 
     dependencies = MailboxReadDependencies(get_session_identity_defaults=fake_identity_defaults)
     first = await build_mailbox_state_response(
@@ -1436,18 +1487,52 @@ async def test_mailbox_state_response_suppresses_repeated_health_nudge_for_state
         dependencies=dependencies,
     )
 
-    mcp_mailbox_read._STATELESS_HEALTH_NUDGE_SEEN.clear()
-
     assert "health_nudge" in first
     assert "health_nudge" not in second
     assert second["health_nudge_suppressed"]["reason"] == "stateless_cooldown"
     assert second["health_nudge_suppressed"]["cooldown_seconds"] > 0
 
 
-async def test_mailbox_state_health_nudge_stateless_scope_uses_hashed_work_token() -> None:
-    from app.services import mcp_mailbox_read
+async def test_mailbox_state_detects_session_churn_and_uses_compatibility_cooldown() -> None:
+    async def fake_identity_defaults(session_id_arg: str | None) -> dict[str, str]:
+        return {
+            "runtime_profile_id": "weak_mcp_operator",
+            "agent_fingerprint": "stable-agent-fingerprint",
+        }
 
-    mcp_mailbox_read._STATELESS_HEALTH_NUDGE_SEEN.clear()
+    dependencies = MailboxReadDependencies(get_session_identity_defaults=fake_identity_defaults)
+    first = await build_mailbox_state_response(
+        args={"project": "session-churn-project", "state": "planning"},
+        session_id="one-shot-session-1",
+        dependencies=dependencies,
+    )
+    second = await build_mailbox_state_response(
+        args={"project": "session-churn-project", "state": "planning", "diagnostic": True},
+        session_id="one-shot-session-2",
+        dependencies=dependencies,
+    )
+
+    assert "health_nudge" in first
+    assert "health_nudge" not in second
+    assert second["health_nudge_suppressed"]["reason"] == "stateless_cooldown"
+    assert second["host_compatibility"]["session_behavior"] == "stateless_or_one_shot"
+    assert "session_churn" in second["host_compatibility"]["traits"]
+    assert "stable-agent-fingerprint" not in str(second["host_compatibility"])
+
+
+async def test_mailbox_state_health_nudge_stateless_scope_uses_hashed_work_token(monkeypatch) -> None:
+    from app.services import task_lease_service as lease_mod
+    from pathlib import Path
+
+    lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+    claim = lease_store.claim(
+        project="stateless-token-project",
+        task_id="task-alpha",
+        owner_agent="codex",
+        session_id="canonical-task-session",
+        agent_fingerprint="agent-alpha",
+    )
 
     async def fake_identity_defaults(session_id_arg: str | None) -> dict[str, str]:
         assert session_id_arg is None
@@ -1458,7 +1543,8 @@ async def test_mailbox_state_health_nudge_stateless_scope_uses_hashed_work_token
         args={
             "project": "stateless-token-project",
             "state": "implementation",
-            "work_token": "token-alpha",
+            "task_id": "task-alpha",
+            "work_token": claim.work_token,
         },
         session_id=None,
         dependencies=dependencies,
@@ -1467,7 +1553,8 @@ async def test_mailbox_state_health_nudge_stateless_scope_uses_hashed_work_token
         args={
             "project": "stateless-token-project",
             "state": "implementation",
-            "work_token": "token-alpha",
+            "task_id": "task-alpha",
+            "work_token": claim.work_token,
             "diagnostic": True,
         },
         session_id=None,
@@ -1477,20 +1564,20 @@ async def test_mailbox_state_health_nudge_stateless_scope_uses_hashed_work_token
         args={
             "project": "stateless-token-project",
             "state": "implementation",
+            "task_id": "task-alpha",
             "work_token": "token-beta",
         },
         session_id=None,
         dependencies=dependencies,
     )
 
-    mcp_mailbox_read._STATELESS_HEALTH_NUDGE_SEEN.clear()
-
     assert "health_nudge" in first
     assert "health_nudge" not in repeated
     assert "health_nudge" in different_token
     repeat_key = repeated["health_nudge_suppressed"]["repeat_key"]
-    assert "work_token:" in repeat_key
-    assert "token-alpha" not in repeat_key
+    assert "task:" in repeat_key
+    assert claim.work_token not in repeat_key
+    lease_store.close()
 
 
 async def test_mailbox_get_response_uses_session_runtime_profile_defaults() -> None:
@@ -1709,6 +1796,13 @@ def test_route_feedback_form_is_operator_review_only() -> None:
         "typo_terms",
         "keyboard_layout_terms",
         "expected_payload",
+        "observed_behavior",
+        "expected_behavior",
+        "provenance",
+        "evidence_refs",
+        "confidence",
+        "proposed_refinement",
+        "authority",
     } <= set(form["optional_fields"])
     assert "postconditions" not in form
 

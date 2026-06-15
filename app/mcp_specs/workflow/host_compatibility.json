@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "purpose": "Behavior-derived compatibility state for MCP clients whose transport sessions may be stable or one-shot.",
+  "session_churn_window_seconds": 900,
+  "cooldown_seconds": 300,
+  "state_ttl_seconds": 14400,
+  "traits": {
+    "stable_session": "Repeated calls use the same transport session.",
+    "session_churn": "The same safe agent identity was observed through multiple transport sessions.",
+    "task_bound_continuity": "A valid active task lease restored its canonical session scope."
+  },
+  "host_labels_are_advisory": true,
+  "raw_work_tokens_forbidden": true
+}

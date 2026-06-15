@@ -70,3 +70,77 @@ def test_structured_claim_filter_has_precedence() -> None:
     assert route["payload"]["claim_filter"] == "claimed"
     assert route["claim_filter_resolution"]["source"] == "explicit_argument"
     assert "Final claim_filter=claimed." in route["reason"]
+
+
+def test_learned_claim_filter_resolves_non_english_negation_without_phrase_hardcode() -> None:
+    route = _route(
+        "Не предлагай claimed/occupied работу.",
+        "next_priority",
+        _learned_claim_filter="available",
+        _claim_filter_learning={
+            "pattern_id": "learned-1",
+            "backend_used": "learned_exact",
+            "matched_by": "exact",
+            "score": 1.0,
+        },
+    )
+
+    assert route["payload"]["claim_filter"] == "available"
+    resolution = route["claim_filter_resolution"]
+    assert resolution["source"] == "learned_route_parameter"
+    assert resolution["learning"]["pattern_id"] == "learned-1"
+    assert "Final claim_filter=available." in route["reason"]
+
+
+def test_structured_claim_filter_overrides_learned_claim_filter() -> None:
+    route = _route(
+        "Не предлагай claimed работу.",
+        "next_priority",
+        claim_filter="claimed",
+        _learned_claim_filter="available",
+    )
+
+    assert route["payload"]["claim_filter"] == "claimed"
+    assert route["claim_filter_resolution"]["source"] == "explicit_argument"
+
+
+def test_start_task_session_forwards_public_recovery_identity() -> None:
+    route = _route(
+        "Claim and start this task.",
+        "start_task_session",
+        task_id="task-1",
+        agent_id="codex",
+        owner_agent="owner-1",
+        session_id="session-1",
+        work_id="work-1",
+        work_token="secret-token",
+        agent_fingerprint="fingerprint-1",
+        runtime_profile_id="stateless_mcp",
+        lease_ttl_seconds=1200,
+    )
+
+    assert route["payload"]["owner_agent"] == "owner-1"
+    assert route["payload"]["session_id"] == "session-1"
+    assert route["payload"]["work_id"] == "work-1"
+    assert route["payload"]["work_token"] == "secret-token"
+    assert route["payload"]["agent_fingerprint"] == "fingerprint-1"
+    assert route["payload"]["runtime_profile_id"] == "stateless_mcp"
+    assert route["payload"]["lease_ttl_seconds"] == 1200
+
+
+def test_finish_task_session_forwards_public_recovery_identity() -> None:
+    route = _route(
+        "Finish this task session.",
+        "finish_task_session",
+        task_id="task-1",
+        agent_id="codex",
+        owner_agent="owner-1",
+        session_id="session-1",
+        work_id="work-1",
+        work_token="secret-token",
+    )
+
+    assert route["payload"]["owner_agent"] == "owner-1"
+    assert route["payload"]["session_id"] == "session-1"
+    assert route["payload"]["work_id"] == "work-1"
+    assert route["payload"]["work_token"] == "secret-token"

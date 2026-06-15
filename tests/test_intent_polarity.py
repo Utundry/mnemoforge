@@ -38,3 +38,13 @@ def test_intent_polarity_does_not_confuse_action_verb_with_state_signal() -> Non
 
     assert result.positive == frozenset()
     assert result.negative == frozenset()
+
+
+def test_intent_polarity_does_not_cross_punctuation_scope_boundary() -> None:
+    result = analyze_intent_polarity(
+        "Do not modify. Show claimed tasks.",
+        signals=SIGNALS,
+    )
+
+    assert result.positive == frozenset({"claimed"})
+    assert result.negative == frozenset()

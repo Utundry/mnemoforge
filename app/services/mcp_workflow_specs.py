@@ -164,6 +164,35 @@ def load_tool_contract_catalog_spec(
     return spec
 
 
+def list_tool_contract_catalog_specs(
+    *,
+    spec_root: Path = DEFAULT_SPEC_ROOT,
+) -> list[McpToolContractCatalogSpec]:
+    contracts_dir = spec_root / "tool_contracts"
+    if not contracts_dir.exists():
+        raise WorkflowSpecError(f"Tool contracts directory not found: {contracts_dir}")
+    specs = [
+        load_tool_contract_catalog_spec(path.stem, spec_root=spec_root)
+        for path in sorted(contracts_dir.glob("*.json"))
+    ]
+    tool_sources: dict[str, str] = {}
+    duplicates: dict[str, set[str]] = {}
+    for spec in specs:
+        for tool in spec.tools:
+            previous = tool_sources.get(tool.name)
+            if previous is not None:
+                duplicates.setdefault(tool.name, {previous}).add(spec.id)
+            else:
+                tool_sources[tool.name] = spec.id
+    if duplicates:
+        details = ", ".join(
+            f"{name} ({'/'.join(sorted(sources))})"
+            for name, sources in sorted(duplicates.items())
+        )
+        raise WorkflowSpecError(f"Duplicate tool contracts across declarative catalogs: {details}")
+    return specs
+
+
 def list_mailbox_form_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> list[MailboxFormSpec]:
     forms_dir = spec_root / "forms"
     if not forms_dir.exists():
@@ -211,36 +240,24 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
     route_catalogs_by_facade = {catalog.facade: catalog for catalog in route_catalogs}
     tool_family_registry = load_tool_family_registry(spec_root=spec_root)
     tool_surface = load_tool_surface_spec(spec_root=spec_root)
-    public_tool_contracts = load_tool_contract_catalog_spec("public_surface", spec_root=spec_root)
-    discovery_tool_contracts = load_tool_contract_catalog_spec("discovery_read", spec_root=spec_root)
-    mailbox_tool_contracts = load_tool_contract_catalog_spec("mailbox_protocol", spec_root=spec_root)
-    instruction_tool_contracts = load_tool_contract_catalog_spec("instruction_layers", spec_root=spec_root)
-    learning_review_tool_contracts = load_tool_contract_catalog_spec("learning_review", spec_root=spec_root)
-    improvement_review_tool_contracts = load_tool_contract_catalog_spec("improvement_review", spec_root=spec_root)
-    project_identity_tool_contracts = load_tool_contract_catalog_spec("project_identity", spec_root=spec_root)
-    workflow_helper_tool_contracts = load_tool_contract_catalog_spec("workflow_helpers", spec_root=spec_root)
-    project_context_execution_tool_contracts = load_tool_contract_catalog_spec(
-        "project_context_execution",
-        spec_root=spec_root,
-    )
-    project_knowledge_core_tool_contracts = load_tool_contract_catalog_spec(
-        "project_knowledge_core",
-        spec_root=spec_root,
-    )
-    remote_snapshot_tool_contracts = load_tool_contract_catalog_spec("remote_snapshot", spec_root=spec_root)
-    storage_trust_tool_contracts = load_tool_contract_catalog_spec("storage_trust", spec_root=spec_root)
-    coordination_message_tool_contracts = load_tool_contract_catalog_spec(
-        "coordination_messages",
-        spec_root=spec_root,
-    )
-    governance_feedback_tool_contracts = load_tool_contract_catalog_spec(
-        "governance_feedback",
-        spec_root=spec_root,
-    )
-    artifact_navigation_tool_contracts = load_tool_contract_catalog_spec(
-        "artifact_navigation",
-        spec_root=spec_root,
-    )
+    tool_contract_catalogs = list_tool_contract_catalog_specs(spec_root=spec_root)
+    tool_contracts_by_id = {catalog.id: catalog for catalog in tool_contract_catalogs}
+    public_tool_contracts = tool_contracts_by_id["public_surface"]
+    discovery_tool_contracts = tool_contracts_by_id["discovery_read"]
+    mailbox_tool_contracts = tool_contracts_by_id["mailbox_protocol"]
+    instruction_tool_contracts = tool_contracts_by_id["instruction_layers"]
+    learning_review_tool_contracts = tool_contracts_by_id["learning_review"]
+    improvement_review_tool_contracts = tool_contracts_by_id["improvement_review"]
+    project_identity_tool_contracts = tool_contracts_by_id["project_identity"]
+    workflow_helper_tool_contracts = tool_contracts_by_id["workflow_helpers"]
+    project_context_execution_tool_contracts = tool_contracts_by_id["project_context_execution"]
+    project_knowledge_core_tool_contracts = tool_contracts_by_id["project_knowledge_core"]
+    project_work_tool_contracts = tool_contracts_by_id["project_work_facade"]
+    remote_snapshot_tool_contracts = tool_contracts_by_id["remote_snapshot"]
+    storage_trust_tool_contracts = tool_contracts_by_id["storage_trust"]
+    coordination_message_tool_contracts = tool_contracts_by_id["coordination_messages"]
+    governance_feedback_tool_contracts = tool_contracts_by_id["governance_feedback"]
+    artifact_navigation_tool_contracts = tool_contracts_by_id["artifact_navigation"]
     mailbox_forms = list_mailbox_form_specs(spec_root=spec_root)
     known_state_ids = {spec.id for spec in state_specs}
     known_toggle_ids = {toggle.id for toggle in feature_registry.toggles}
@@ -318,6 +335,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         ],
         "tool_families": [family.id for family in tool_family_registry.families],
         "tool_surface_public_entrypoints": tool_surface.public_entrypoints,
+        "tool_contract_catalogs": [catalog.id for catalog in tool_contract_catalogs],
         "public_tool_contracts": [tool.name for tool in public_tool_contracts.tools],
         "discovery_tool_contracts": [tool.name for tool in discovery_tool_contracts.tools],
         "mailbox_tool_contracts": [tool.name for tool in mailbox_tool_contracts.tools],
@@ -332,6 +350,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         "project_knowledge_core_tool_contracts": [
             tool.name for tool in project_knowledge_core_tool_contracts.tools
         ],
+        "project_work_tool_contracts": [tool.name for tool in project_work_tool_contracts.tools],
         "remote_snapshot_tool_contracts": [tool.name for tool in remote_snapshot_tool_contracts.tools],
         "storage_trust_tool_contracts": [tool.name for tool in storage_trust_tool_contracts.tools],
         "coordination_message_tool_contracts": [

@@ -5,28 +5,12 @@ from copy import deepcopy
 from typing import Any
 from urllib.parse import quote
 
-from app.services.mcp_workflow_specs import load_tool_contract_catalog_spec
+from app.services.mcp_workflow_specs import WorkflowSpecError, list_tool_contract_catalog_specs
 
 _DECLARATIVE_TOOL_DEFINITIONS = {
     tool.name: tool.model_dump()
-    for catalog in (
-        "public_surface",
-        "discovery_read",
-        "mailbox_protocol",
-        "instruction_layers",
-        "learning_review",
-        "improvement_review",
-        "project_identity",
-        "workflow_helpers",
-        "project_context_execution",
-        "project_knowledge_core",
-        "remote_snapshot",
-        "storage_trust",
-        "coordination_messages",
-        "governance_feedback",
-        "artifact_navigation",
-    )
-    for tool in load_tool_contract_catalog_spec(catalog).tools
+    for catalog in list_tool_contract_catalog_specs()
+    for tool in catalog.tools
 }
 
 
@@ -365,77 +349,6 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "description": "Work token from start_task_session for mutating operations on claimed tasks.",
                 },
                 "source": {"type": "string", "default": "record_work_result"},
-            },
-        },
-    },
-    "project_work": {
-        "name": "project_work",
-        "description": (
-            "Thematic project-work routing facade. Use this as the first-contact surface for common project work "
-            "requests such as next priority, continue task, create/save an improvement task, review capture drafts, close tail, save checkpoint, or route verification/restart work. "
-            "It classifies intent, returns routing evidence, executes safe read-only routes, and plans guarded mutations unless allow_mutation=true."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["intent"],
-            "properties": {
-                "project": {"type": "string", "default": "mnemoforge", "description": "Project name"},
-                "intent": {"type": "string", "description": "Natural-language project-work request or operator intent"},
-                "task_id": {"type": "string", "description": "Optional task id when the request belongs to a known task"},
-                "artifact_key": {"type": "string", "description": "Optional unified artifact key"},
-                "state": {
-                    "type": "string",
-                    "enum": ["planning", "implementation", "verification", "live_validation", "documentation", "checkpointing", "handoff", "operator_review"],
-                    "description": "Optional current task state used for routing evidence",
-                },
-                "summary": {"type": "string", "description": "Optional work summary for checkpoint/closeout routes"},
-                "raw_notes": {"type": "string", "description": "Optional raw notes for capture/checkpoint routes"},
-                "draft_id": {"type": "string", "description": "Checkpoint draft id for approve/reject draft routes"},
-                "version": {"type": "integer", "description": "Checkpoint draft version for approve/reject draft routes"},
-                "reason": {"type": "string", "description": "Optional reason for mutating lifecycle routes"},
-                "changed_files": {"type": "array", "items": {"type": "string"}, "default": []},
-                "verification": {"type": "array", "items": {"type": "string"}, "default": []},
-                "allow_mutation": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "When false, mutating routes return a plan instead of writing memory or changing lifecycle state.",
-                },
-                "diagnostic": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients.",
-                },
-                "answer": {
-                    "type": "boolean",
-                    "default": False,
-                    "description": "Return a final-answer-shaped plain-text block for small local models.",
-                },
-                "response_format": {
-                    "type": "string",
-                    "enum": ["json", "diagnostic", "answer"],
-                    "default": "json",
-                    "description": "Use diagnostic for route/scorer/telemetry fields or answer for a short final-answer-shaped plain-text block instead of nested JSON.",
-                },
-                "scorer_backend": {
-                    "type": "string",
-                    "enum": ["lexical", "auto", "llm"],
-                    "default": "auto",
-                    "description": "Route scorer backend. auto keeps deterministic lexical strong matches and uses cheap LLM disambiguation when no explicit route is found; lexical forces deterministic-only routing.",
-                },
-                "detail": {
-                    "type": "string",
-                    "enum": ["compact", "full"],
-                    "default": "compact",
-                    "description": "Detail level for read-only route execution",
-                },
-                "limit": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100},
-                "acted_by": {"type": "string", "default": "codex"},
-                "agent_id": {"type": "string", "default": "codex"},
-                "work_token": {
-                    "type": "string",
-                    "default": "",
-                    "description": "Work token from start_task_session for mutating operations. Required when allow_mutation=true and a task is claimed.",
-                },
             },
         },
     },
@@ -1014,10 +927,23 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
 }
 
 
-_SHARED_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
-    **_DECLARATIVE_TOOL_DEFINITIONS,
-    **_PYTHON_TOOL_DEFINITIONS,
-}
+def _merge_unique_tool_definitions(
+    declarative: dict[str, dict[str, Any]],
+    legacy: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    duplicates = sorted(set(declarative) & set(legacy))
+    if duplicates:
+        raise WorkflowSpecError(
+            "Tool contracts must have one source; duplicated in declarative and Python definitions: "
+            + ", ".join(duplicates)
+        )
+    return {**declarative, **legacy}
+
+
+_SHARED_TOOL_DEFINITIONS = _merge_unique_tool_definitions(
+    _DECLARATIVE_TOOL_DEFINITIONS,
+    _PYTHON_TOOL_DEFINITIONS,
+)
 
 
 def tool_definition(name: str) -> dict[str, Any]:

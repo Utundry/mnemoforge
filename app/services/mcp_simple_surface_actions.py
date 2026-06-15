@@ -275,6 +275,7 @@ def compact_simple_submit_packet(
             "requested_close_status", "recommended_next_call",
             "pattern_id", "feedback_action", "facade", "vote",
             "target_ref", "target_type", "refinement_type", "refinement_status", "mutation_executed",
+            "postcondition_satisfied",
         )
         compact["receipt"] = {key: receipt.get(key) for key in receipt_keys if receipt.get(key) not in (None, "", [])}
     if "result" in compact:

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "id": "governed_refinement_lifecycle",
+  "purpose": "Universal feedback and refinement contract for governed runtime objects and static specifications.",
+  "phases": [
+    "observe",
+    "identify",
+    "diagnose",
+    "propose",
+    "review_apply",
+    "verify",
+    "audit"
+  ],
+  "target_types": [
+    "law",
+    "task",
+    "improvement",
+    "artifact",
+    "route_pattern",
+    "memory",
+    "alias",
+    "cue",
+    "spec",
+    "spec_instinct",
+    "runtime_spec",
+    "unknown"
+  ],
+  "allowed_actions": [
+    "reinforce",
+    "metadata_update",
+    "applicability_update",
+    "status_update",
+    "quarantine",
+    "disable",
+    "supersede",
+    "resolve",
+    "reopen",
+    "spec_change_request"
+  ],
+  "authority_modes": [
+    "operator_review",
+    "explicit_operator_intent",
+    "preview_only",
+    "maintainer_change_request"
+  ],
+  "adapter_policy": {
+    "runtime_objects": "Apply only through an existing governed adapter for the target type.",
+    "static_specs": "Never mutate at runtime; produce a maintainer-facing change request.",
+    "unsupported_targets": "Return a non-mutating receipt and identify the missing governed adapter."
+  },
+  "adapters": {
+    "diagnostic_inspection": {
+      "role": "observation",
+      "mutating": false
+    },
+    "route_hygiene": {
+      "role": "diagnosis",
+      "mutating": false
+    },
+    "learning_eligibility": {
+      "role": "authority_gate",
+      "mutating": false
+    },
+    "route_pattern_feedback": {
+      "role": "review_apply_verify",
+      "mutating": true
+    },
+    "knowledge_refinement": {
+      "role": "review_apply_verify",
+      "mutating": true
+    },
+    "static_change_request": {
+      "role": "maintainer_handoff",
+      "mutating": false
+    }
+  },
+  "required_receipt_fields": [
+    "target",
+    "observation",
+    "diagnosis",
+    "proposal",
+    "authority",
+    "adapter",
+    "postcondition",
+    "audit"
+  ]
+}

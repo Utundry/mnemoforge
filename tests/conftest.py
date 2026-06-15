@@ -125,6 +125,27 @@ def _reset_autonomous_mode_store():
         _ams._STORE = None
 
 
+@pytest.fixture(autouse=True)
+def _reset_mcp_host_compatibility_store():
+    """Use fresh in-memory MCP host compatibility state for each test."""
+    import app.services.mcp_host_compatibility as _mhc
+    from pathlib import Path
+
+    if _mhc._STORE is not None:
+        try:
+            _mhc._STORE.close()
+        except Exception:
+            pass
+    _mhc._STORE = _mhc.McpHostCompatibilityStore(Path(":memory:"))
+    yield
+    if _mhc._STORE is not None:
+        try:
+            _mhc._STORE.close()
+        except Exception:
+            pass
+        _mhc._STORE = None
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_learning_store():
     """Use fresh in-memory learning store for each test — avoids leaking background writer tasks."""

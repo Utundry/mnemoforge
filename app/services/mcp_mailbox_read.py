@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
-import time
 from typing import Awaitable, Callable, Any
 from urllib.parse import quote
 
 from app.services.mcp_mailbox import build_mailbox_get_packet, build_mailbox_state_packet
+from app.services.mcp_host_compatibility import (
+    get_mcp_host_compatibility_store,
+    resolve_task_continuity_scope,
+)
 
 
 SessionIdentityCallback = Callable[[str | None], Awaitable[dict[str, str]]]
 GetCallback = Callable[[str, str], Awaitable[dict[str, Any]]]
-_HEALTH_NUDGE_STATELESS_COOLDOWN_SECONDS = 300.0
-_STATELESS_HEALTH_NUDGE_SEEN: dict[str, float] = {}
+_HEALTH_NUDGE_STATELESS_COOLDOWN_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,31 @@ async def build_mailbox_state_response(
         project=project,
         dependencies=dependencies,
     )
+    task_continuity = resolve_task_continuity_scope(
+        project=project,
+        task_id=str(args.get("task_id") or "").strip(),
+        work_token=str(args.get("work_token") or "").strip(),
+    )
+    effective_session_id = str(task_continuity.get("session_scope") or session_id or "")
+    agent_fingerprint = str(
+        args.get("agent_fingerprint")
+        or identity_defaults.get("agent_fingerprint")
+        or ""
+    ).strip()
+    compatibility = get_mcp_host_compatibility_store().observe(
+        agent_fingerprint=agent_fingerprint,
+        session_id=str(session_id or ""),
+    )
+    if task_continuity:
+        compatibility = {
+            **compatibility,
+            "traits": sorted(set(compatibility.get("traits") or []) | {"task_bound_continuity"}),
+            "task_continuity": {
+                "active": True,
+                "lease_id": task_continuity["lease_id"],
+                "expires_at": task_continuity["expires_at"],
+            },
+        }
     packet = build_mailbox_state_packet(
         state=str(args.get("state") or "planning"),
         project=project,
@@ -48,12 +74,15 @@ async def build_mailbox_state_response(
         diagnostic=bool(args.get("diagnostic", False)),
         detail=str(args.get("detail") or "compact"),
         governed_laws=governed_laws,
-        session_id=str(args.get("session_id") or session_id or ""),
+        session_id=effective_session_id,
     )
+    if bool(args.get("diagnostic", False)):
+        packet["host_compatibility"] = compatibility
     return await _suppress_repeated_health_nudge(
         packet,
-        session_id=session_id,
-        scope_key=_health_nudge_scope_key(args),
+        session_id=effective_session_id,
+        compatibility=compatibility,
+        scope_key=str(task_continuity.get("scope_key") or _health_nudge_scope_key(args, identity_defaults)),
         diagnostic=bool(args.get("diagnostic", False)),
     )
 
@@ -90,12 +119,20 @@ async def _suppress_repeated_health_nudge(
     packet: dict[str, Any],
     *,
     session_id: str | None,
+    compatibility: dict[str, Any] | None = None,
     scope_key: str = "",
     diagnostic: bool = False,
 ) -> dict[str, Any]:
     nudge = packet.get("health_nudge")
-    if not session_id or not isinstance(nudge, dict) or not nudge:
-        return _suppress_repeated_stateless_health_nudge(packet, scope_key=scope_key, diagnostic=diagnostic)
+    if not isinstance(nudge, dict) or not nudge:
+        return packet
+    traits = set((compatibility or {}).get("traits") or [])
+    if not session_id or "session_churn" in traits:
+        return _suppress_repeated_stateless_health_nudge(
+            packet,
+            scope_key=scope_key,
+            diagnostic=diagnostic,
+        )
     repeat_key = _health_nudge_repeat_key(packet, nudge, scope_key=scope_key)
     if not repeat_key:
         return packet
@@ -118,6 +155,12 @@ async def _suppress_repeated_health_nudge(
                 }
             return packet
         await store.patch_context(session_id, {"health_nudge_seen": [*seen[-19:], repeat_key]})
+        if scope_key:
+            get_mcp_host_compatibility_store().check_cooldown(
+                scope_key=scope_key,
+                event_key=repeat_key,
+                cooldown_seconds=_HEALTH_NUDGE_STATELESS_COOLDOWN_SECONDS,
+            )
     except Exception:
         return packet
     return packet
@@ -133,11 +176,14 @@ def _suppress_repeated_stateless_health_nudge(
     if not isinstance(nudge, dict) or not nudge:
         return packet
     repeat_key = _health_nudge_repeat_key(packet, nudge, scope_key=scope_key)
-    if not repeat_key:
+    if not repeat_key or not scope_key:
         return packet
-    now = time.time()
-    last_seen = _STATELESS_HEALTH_NUDGE_SEEN.get(repeat_key)
-    if last_seen is not None and (now - last_seen) < _HEALTH_NUDGE_STATELESS_COOLDOWN_SECONDS:
+    repeated = get_mcp_host_compatibility_store().check_cooldown(
+        scope_key=scope_key,
+        event_key=repeat_key,
+        cooldown_seconds=_HEALTH_NUDGE_STATELESS_COOLDOWN_SECONDS,
+    )
+    if repeated:
         packet.pop("health_nudge", None)
         if diagnostic:
             packet["health_nudge_suppressed"] = {
@@ -147,18 +193,20 @@ def _suppress_repeated_stateless_health_nudge(
                 "next_safe_action": "Use get(query='agent context recall health') if you need the full self-check packet.",
             }
         return packet
-    _STATELESS_HEALTH_NUDGE_SEEN[repeat_key] = now
     return packet
 
 
-def _health_nudge_scope_key(args: dict[str, Any]) -> str:
-    work_token = str(args.get("work_token") or "").strip()
-    if work_token:
-        digest = hashlib.sha256(work_token.encode("utf-8")).hexdigest()[:16]
-        return f"work_token:{digest}"
-    task_id = str(args.get("task_id") or "").strip()
-    if task_id:
-        return f"task:{task_id}"
+def _health_nudge_scope_key(args: dict[str, Any], identity_defaults: dict[str, str]) -> str:
+    agent_fingerprint = str(
+        args.get("agent_fingerprint")
+        or identity_defaults.get("agent_fingerprint")
+        or ""
+    ).strip()
+    if agent_fingerprint:
+        import hashlib
+
+        digest = hashlib.sha256(agent_fingerprint.encode("utf-8")).hexdigest()[:20]
+        return f"agent:{digest}"
     return ""
 
 

@@ -258,20 +258,36 @@ class TaskLeaseStore:
                 active = self._row_to_lease(active_row)
                 same_owner = active.owner_agent == owner_agent and active.session_id == session_id
                 if allow_reentrant and same_owner:
+                    renewed_work_token = _generate_work_token()
                     self._conn.execute(
                         """
                         UPDATE task_leases
-                           SET heartbeat_at = ?, expires_at = ?, lease_ttl_seconds = ?
+                           SET heartbeat_at = ?,
+                               expires_at = ?,
+                               lease_ttl_seconds = ?,
+                               work_token_hash = ?,
+                               work_token_preview = ?
                          WHERE lease_id = ?
                         """,
-                        (now_ts, expires_ts, ttl, active.lease_id),
+                        (
+                            now_ts,
+                            expires_ts,
+                            ttl,
+                            _hash_work_token(renewed_work_token),
+                            _work_token_preview(renewed_work_token),
+                            active.lease_id,
+                        ),
                     )
                     self._conn.commit()
                     refreshed = self._conn.execute(
                         "SELECT * FROM task_leases WHERE lease_id = ?",
                         (active.lease_id,),
                     ).fetchone()
-                    return TaskLeaseClaimResult(status="renewed", lease=self._row_to_lease(refreshed))
+                    return TaskLeaseClaimResult(
+                        status="renewed",
+                        lease=self._row_to_lease(refreshed),
+                        work_token=renewed_work_token,
+                    )
                 same_fingerprint = bool(
                     agent_fingerprint
                     and active.agent_fingerprint
