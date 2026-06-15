@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "project": "sloplesscode",
+  "purpose": "Discover repeatable agent-facing repository development utilities through governed project rules.",
+  "utilities": [
+    {
+      "id": "verification.plan",
+      "title": "Plan the smallest sufficient Docker verification contour",
+      "category": "verification",
+      "purpose": "Select tests from changed files, dependency rules, risk level, and release boundaries.",
+      "command": ["python", "-m", "scripts.verification_plan"],
+      "parameters": [
+        "--changed-file PATH (repeatable)",
+        "--base GIT_REF",
+        "--json"
+      ],
+      "constraints": [
+        "Use repository-relative changed paths.",
+        "The planner selects tests; execution remains in the Docker verification contour."
+      ],
+      "risk": "An incomplete dependency map can under-select tests, so shared or unknown changes escalate conservatively.",
+      "confirmation": "none",
+      "verification": "Review reasons and escalation level before running the returned Docker command."
+    },
+    {
+      "id": "verification.run",
+      "title": "Run pytest in the isolated Docker test contour",
+      "category": "verification",
+      "purpose": "Execute the selected pytest contour without touching working project databases.",
+      "command": [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts\\run_pytest_docker.ps1"
+      ],
+      "parameters": ["pytest paths and arguments", "-Build", "-NoBuild"],
+      "constraints": [
+        "Do not replace this with host pytest.",
+        "Use the contour selected by verification.plan unless a release gate or operator request requires broader coverage."
+      ],
+      "risk": "A full-suite run is expensive and can obscure relevant failures with unrelated baseline noise.",
+      "confirmation": "none",
+      "verification": "Report selected tests, new failures, and unchanged registered baseline failures separately."
+    },
+    {
+      "id": "verification.baseline",
+      "title": "Classify pytest failures against the governed baseline registry",
+      "category": "verification",
+      "purpose": "Separate new regressions from exact, reviewed, non-expired known failures.",
+      "command": ["python", "-m", "scripts.verification_baseline"],
+      "parameters": ["--failure PYTEST_NODE_ID (repeatable)", "--json"],
+      "constraints": [
+        "Only exact pytest node ids can match baseline entries.",
+        "Expired or invalid entries never suppress a failure."
+      ],
+      "risk": "Broad patterns or stale entries can hide regressions and are rejected.",
+      "confirmation": "none",
+      "verification": "The report lists new, registered, expired, and invalid baseline failures separately."
+    },
+    {
+      "id": "release.check",
+      "title": "Validate public release inputs and Docker context",
+      "category": "release",
+      "purpose": "Run read-only public release readiness checks before any build or push.",
+      "command": [
+        "python",
+        "-m",
+        "scripts.bootstrap_public_release",
+        "--check"
+      ],
+      "follow_up_commands": [
+        ["python", "scripts/audit_release_artifacts.py"],
+        [
+          "python",
+          "-m",
+          "scripts.publish_docker_image",
+          "--repository",
+          "caveboy/sloplesscode",
+          "--alias-repository",
+          "caveboy/mnemoforge",
+          "--tag",
+          "latest",
+          "--check"
+        ]
+      ],
+      "parameters": [],
+      "constraints": ["Run before release.publish."],
+      "risk": "Passing checks do not authorize publishing.",
+      "confirmation": "none",
+      "verification": "All release checks exit successfully."
+    },
+    {
+      "id": "release.publish",
+      "title": "Build and publish immutable Docker Hub images",
+      "category": "release",
+      "purpose": "Build and push public latest and immutable git-SHA Docker image tags.",
+      "command": [
+        "python",
+        "-m",
+        "scripts.publish_docker_image",
+        "--repository",
+        "caveboy/sloplesscode",
+        "--alias-repository",
+        "caveboy/mnemoforge",
+        "--tag",
+        "latest",
+        "--push",
+        "--tag-current-git-sha"
+      ],
+      "parameters": ["--repository", "--alias-repository", "--tag"],
+      "constraints": [
+        "Run release.check first.",
+        "Publish only committed and synchronized work."
+      ],
+      "risk": "Pushes public mutable and immutable image tags to Docker Hub.",
+      "confirmation": "explicit operator approval",
+      "verification": "Inspect remote digest and smoke-test the immutable git-SHA image in an isolated contour."
+    },
+    {
+      "id": "release.overview",
+      "title": "Publish the Docker Hub repository overview",
+      "category": "release",
+      "purpose": "Synchronize the governed Docker Hub overview document with the public repository.",
+      "command": [
+        "python",
+        "scripts\\publish_dockerhub_overview.py",
+        "--repository",
+        "caveboy/sloplesscode",
+        "--overview-file",
+        "docs\\DOCKERHUB_OVERVIEW.md"
+      ],
+      "parameters": ["--repository", "--overview-file"],
+      "constraints": ["Use the governed overview document."],
+      "risk": "Updates public Docker Hub metadata.",
+      "confirmation": "explicit operator approval",
+      "verification": "Confirm Docker Hub reports the updated overview."
+    },
+    {
+      "id": "verification.remote_mcp",
+      "title": "Run isolated remote MCP end-to-end verification",
+      "category": "verification",
+      "purpose": "Verify the remote MCP transport and public tool flow in temporary Docker services.",
+      "command": [
+        "powershell",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts\\run_docker_remote_mcp_e2e.ps1"
+      ],
+      "parameters": [],
+      "constraints": [
+        "Uses isolated Docker test data.",
+        "Do not point it at the working SQLite or Qdrant stores."
+      ],
+      "risk": "Builds and starts temporary Docker services.",
+      "confirmation": "none",
+      "verification": "The remote MCP E2E script exits successfully and removes temporary services."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "policy": {
+    "exact_node_ids_only": true,
+    "expired_entries_are_active": false,
+    "new_failures_are_never_suppressed": true
+  },
+  "failures": []
+}

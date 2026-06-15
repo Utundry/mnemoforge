@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "default": {
+    "tests": ["tests/test_project_utility.py", "tests/test_verification_plan.py"],
+    "level": "focused",
+    "reason": "Unknown narrow changes use tooling contract tests and require operator review of the proposed contour."
+  },
+  "rules": [
+    {
+      "id": "development-tooling",
+      "paths": ["scripts/**"],
+      "tests": ["tests/test_project_utility.py", "tests/test_verification_plan.py"],
+      "level": "focused"
+    },
+    {
+      "id": "mcp-contracts",
+      "paths": ["app/routers/mcp_sse.py", "app/services/mcp_*.py", "app/mcp_specs/**"],
+      "tests": [
+        "tests/test_mcp_sse.py",
+        "tests/test_mcp_workflow_specs.py",
+        "tests/test_task_execution_context.py"
+      ],
+      "level": "affected"
+    },
+    {
+      "id": "project-laws",
+      "paths": ["docs/PROJECT_LAW.md", "app/services/law_*.py", "app/models/law.py"],
+      "tests": ["tests/test_laws.py", "tests/test_project_law_context.py", "tests/test_task_execution_context.py"],
+      "level": "affected"
+    },
+    {
+      "id": "public-release",
+      "paths": [
+        "Dockerfile",
+        ".dockerignore",
+        ".env.public.example",
+        "scripts/bootstrap_public_release.py",
+        "scripts/public_release_config.py",
+        "scripts/publish_docker_image.py",
+        "scripts/publish_dockerhub_overview.py",
+        "scripts/audit_release_artifacts.py",
+        "docs/PUBLIC_RELEASE_CHECKLIST.md",
+        "docs/DOCKERHUB_OVERVIEW.md"
+      ],
+      "tests": [
+        "tests/test_public_release_config.py",
+        "tests/test_publish_docker_image.py",
+        "tests/test_publish_dockerhub_overview.py",
+        "tests/test_publish_readiness.py",
+        "tests/test_usage_conditions.py"
+      ],
+      "level": "release"
+    },
+    {
+      "id": "shared-runtime",
+      "paths": [
+        "app/main.py",
+        "app/config.py",
+        "app/dependencies.py",
+        "docker-compose.yml",
+        "requirements.txt"
+      ],
+      "tests": ["tests"],
+      "level": "full",
+      "reason": "Shared runtime or dependency changes require the full isolated suite."
+    }
+  ]
+}

@@ -96,6 +96,29 @@ That means the system must support:
 - promoting them when they generalize across projects
 - suppressing or rolling them back when they prove wrong
 
+## Law 8: Agent-Facing Development Utilities Are Discovered Through Project Rules
+
+Repeatable repository development utilities used by agents must be discoverable
+through governed project rules rather than depending on IDE configuration,
+private prompts, filenames, or accidental documentation recall.
+
+For this repository, the governed utility entrypoint is:
+
+`python -m scripts.project_utility list`
+
+Agents inspect a utility with:
+
+`python -m scripts.project_utility show <utility-id>`
+
+The catalog describes purpose, command, parameters, constraints, risk,
+confirmation requirements, and expected verification. It covers repeatable
+verification and release operations. One-off migration, repair, cleanup, and
+forensic scripts are not advertised automatically.
+
+The utility implementation remains external repository tooling. Project rules
+grant discoverability and operating context; they do not move these utilities
+into application runtime behavior or universal MCP specifications.
+
 ## Engineering Consequence
 
 When choosing between:

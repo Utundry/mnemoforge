@@ -25,7 +25,7 @@ Use this checklist before publishing a GitHub alpha or Docker Hub image.
 Run the public bootstrap check:
 
 ```bash
-python scripts/bootstrap_public_release.py --check
+python -m scripts.bootstrap_public_release --check
 ```
 
 Run the first-user configurator smoke check:
@@ -56,7 +56,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_pytest_docker.ps
 6. Keep the Docker Hub Overview in sync with `docs/DOCKERHUB_OVERVIEW.md`.
 
 ```bash
-python scripts/publish_docker_image.py --repository caveboy/sloplesscode --alias-repository caveboy/mnemoforge --tag latest --push --tag-current-git-sha
+python -m scripts.publish_docker_image --repository caveboy/sloplesscode --alias-repository caveboy/mnemoforge --tag latest --push --tag-current-git-sha
 python scripts/publish_dockerhub_overview.py --repository caveboy/sloplesscode --overview-file docs/DOCKERHUB_OVERVIEW.md
 ```
 

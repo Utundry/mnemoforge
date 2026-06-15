@@ -15,7 +15,7 @@ def test_public_release_checklist_contains_operator_release_steps():
     path = Path(__file__).resolve().parents[1] / "docs" / "PUBLIC_RELEASE_CHECKLIST.md"
     text = path.read_text(encoding="utf-8")
 
-    assert "python scripts/bootstrap_public_release.py --check" in text
+    assert "python -m scripts.bootstrap_public_release --check" in text
     assert "python scripts/audit_release_artifacts.py" in text
-    assert "python scripts/publish_docker_image.py" in text
+    assert "python -m scripts.publish_docker_image" in text
     assert "No. Public releases must use synthetic or redacted data only." in text

@@ -124,6 +124,18 @@ Provider connection failures are expected as warnings when optional LLM services
 
 ## Tests
 
+Agent-facing repository development utilities are discovered through the
+project rule and the governed catalog:
+
+```powershell
+python -m scripts.project_utility list
+python -m scripts.project_utility show verification.plan
+python -m scripts.project_utility command verification.run
+```
+
+Documentation remains supplementary; the project rule is the canonical
+discovery mechanism.
+
 Run focused Docker-based tests:
 
 ```powershell
