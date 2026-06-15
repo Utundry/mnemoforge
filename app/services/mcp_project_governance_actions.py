@@ -73,6 +73,11 @@ async def execute_project_governance_action(
                 f"   scope={item.get('scope','?')} locality={locality} project={item.get('project') or '-'}{source_suffix}\n"
                 f"   id={item.get('id')}"
             )
+            if item.get("applicability_status") == "unavailable":
+                lines.append(
+                    "   availability=unavailable "
+                    f"reason={item.get('applicability_reason') or 'required capability is not installed'}"
+                )
             rationale = str(item.get("rationale") or "").strip()
             if rationale:
                 lines.append(f"   rationale={rationale[:240]}")
@@ -84,8 +89,16 @@ async def execute_project_governance_action(
         lines = [
             f"title={data.get('title','')}",
             f"status={data.get('status','?')} scope={data.get('scope','?')} project={data.get('project') or '-'} version={data.get('version','1.0')}",
-            f"statement={data.get('statement','')}",
         ]
+        if data.get("applicability_status") == "unavailable":
+            lines.append("availability=unavailable")
+            lines.append(f"unavailable_reason={data.get('applicability_reason') or 'required capability is not installed'}")
+            missing = data.get("missing_capabilities") or []
+            if missing:
+                lines.append(f"missing_capabilities={','.join(str(item) for item in missing)}")
+        else:
+            lines.append(f"availability=available")
+            lines.append(f"statement={data.get('statement','')}")
         if data.get("rationale"):
             lines.append(f"rationale={data['rationale']}")
         evidence = data.get("evidence") or []

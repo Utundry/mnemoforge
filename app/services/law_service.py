@@ -10,6 +10,7 @@ from app.models.law import ProjectLawCandidate, ProjectLawConfirmRequest, Projec
 from app.models.memory import MemoryCreate, MemoryUpdate
 from app.services.embedding_gateway import embed_text
 from app.services.governed_artifact import apply_candidate_fields, build_candidate_revision
+from app.services.project_capability_service import evaluate_capability_tags
 from app.services.qdrant_service import _point_to_record
 
 LAW_CATEGORY = "law"
@@ -137,6 +138,7 @@ def _law_record_from_memory(record, *, requested_project: Optional[str] = None) 
     project = record.project
     scope = record.scope or "project"
     candidate = _candidate_from_meta(meta)
+    applicability = evaluate_capability_tags(list(record.tags or []))
     return ProjectLawRecord(
         id=str(record.id),
         project=project,
@@ -167,6 +169,10 @@ def _law_record_from_memory(record, *, requested_project: Optional[str] = None) 
         last_status_action_at=datetime.fromisoformat(status_action_raw) if status_action_raw else None,
         last_status_action_reason=meta.get("last_status_action_reason"),
         candidate_revision=candidate,
+        applicability_status=str(applicability["status"]),
+        required_capabilities=list(applicability["required_capabilities"]),
+        missing_capabilities=list(applicability["missing_capabilities"]),
+        applicability_reason=str(applicability["reason"]),
     )
 
 

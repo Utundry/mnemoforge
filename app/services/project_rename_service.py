@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Any
 
 from app.services.project_identity_service import ProjectIdentityStore
+from app.services.project_identity_migration import migrate_sqlite_file
 from app.services.system_data_root import get_system_data_root
-from scripts.migrate_project_identity import migrate_sqlite_file
 
 PROJECT_DATA_DIR = get_system_data_root(create=False)
 PROJECT_RENAME_BACKUP_DIR = PROJECT_DATA_DIR / "identity_migration_backups"

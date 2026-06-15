@@ -30,7 +30,9 @@ services:
     restart: unless-stopped
 
   memory-server-dev:
-    build: .
+    build:
+      context: .
+      target: self-development
     ports:
       - "8000:8000"
     depends_on:
@@ -39,6 +41,7 @@ services:
     environment:
       MNEMOFORGE_RUNTIME_KIND: docker
       MNEMOFORGE_DOCKER_SERVICE: memory-server-dev
+      PROJECT_CAPABILITIES: repository-development-tools
       QDRANT_HOST: qdrant
       OLLAMA_BASE_URL: http://host.docker.internal:11434
     extra_hosts:
@@ -119,6 +122,7 @@ services:
       - ./tests:/app/tests
       - ./scripts:/app/scripts
       - ./docs:/app/docs
+      - ./Dockerfile:/app/Dockerfile:ro
       - ./pytest.ini:/app/pytest.ini:ro
     tmpfs:
       - /tmp/sloplesscode_system_data

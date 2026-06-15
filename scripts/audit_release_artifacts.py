@@ -32,6 +32,7 @@ FORBIDDEN_IMAGE_PATHS = (
     "/app/tmp_test_code_search",
     "/app/pytest.ini",
     "/app/scripts",
+    "/app/docs/PROJECT_LAW.md",
 )
 FORBIDDEN_NAME_FRAGMENTS = (
     "api_key",
@@ -118,14 +119,24 @@ def _matches_forbidden(paths: list[str], forbidden: tuple[str, ...]) -> list[str
         normalized = path.replace("\\", "/")
         lower = normalized.lower()
         for rule in forbidden:
-            rule_lower = rule.lower()
+            rule_raw = rule.lower()
+            rule_lower = rule_raw.rstrip("/")
             if rule_lower == ".env":
                 if Path(lower).name == ".env":
                     matches.append(normalized)
                     break
                 continue
-            if rule_lower.endswith("/"):
-                if lower.startswith(rule_lower) or f"/{rule_lower}" in lower:
+            if rule_lower.startswith("/"):
+                if lower == rule_lower or lower.startswith(rule_lower + "/"):
+                    matches.append(normalized)
+                    break
+                continue
+            if rule_raw.endswith("/"):
+                if (
+                    lower == rule_lower
+                    or lower.startswith(rule_lower + "/")
+                    or f"/{rule_lower}/" in lower
+                ):
                     matches.append(normalized)
                     break
             elif rule_lower in lower:

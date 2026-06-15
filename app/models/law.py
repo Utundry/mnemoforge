@@ -100,6 +100,10 @@ class ProjectLawRecord(BaseModel):
     last_status_action_at: Optional[datetime] = None
     last_status_action_reason: Optional[str] = None
     candidate_revision: Optional[ProjectLawCandidate] = None
+    applicability_status: str = "available"
+    required_capabilities: list[str] = Field(default_factory=list)
+    missing_capabilities: list[str] = Field(default_factory=list)
+    applicability_reason: str = ""
 
 
 class ProjectLawListResponse(BaseModel):

@@ -170,6 +170,17 @@ def main() -> int:
     if rc != 0:
         return rc
 
+    first_run_cmd = [
+        sys.executable,
+        "-m",
+        "scripts.audit_first_run",
+        "--image",
+        image_ref,
+    ]
+    rc = _run(first_run_cmd, dry_run=args.dry_run)
+    if rc != 0:
+        return rc
+
     if args.push:
         push_cmd = ["docker", "push", image_ref]
         rc = _run(push_cmd, dry_run=args.dry_run)

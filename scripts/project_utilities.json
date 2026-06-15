@@ -112,7 +112,8 @@
       "parameters": ["--repository", "--alias-repository", "--tag"],
       "constraints": [
         "Run release.check first.",
-        "Publish only committed and synchronized work."
+        "Publish only committed and synchronized work.",
+        "The production image must pass release.first_run before any push."
       ],
       "risk": "Pushes public mutable and immutable image tags to Docker Hub.",
       "confirmation": "explicit operator approval",
@@ -136,6 +137,27 @@
       "risk": "Updates public Docker Hub metadata.",
       "confirmation": "explicit operator approval",
       "verification": "Confirm Docker Hub reports the updated overview."
+    },
+    {
+      "id": "release.first_run",
+      "title": "Audit production image first-run experience",
+      "category": "release",
+      "purpose": "Start a production image without repository mounts, verify readiness and dependency diagnostics, and run the canonical MCP smoke.",
+      "command": [
+        "python",
+        "scripts/audit_first_run.py",
+        "--image",
+        "IMAGE_REF"
+      ],
+      "parameters": ["--image", "--timeout"],
+      "constraints": [
+        "Use a production image reference.",
+        "The audit uses isolated in-memory Qdrant and never points at working project stores.",
+        "Run before publishing and repeat against the immutable remote image after pull."
+      ],
+      "risk": "Starts a temporary local Docker container and binds a random loopback port.",
+      "confirmation": "none",
+      "verification": "Health, dependency diagnostics, no-mount isolation, and MCP smoke all pass; the temporary container is removed."
     },
     {
       "id": "verification.remote_mcp",

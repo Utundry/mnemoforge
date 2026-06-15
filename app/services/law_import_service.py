@@ -30,6 +30,7 @@ class ParsedLawDraft:
     rationale: str
     evidence: list[str]
     topic_path: str
+    tags: list[str]
 
 
 def _normalize_paragraph(text: str) -> str:
@@ -66,8 +67,21 @@ def parse_project_laws_markdown(markdown: str, *, source_path: str) -> list[Pars
         ]
         if not paragraphs:
             continue
-        statement = paragraphs[0]
-        rationale = "\n\n".join(paragraphs[1:]).strip()
+        capability_tags = [
+            f"requires-capability:{paragraph.split(':', 1)[1].strip()}"
+            for paragraph in paragraphs
+            if paragraph.casefold().startswith("requires capability:")
+            and paragraph.split(":", 1)[1].strip()
+        ]
+        content_paragraphs = [
+            paragraph
+            for paragraph in paragraphs
+            if not paragraph.casefold().startswith("requires capability:")
+        ]
+        if not content_paragraphs:
+            continue
+        statement = content_paragraphs[0]
+        rationale = "\n\n".join(content_paragraphs[1:]).strip()
         drafts.append(
             ParsedLawDraft(
                 title=title,
@@ -78,6 +92,7 @@ def parse_project_laws_markdown(markdown: str, *, source_path: str) -> list[Pars
                     f"Section: {title}",
                 ],
                 topic_path=f"laws/{_slug(title)}",
+                tags=capability_tags,
             )
         )
     return drafts
@@ -134,7 +149,7 @@ async def import_project_laws_from_markdown(
                     scope="project",
                     status="active",
                     topic_path=draft.topic_path,
-                    tags=["imported", "project_law_markdown", *(extra_tags or [])],
+                    tags=["imported", "project_law_markdown", *draft.tags, *(extra_tags or [])],
                     confirmed_by=confirmed_by,
                     confirmation_source=confirmation_source,
                 ),
@@ -160,7 +175,7 @@ async def import_project_laws_from_markdown(
                 rationale=draft.rationale,
                 evidence=draft.evidence,
                 topic_path=draft.topic_path,
-                tags=["imported", "project_law_markdown", *(extra_tags or [])],
+                tags=["imported", "project_law_markdown", *draft.tags, *(extra_tags or [])],
             ),
         )
         if existing_law.status in CONFIRMED_STATUSES and updated.candidate_revision is not None:

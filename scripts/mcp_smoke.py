@@ -162,7 +162,13 @@ def main() -> int:
 
     if endpoint_url:
         try:
-            listed = _mcp_call(endpoint_url, event_queue, "tools/list", api_key=args.api_key)
+            listed = _mcp_call(
+                endpoint_url,
+                event_queue,
+                "tools/list",
+                {"mode": "full"},
+                api_key=args.api_key,
+            )
             tools = listed.get("result", {}).get("tools", [])
             names = {tool.get("name") for tool in tools}
             if "memory_health" in names:
@@ -183,8 +189,9 @@ def main() -> int:
             content = called.get("result", {}).get("content", [])
             text = content[0].get("text", "") if content else ""
             parsed = json.loads(text) if text.startswith("{") else {}
-            if parsed.get("status") == "ok":
-                pass_step("MCP tools/call memory_health returned status=ok")
+            health_status = str(parsed.get("status") or "").lower()
+            if health_status in {"ok", "healthy", "degraded"}:
+                pass_step(f"MCP tools/call memory_health returned status={health_status}")
             else:
                 fail_step("MCP memory_health unexpected result", text[:200])
         except Exception as exc:

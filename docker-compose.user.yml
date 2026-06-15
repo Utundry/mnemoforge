@@ -22,6 +22,8 @@ services:
       SLOPLESSCODE_DATA_DIR: /app/system_data
       MNEMOFORGE_RUNTIME_KIND: docker
       MNEMOFORGE_DOCKER_SERVICE: sloplesscode
+      AUTO_BOOTSTRAP_SELF_PROJECT_LAWS: "0"
+      PROJECT_CAPABILITIES: ""
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
       SERVER_HOST: 0.0.0.0

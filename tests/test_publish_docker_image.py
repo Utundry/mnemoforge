@@ -145,6 +145,16 @@ def test_main_can_publish_latest_and_current_git_sha(monkeypatch, capsys):
             ],
             False,
         ),
+        (
+            [
+                helper.sys.executable,
+                "-m",
+                "scripts.audit_first_run",
+                "--image",
+                "caveboy/sloplesscode:latest",
+            ],
+            False,
+        ),
         (["docker", "push", "caveboy/sloplesscode:latest"], False),
         (["docker", "tag", "caveboy/sloplesscode:latest", "caveboy/mnemoforge:latest"], False),
         (["docker", "push", "caveboy/mnemoforge:latest"], False),

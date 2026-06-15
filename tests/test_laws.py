@@ -32,7 +32,27 @@ Only explicit user approval may activate project truth.
     assert drafts[0].statement == "Agents must start from project memory before reading code."
     assert "retrieval consistent" in drafts[0].rationale
     assert drafts[0].topic_path == "laws/memory-first"
+    assert drafts[0].tags == []
     assert drafts[1].title == "User Sovereignty"
+
+
+def test_parse_project_laws_markdown_extracts_required_capability_tag():
+    drafts = parse_project_laws_markdown(
+        """
+## Law 1: Development utility
+
+Requires capability: repository-development-tools
+
+Agents may use the repository utility when installed.
+
+This is unavailable in production.
+""",
+        source_path="docs/PROJECT_LAW.md",
+    )
+
+    assert drafts[0].statement == "Agents may use the repository utility when installed."
+    assert drafts[0].tags == ["requires-capability:repository-development-tools"]
+    assert "Requires capability" not in drafts[0].rationale
 
 
 @pytest.mark.asyncio

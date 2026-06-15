@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
@@ -45,6 +46,11 @@ class TestMcpDiscovery:
             r = await client.get(path)
             assert r.status_code == 404
             assert r.json()["detail"] == "OAuth not supported"
+
+    def test_internal_api_base_uses_listener_port_not_public_host(self):
+        request = SimpleNamespace(scope={"server": ("0.0.0.0", 8000)})
+
+        assert mcp_sse._internal_api_base(request) == "http://127.0.0.1:8000/api/v1"
 
 
 class TestMcpToolExecution:
@@ -11323,6 +11329,36 @@ class TestMcpToolExecution:
 
         assert "Require explicit approval" in result
         assert "incident-1" in result
+        assert "availability=available" in result
+
+    async def test_get_project_law_hides_dangling_statement_when_capability_is_unavailable(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            assert path == "/laws/law-utility"
+            return {
+                "id": "law-utility",
+                "title": "Repository utilities",
+                "status": "active",
+                "scope": "project",
+                "project": "alpha",
+                "version": "1.0",
+                "statement": "Run python -m scripts.project_utility list.",
+                "applicability_status": "unavailable",
+                "missing_capabilities": ["repository-development-tools"],
+                "applicability_reason": "Required project capabilities are not installed in this runtime.",
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool(
+            "get_project_law",
+            {"law_id": "law-utility"},
+            "http://test",
+        )
+
+        assert "availability=unavailable" in result
+        assert "missing_capabilities=repository-development-tools" in result
+        assert "scripts.project_utility" not in result
 
     async def test_sse_list_learning_candidates_uses_pending_review_endpoint(self, monkeypatch):
         seen: dict[str, str] = {}

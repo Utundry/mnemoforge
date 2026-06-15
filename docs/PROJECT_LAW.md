@@ -98,6 +98,8 @@ That means the system must support:
 
 ## Law 8: Agent-Facing Development Utilities Are Discovered Through Project Rules
 
+Requires capability: repository-development-tools
+
 Repeatable repository development utilities used by agents must be discoverable
 through governed project rules rather than depending on IDE configuration,
 private prompts, filenames, or accidental documentation recall.

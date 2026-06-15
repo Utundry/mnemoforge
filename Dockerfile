@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.13-slim AS runtime-base
 
 WORKDIR /app
 
@@ -13,7 +13,6 @@ COPY app/ app/
 COPY static/ static/
 COPY mcp/ mcp/
 COPY cli/ cli/
-COPY scripts/ scripts/
 COPY docs/ docs/
 COPY demo/ demo/
 COPY README.md SETUP.md CLIENT_SETUP.md STATUS.md .env.public.example ./
@@ -35,3 +34,16 @@ LABEL org.opencontainers.image.title="SloplessCode" \
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+FROM runtime-base AS self-development
+
+COPY scripts/ scripts/
+
+ENV PROJECT_CAPABILITIES=repository-development-tools
+
+FROM runtime-base AS production
+
+RUN rm -f docs/PROJECT_LAW.md
+
+ENV AUTO_BOOTSTRAP_SELF_PROJECT_LAWS=0 \
+    PROJECT_CAPABILITIES=

@@ -9420,11 +9420,18 @@ async def _handle(msg: dict, api_base: str, session_id: str | None = None) -> di
 
 # ── Streamable HTTP endpoint (MCP 2025-03-26, used by Codex CLI) ───────────────
 
+def _internal_api_base(request: Request) -> str:
+    from app.config import settings
+
+    server = request.scope.get("server")
+    port = int(server[1]) if isinstance(server, (list, tuple)) and len(server) > 1 else settings.server_port
+    return f"http://127.0.0.1:{port}{settings.api_prefix.rstrip('/')}"
+
+
 @router.post("/sse")
 async def streamable_http(request: Request):
     """MCP Streamable HTTP transport — accepts JSON-RPC, returns JSON directly."""
-    base = str(request.base_url).rstrip("/")
-    api_base = f"{base}/api/v1"
+    api_base = _internal_api_base(request)
 
     body = await request.json()
 
@@ -9507,9 +9514,8 @@ async def sse_post(sessionId: str, request: Request) -> Response:
     if queue is None:
         raise HTTPException(status_code=404, detail=f"Session {sessionId!r} not found or expired")
 
-    # Build api_base so tools call back to this same server
-    base = str(request.base_url).rstrip("/")
-    api_base = f"{base}/api/v1"
+    # Tool callbacks stay internal even when Docker publishes a different host port.
+    api_base = _internal_api_base(request)
 
     body = await request.json()
     await _touch_session(sessionId)
