@@ -349,6 +349,7 @@ def compact_task_resource(result: dict[str, Any], *, tool_surface_role: ToolSurf
     task = result.get("task") if isinstance(result.get("task"), dict) else {}
     latest = result.get("latest_checkpoint") if isinstance(result.get("latest_checkpoint"), dict) else {}
     readiness = result.get("execution_readiness") if isinstance(result.get("execution_readiness"), dict) else {}
+    is_done = str(result.get("status") or "").strip().lower() == "done" or str(task.get("status") or "").strip().lower() == "done"
     recommendation = public_recommendation_for_tool(
         result.get("recommended_first_tool"),
         result,
@@ -359,7 +360,7 @@ def compact_task_resource(result: dict[str, Any], *, tool_surface_role: ToolSurf
         "status": result.get("status"),
         "title": task.get("title") or result.get("title"),
         "task_status": task.get("status"),
-        "task_framing_gaps": task_framing_gaps_from_context(result, state=state),
+        "task_framing_gaps": [] if is_done else task_framing_gaps_from_context(result, state=state),
         "latest_checkpoint": {
             "id": latest.get("id"),
             "stage": latest.get("stage"),

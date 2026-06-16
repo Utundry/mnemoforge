@@ -190,7 +190,7 @@ _TERMINAL_UNIFIED_STATUSES = {"done", "resolved", "completed", "closed", "cancel
 _LEGACY_CLOSEOUT_MARKERS = ("finish_task", "finished_by_mailbox", "record_work_result closeout")
 
 
-def _task_has_closeout_evidence(changes: list[dict]) -> bool:
+def task_has_closeout_evidence(changes: list[dict]) -> bool:
     for change in changes:
         tags = {str(tag or "").strip().lower() for tag in change.get("tags") or []}
         content = str(change.get("content") or "").casefold()
@@ -291,7 +291,7 @@ class UnifiedArtifactService:
                     task_id=str(linked_task["task_id"]),
                     limit=500,
                 )
-                linked_closeout_evidence = _task_has_closeout_evidence(linked_changes)
+                linked_closeout_evidence = task_has_closeout_evidence(linked_changes)
         except Exception as e:
             logger.warning(f"Failed to get linked task for improvement {improvement_id}: {e}")
         status = to_unified_status("improvement", row["status"])
@@ -360,7 +360,7 @@ class UnifiedArtifactService:
         status = to_unified_status("task", row["status"])
         if status == "open" and (
             str(linked_status or "").strip().lower() in _TERMINAL_UNIFIED_STATUSES
-            or _task_has_closeout_evidence(changes)
+            or task_has_closeout_evidence(changes)
         ):
             status = "done"
 

@@ -1368,6 +1368,27 @@ def test_task_compact_resource_includes_spec_driven_framing_gaps() -> None:
     assert "definition of done" in compact["task_framing_gaps"][0]["recommended_action"].casefold()
 
 
+def test_task_compact_resource_hides_framing_gaps_for_done_tasks() -> None:
+    compact = compact_resource_result(
+        "task",
+        {
+            "project": "sloplesscode",
+            "task_id": "task-1",
+            "status": "done",
+            "task": {"title": "Legacy completed task", "status": "done", "stored_status": "planning"},
+            "task_statement_quality": {
+                "capture_quality": "partial",
+                "missing_artifacts": ["definition_of_done"],
+            },
+        },
+        tool_surface_role=lambda _tool: "public_entrypoint",
+    )
+
+    assert compact["status"] == "done"
+    assert compact["task_status"] == "done"
+    assert "task_framing_gaps" not in compact
+
+
 def test_task_compact_resource_hides_framing_gaps_outside_planning_stage() -> None:
     compact = compact_resource_result(
         "task",

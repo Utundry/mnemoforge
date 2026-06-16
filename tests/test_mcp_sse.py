@@ -10024,6 +10024,69 @@ class TestMcpToolExecution:
         finally:
             lease_store.close()
 
+    async def test_pull_task_context_treats_legacy_closeout_evidence_as_done(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+
+        async def fake_get(api_base: str, path: str):
+            if path == "/project/tasks/task-closed/statement?project=alpha":
+                return {
+                    "task": {"task_id": "task-closed", "title": "Legacy closed task", "status": "planning"},
+                    "quality": {"capture_quality": "partial", "missing_artifacts": ["verification_result"]},
+                    "capture_review": {"pending_count": 0, "promoted_count": 0},
+                    "next_actions": [{"priority": "high", "action": "Capture missing definition of done.", "source_kind": "missing_context"}],
+                }
+            if path == "/project/tasks/task-closed/changes?project=alpha&limit=100":
+                return [
+                    {
+                        "id": "change-closeout",
+                        "timestamp": "2026-06-16T10:00:00Z",
+                        "tags": ["task_checkpoint", "task_stage:completed", "task_status:done"],
+                        "content": "\n".join(
+                            [
+                                "[task_checkpoint]",
+                                "Checkpoint stage: completed",
+                                "Checkpoint status: done",
+                                "Summary: Finished through the legacy closeout path.",
+                                "Changed files: app/routers/mcp_sse.py",
+                                "Verification: focused Docker test passed",
+                                "Reason: record_work_result closeout",
+                            ]
+                        ),
+                        "why": "record_work_result closeout",
+                    }
+                ]
+            raise AssertionError(path)
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            assert path == "/models/handoff/list"
+            return {"handoffs": []}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        try:
+            result = await mcp_sse._execute_tool(
+                "pull_task_context",
+                {"project": "alpha", "task_id": "task-closed", "agent_id": "codex"},
+                "http://test",
+            )
+            data = json.loads(result)
+
+            assert data["status"] == "done"
+            assert data["task"]["status"] == "done"
+            assert data["task"]["stored_status"] == "planning"
+            assert data["execution_readiness"]["status"] == "not_applicable"
+            assert data["execution_readiness"]["recommended_next_tool"] == "list_open_tasks"
+            assert data["recommended_first_tool"] == "list_open_tasks"
+            assert "Record a checkpoint with missing execution evidence" not in json.dumps(data)
+        finally:
+            lease_store.close()
+
     async def test_pull_task_context_returns_occupied_when_active_lease_exists(self, monkeypatch):
         from pathlib import Path
         from app.services import task_lease_service as lease_mod

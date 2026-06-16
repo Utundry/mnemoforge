@@ -67,6 +67,7 @@ from app.services.operational_instincts_service import (
 from app.services.mcp_tool_registry import get_tool_stage, observe_tool_use, record_tool_feedback, tool_feedback_expected
 from app.services.replay_completeness_service import build_replay_drill_decision, build_token_budget, evaluate_execution_readiness, evaluate_replay_completeness
 from app.services.route_pattern_store import get_route_pattern_store
+from app.services.unified_artifact_service import task_has_closeout_evidence
 from app.services.mcp_mailbox import mailbox_form_by_id
 from app.services.mcp_mailbox_actions import (
     MailboxActionDependencies,
@@ -7020,6 +7021,38 @@ def _project_pull_task_context_response(full_payload: dict[str, Any], *, detail:
     return compact
 
 
+def _apply_completed_task_context_overlay(payload: dict[str, Any], *, project: str, task_id: str) -> None:
+    task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+    stored_status = str(task.get("status") or "").strip()
+    if stored_status and stored_status != "done":
+        task["stored_status"] = stored_status
+    task["status"] = "done"
+    payload["task"] = task
+    payload["status"] = "done"
+    payload["completion_evidence"] = {
+        "source": "task_changes",
+        "reason": "legacy_closeout_evidence",
+    }
+    payload["next_safe_action"] = "This task has closeout evidence; select the next priority open task instead of continuing it."
+    payload["recommended_first_tool"] = "list_open_tasks"
+    payload["execution_readiness"] = {
+        "status": "not_applicable",
+        "reason": "Task context contains closeout evidence; execution-readiness gaps must not reopen completed work.",
+        "can_choose_next_action_without_user": True,
+        "recommended_next_tool": "list_open_tasks",
+        "recommended_next_action": payload["next_safe_action"],
+    }
+    payload["replay_drill"] = {
+        "status": "done",
+        "first_tool": "list_open_tasks",
+        "first_action": payload["next_safe_action"],
+        "tool_arguments": {"project": project},
+        "rationale": "Completed task context is read-only closeout evidence, not an active execution bundle.",
+        "blocking_missing": [],
+        "evidence_used": ["task_changes.closeout_evidence"],
+    }
+
+
 async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) -> dict[str, Any]:
     project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
     task_id = str(args.get("task_id") or "").strip()
@@ -7076,6 +7109,7 @@ async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) 
 
     statement = await _get(api_base, f"/project/tasks/{quote(task_id, safe='')}/statement?project={quote(project, safe='')}")
     changes = await _get(api_base, f"/project/tasks/{quote(task_id, safe='')}/changes?project={quote(project, safe='')}&limit=100")
+    has_closeout_evidence = task_has_closeout_evidence(changes or [])
     checkpoint_changes = [
         change for change in (changes or [])
         if "task_checkpoint" in {str(tag).strip() for tag in (change.get("tags") or [])}
@@ -7141,7 +7175,9 @@ async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) 
     payload["replay_completeness"] = evaluate_replay_completeness(payload)
     payload["execution_readiness"] = evaluate_execution_readiness(payload)
     payload["replay_drill"] = build_replay_drill_decision(payload)
-    if payload["replay_completeness"]["status"] == "incomplete":
+    if has_closeout_evidence:
+        _apply_completed_task_context_overlay(payload, project=project, task_id=task_id)
+    elif payload["replay_completeness"]["status"] == "incomplete":
         payload["recommended_first_tool"] = "record_task_checkpoint"
     elif payload["execution_readiness"]["status"] == "incomplete":
         payload["recommended_first_tool"] = "record_task_checkpoint"
