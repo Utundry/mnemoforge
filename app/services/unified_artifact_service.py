@@ -186,6 +186,26 @@ def _replace_task_status_tag(tags: list[str] | None, status: str) -> list[str]:
     return cleaned
 
 
+_TERMINAL_UNIFIED_STATUSES = {"done", "resolved", "completed", "closed", "cancelled", "archived"}
+_LEGACY_CLOSEOUT_MARKERS = ("finish_task", "finished_by_mailbox", "record_work_result closeout")
+
+
+def _task_has_closeout_evidence(changes: list[dict]) -> bool:
+    for change in changes:
+        tags = {str(tag or "").strip().lower() for tag in change.get("tags") or []}
+        content = str(change.get("content") or "").casefold()
+        why = str(change.get("why") or "").casefold()
+        source = str(change.get("source") or "").casefold()
+        if "task_status:done" in tags or "task_stage:completed" in tags:
+            return True
+        if "checkpoint status: done" in content or "checkpoint stage: completed" in content:
+            return True
+        closeout_text = " ".join((content, why, source))
+        if any(marker in closeout_text for marker in _LEGACY_CLOSEOUT_MARKERS):
+            return True
+    return False
+
+
 class UnifiedArtifactService:
     """Единый фасад для доступа к improvements и tasks."""
 
@@ -253,6 +273,7 @@ class UnifiedArtifactService:
         canonical_project = resolve_project_id(row["project"])
         linked_artifact_key = None
         linked_status = None
+        linked_closeout_evidence = False
         try:
             linked_task = None
             for lookup_project in project_lookup_ids(canonical_project):
@@ -265,8 +286,20 @@ class UnifiedArtifactService:
             if linked_task:
                 linked_artifact_key = f"task:{canonical_project}:{linked_task['task_id']}"
                 linked_status = to_unified_status("task", linked_task["status"])
+                linked_changes = self._tasks_store.list_changes(
+                    project=str(linked_task.get("project") or canonical_project),
+                    task_id=str(linked_task["task_id"]),
+                    limit=500,
+                )
+                linked_closeout_evidence = _task_has_closeout_evidence(linked_changes)
         except Exception as e:
             logger.warning(f"Failed to get linked task for improvement {improvement_id}: {e}")
+        status = to_unified_status("improvement", row["status"])
+        if status == "open" and (
+            str(linked_status or "").strip().lower() in _TERMINAL_UNIFIED_STATUSES
+            or linked_closeout_evidence
+        ):
+            status = "done"
 
         return UnifiedArtifactRecord(
             artifact_key=str(ArtifactKey(type="improvement", project=canonical_project, local_id=key.local_id)),
@@ -275,7 +308,7 @@ class UnifiedArtifactService:
             project=canonical_project,
             title=row["title"],
             description=row["description"],
-            status=to_unified_status("improvement", row["status"]),
+            status=status,
             agent_id=row["agent_id"],
             tags=row.get("tags") or [],
             created_at=datetime.fromtimestamp(row["created_at"], tz=timezone.utc),
@@ -311,6 +344,7 @@ class UnifiedArtifactService:
         # Получить связанный improvement, если есть
         stored_project = str(row.get("project") or canonical_project)
         summary = (await _task_capture_summary_map(stored_project, limit_hint=1)).get(key.local_id) or {}
+        changes = self._tasks_store.list_changes(project=stored_project, task_id=key.local_id, limit=500)
 
         linked_artifact_key = None
         linked_status = None
@@ -323,6 +357,12 @@ class UnifiedArtifactService:
                     linked_status = to_unified_status("improvement", linked_improvement["status"])
             except (ValueError, Exception) as e:
                 logger.warning(f"Failed to get linked improvement for task {key.local_id}: {e}")
+        status = to_unified_status("task", row["status"])
+        if status == "open" and (
+            str(linked_status or "").strip().lower() in _TERMINAL_UNIFIED_STATUSES
+            or _task_has_closeout_evidence(changes)
+        ):
+            status = "done"
 
         return UnifiedArtifactRecord(
             artifact_key=str(ArtifactKey(type="task", project=canonical_project, local_id=key.local_id)),
@@ -331,7 +371,7 @@ class UnifiedArtifactService:
             project=canonical_project,
             title=row["title"],
             description=row["description"],
-            status=to_unified_status("task", row["status"]),
+            status=status,
             agent_id=row["agent_id"],
             tags=row.get("tags") or [],
             created_at=datetime.fromtimestamp(row["created_at"], tz=timezone.utc),

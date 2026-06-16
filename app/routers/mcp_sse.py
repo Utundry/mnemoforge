@@ -1961,6 +1961,7 @@ def _prepare_open_work_items(data: dict[str, Any], *, limit: int) -> dict[str, A
     if not isinstance(items, list):
         return data
 
+    terminal_statuses = {"done", "resolved", "completed", "closed", "cancelled", "archived"}
     improvement_keys = {
         str(item.get("artifact_key") or "").strip()
         for item in items
@@ -1968,11 +1969,17 @@ def _prepare_open_work_items(data: dict[str, Any], *, limit: int) -> dict[str, A
     }
     visible: list[dict[str, Any]] = []
     suppressed_projection_count = 0
+    suppressed_completed_count = 0
     for raw_item in items:
         if not isinstance(raw_item, dict):
             continue
         item = dict(raw_item)
         item_type = str(item.get("type") or "").strip() or _artifact_type_from_key(item.get("artifact_key"))
+        item_status = str(item.get("status") or "").strip().lower()
+        linked_status = str(item.get("linked_status") or "").strip().lower()
+        if item_status in terminal_statuses or linked_status in terminal_statuses:
+            suppressed_completed_count += 1
+            continue
         is_projection = (
             item_type == "task"
             and str(item.get("source") or "").strip() == "improvement"
@@ -2003,6 +2010,8 @@ def _prepare_open_work_items(data: dict[str, Any], *, limit: int) -> dict[str, A
     enriched["priority_policy"] = "Unified cross-type priority with lifecycle-specific next actions."
     if suppressed_projection_count:
         enriched["suppressed_projection_count"] = suppressed_projection_count
+    if suppressed_completed_count:
+        enriched["suppressed_completed_count"] = suppressed_completed_count
     return enriched
 
 

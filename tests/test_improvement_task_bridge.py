@@ -121,6 +121,67 @@ async def test_improvement_review_sets_stage_and_verdict(client_with_fake_queue_
 
 
 @pytest.mark.asyncio
+async def test_open_artifacts_treat_legacy_closeout_checkpoint_as_done(
+    client_with_fake_queue_and_tasks,
+) -> None:
+    client, _ = client_with_fake_queue_and_tasks
+
+    create = await client.post(
+        "/api/v1/improvements",
+        json={
+            "title": "Legacy closeout projection",
+            "description": "Open list should not return work with closeout evidence.",
+            "project": "proj-knowledge",
+            "agent_id": "codex",
+            "importance_score": 0.9,
+            "tags": ["mcp"],
+        },
+    )
+    assert create.status_code == 201, create.text
+    improvement_id = create.json()["id"]
+
+    closeout = await client.post(
+        f"/api/v1/project/tasks/{improvement_id}/changes",
+        json={
+            "project": "proj-knowledge",
+            "change_type": "note",
+            "content": "\n".join(
+                [
+                    "[task_checkpoint]",
+                    "Checkpoint stage: in_progress",
+                    "Checkpoint status: active",
+                    "Summary: Implementation completed through the legacy closeout path.",
+                    "Changed files: app/example.py",
+                    "Verification: focused tests passed",
+                    "Reason: record_work_result closeout",
+                ]
+            ),
+            "why": "record_work_result closeout",
+            "agent_id": "codex",
+            "source": "project_work",
+            "tags": [
+                "task_checkpoint",
+                "task_stage:in_progress",
+                "task_status:active",
+            ],
+        },
+    )
+    assert closeout.status_code == 201, closeout.text
+
+    task_artifact = await client.get(f"/api/v1/artifacts/task:proj-knowledge:{improvement_id}")
+    assert task_artifact.status_code == 200, task_artifact.text
+    assert task_artifact.json()["status"] == "done"
+
+    improvement_artifact = await client.get(f"/api/v1/artifacts/improvement:proj-knowledge:{improvement_id}")
+    assert improvement_artifact.status_code == 200, improvement_artifact.text
+    assert improvement_artifact.json()["status"] == "done"
+
+    open_artifacts = await client.get("/api/v1/artifacts?project=proj-knowledge&status=open&type=improvement")
+    assert open_artifacts.status_code == 200, open_artifacts.text
+    assert all(item["id"] != improvement_id for item in open_artifacts.json()["items"])
+
+
+@pytest.mark.asyncio
 async def test_improvement_create_accepts_one_to_ten_importance_shorthand(
     client_with_fake_queue_and_tasks,
 ) -> None:

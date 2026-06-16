@@ -8206,6 +8206,72 @@ class TestMcpToolExecution:
         assert "type=improvement" in result
         assert "Raw memory must become visible governed work." in result
 
+    async def test_list_open_tasks_suppresses_completed_linked_work_items(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            assert path == "/artifacts?project=alpha&status=open&limit=100"
+            return {
+                "items": [
+                    {
+                        "artifact_key": "improvement:alpha:imp-done",
+                        "type": "improvement",
+                        "id": "imp-done",
+                        "title": "Stale linked improvement",
+                        "description": "Linked task already finished.",
+                        "status": "open",
+                        "linked_artifact_key": "task:alpha:imp-done",
+                        "linked_status": "done",
+                    },
+                    {
+                        "artifact_key": "improvement:alpha:imp-open",
+                        "type": "improvement",
+                        "id": "imp-open",
+                        "title": "Still open improvement",
+                        "description": "This item remains available.",
+                        "status": "open",
+                    },
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool("list_open_tasks", {"project": "alpha", "limit": 5}, "http://test")
+
+        assert "Available open work items: 1" in result
+        assert "Still open improvement" in result
+        assert "Stale linked improvement" not in result
+
+    async def test_list_open_tasks_suppresses_terminal_status_leaks(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            assert path == "/artifacts?project=alpha&status=open&limit=100"
+            return {
+                "items": [
+                    {
+                        "artifact_key": "task:alpha:task-done",
+                        "type": "task",
+                        "task_id": "task-done",
+                        "title": "Stale done task",
+                        "status": "done",
+                    },
+                    {
+                        "artifact_key": "task:alpha:task-open",
+                        "type": "task",
+                        "task_id": "task-open",
+                        "title": "Open task",
+                        "status": "open",
+                    },
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool("list_open_tasks", {"project": "alpha", "limit": 5}, "http://test")
+
+        assert "Available open tasks: 1" in result
+        assert "Open task" in result
+        assert "Stale done task" not in result
+
     async def test_list_open_tasks_tool_url_encodes_datetime_filters(self, monkeypatch):
         seen: dict[str, str] = {}
 
