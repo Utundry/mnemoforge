@@ -18,6 +18,8 @@ PROJECT_RULES_ROUTE_CATALOG: tuple[dict[str, Any], ...] = tuple(
     for route in load_route_catalog_spec("project_rules").routes
 )
 
+LAW_TARGET_STATUSES = {"proposed", "user_confirmed", "active"}
+
 
 def project_rules_route(
     args: dict[str, Any],
@@ -44,7 +46,11 @@ def project_rules_route(
         selected_catalog_route = next(item for item in PROJECT_RULES_ROUTE_CATALOG if item["intent_type"] == "review_candidates")
     confidence = float((llm_decision or {}).get("confidence") or selected_catalog_route.get("confidence") or 0.65)
     payload_args = _payload_args_for_route(args, selected_catalog_route, llm_decision)
-    payload = _payload_for_intent(payload_args, str(selected_catalog_route["intent_type"]))
+    payload = _payload_for_intent(
+        payload_args,
+        str(selected_catalog_route["intent_type"]),
+        tool=str(selected_catalog_route["tool"]),
+    )
     return {
         "tool": selected_catalog_route["tool"],
         "intent_type": selected_catalog_route["intent_type"],
@@ -89,12 +95,29 @@ def _structural_route(args: dict[str, Any]) -> dict[str, Any] | None:
     intent = str(args.get("intent") or "").casefold()
     has_law_shape = bool(str(args.get("title") or "").strip() and str(args.get("statement") or "").strip())
     proposal_terms = ("propose", "proposal", "new law", "create law", "create rule", "this is a rule", "save this as")
-    if has_law_shape and any(term in intent for term in proposal_terms):
-        return next(item for item in PROJECT_RULES_ROUTE_CATALOG if item["intent_type"] == "propose_law")
+    flexible_create_terms = ("create", "add", "save")
+    mentions_governance_item = "law" in intent or "rule" in intent
+    if has_law_shape and (
+        any(term in intent for term in proposal_terms)
+        or (mentions_governance_item and any(term in intent for term in flexible_create_terms))
+    ):
+        route = next(item for item in PROJECT_RULES_ROUTE_CATALOG if item["intent_type"] == "propose_law")
+        if _explicit_law_target_status(args):
+            return {
+                **route,
+                "tool": "create_project_law",
+                "reason": "Explicit law target status maps directly to project law creation.",
+            }
+        return route
     return None
 
 
-def _payload_for_intent(args: dict[str, Any], intent_type: str) -> dict[str, Any]:
+def _explicit_law_target_status(args: dict[str, Any]) -> str:
+    status = str(args.get("target_status") or args.get("status") or "").strip()
+    return status if status in LAW_TARGET_STATUSES else ""
+
+
+def _payload_for_intent(args: dict[str, Any], intent_type: str, *, tool: str = "") -> dict[str, Any]:
     intent = str(args.get("intent") or "").strip()
     lowered_intent = intent.casefold()
     project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
@@ -123,6 +146,22 @@ def _payload_for_intent(args: dict[str, Any], intent_type: str) -> dict[str, Any
             "limit": min(limit, 200),
         }
     if intent_type == "propose_law":
+        law_status = _explicit_law_target_status(args)
+        if tool == "create_project_law" or law_status:
+            return {
+                "project": project,
+                "title": args.get("title"),
+                "statement": args.get("statement") or intent,
+                "rationale": args.get("rationale") or "",
+                "evidence": args.get("evidence") or args.get("evidence_refs") or [],
+                "target_scope": args.get("target_scope") or "project",
+                "status": law_status or "proposed",
+                "confirmed_by": args.get("confirmed_by"),
+                "confirmation_source": args.get("confirmation_source") or "mcp_project_rules",
+                "acted_by": str(args.get("acted_by") or args.get("agent_id") or "codex").strip() or "codex",
+                "tags": args.get("tags") or ["project_rules"],
+                "topic_path": args.get("topic_path"),
+            }
         return {
             "project": project,
             "title": args.get("title"),

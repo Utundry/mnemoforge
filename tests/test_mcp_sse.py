@@ -1731,6 +1731,40 @@ class TestMcpToolExecution:
         assert data["receipt"]["status"] == "needs_input"
         assert data["receipt"]["missing_fields"] == ["confirmed_by"]
 
+    async def test_mailbox_submit_create_law_preserves_explicit_user_confirmed_status(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "law-confirmed-1", "status": payload["status"], **payload}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "create_law",
+                "payload": {
+                    "project": "alpha",
+                    "title": "Explicit status",
+                    "statement": "Explicit confirmed law status must be preserved.",
+                    "status": "user_confirmed",
+                    "confirmed_by": "user",
+                    "confirmation_source": "operator_approval",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert posted[0][0] == "/laws"
+        assert posted[0][1]["status"] == "user_confirmed"
+        assert posted[0][1]["confirmed_by"] == "user"
+        assert posted[0][1]["confirmation_source"] == "operator_approval"
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["artifact_key"] == "law:alpha:law-confirmed-1"
+
     async def test_mailbox_submit_close_task_archives_without_completion(self, monkeypatch):
         calls: list[tuple[str, str, dict | None]] = []
 
@@ -6249,6 +6283,96 @@ class TestMcpToolExecution:
         assert result["agent_action"]["recommended_next_call"]["arguments"]["allow_mutation"] is True
         assert "memory_store" in result["agent_action"]["do_not_call"]
         assert "memory_store" in result["next_safe_action"]
+
+    async def test_project_rules_plans_explicit_proposed_law_without_candidate_status_loss(self, monkeypatch):
+        async def forbidden_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            raise AssertionError("mutating route should not execute without allow_mutation")
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", forbidden_execute)
+        result = await mcp_sse._build_project_rules_payload(
+            "http://test",
+            {
+                "project": "ui_avt",
+                "intent": "create proposed project law",
+                "target_scope": "project",
+                "target_status": "proposed",
+                "title": "Rules Are Data",
+                "statement": "Project rules must remain project-scoped data.",
+                "rationale": "Avoid hardcoded project policy.",
+            },
+        )
+
+        assert result["status"] == "planned"
+        assert result["action_status"] == "needs_confirmation"
+        assert result["selected_route"]["tool"] == "create_project_law"
+        assert result["submit_payload"]["project"] == "ui_avt"
+        assert result["submit_payload"]["status"] == "proposed"
+        assert "target_status" not in result["submit_payload"]
+        assert result["agent_action"]["recommended_next_call"]["arguments"]["allow_mutation"] is True
+
+    async def test_project_rules_executes_explicit_user_confirmed_law_with_confirmation(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "law-1", **payload}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "project_rules",
+            {
+                "project": "alpha",
+                "intent": "create proposed project law",
+                "target_scope": "project",
+                "target_status": "user_confirmed",
+                "title": "Confirmed Rule",
+                "statement": "Confirmed project rules must preserve their target status.",
+                "confirmed_by": "user",
+                "confirmation_source": "operator_approval",
+                "allow_mutation": True,
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["status"] == "executed"
+        assert data["selected_route"]["tool"] == "create_project_law"
+        assert posted[0][0] == "/laws"
+        assert posted[0][1]["status"] == "user_confirmed"
+        assert posted[0][1]["confirmed_by"] == "user"
+        assert posted[0][1]["confirmation_source"] == "operator_approval"
+        assert data["result"]["status"] == "user_confirmed"
+
+    async def test_project_rules_executes_explicit_active_law_with_confirmation(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "law-active-1", **payload}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "project_rules",
+            {
+                "project": "alpha",
+                "intent": "create active project law",
+                "target_scope": "project",
+                "target_status": "active",
+                "title": "Active Rule",
+                "statement": "Active project rules must preserve their target status.",
+                "confirmed_by": "user",
+                "allow_mutation": True,
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["status"] == "executed"
+        assert data["selected_route"]["tool"] == "create_project_law"
+        assert posted[0][0] == "/laws"
+        assert posted[0][1]["status"] == "active"
+        assert posted[0][1]["confirmed_by"] == "user"
+        assert data["result"]["status"] == "active"
 
     async def test_project_rules_structural_law_proposal_beats_stale_learned_route(self, monkeypatch):
         disabled: list[tuple[str, str]] = []
