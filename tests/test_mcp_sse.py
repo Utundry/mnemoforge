@@ -5611,35 +5611,67 @@ class TestMcpToolExecution:
 
         data = json.loads(result)
         assert data["status"] == "planned"
-        assert data["selected_route"]["tool"] == "record_work_result"
+        assert data["selected_route"]["tool"] == "mailbox_submit"
         assert data["selected_route"]["intent_type"] == "create_task"
         assert data["selected_route"]["route_candidates"][0]["intent_type"] == "create_task"
         assert data["selected_route"]["scorer"]["backend_used"] == "lexical"
-        assert data["submit_payload"]["create_issue_if_unmatched"] is True
-        assert data["submit_payload"]["skip_auto_task_match"] is True
-        assert data["submit_payload"]["task_id"] == ""
+        assert data["submit_payload"]["form_id"] == "create_improvement"
+        assert data["submit_payload"]["payload"]["title"] == "Profile note gamma three."
+        assert data["submit_payload"]["payload"]["summary"] == "Profile note gamma three."
         assert data["action_status"] == "needs_confirmation"
         assert data["weak_model_guardrail"]["mutation_executed"] is False
         assert data["weak_model_guardrail"]["confirmation_required"] is True
         assert data["weak_model_guardrail"]["do_not_claim_created"] is True
         assert "No task" in data["weak_model_guardrail"]["plain_instruction"]
 
+    async def test_project_work_create_task_preserves_explicit_title_from_text(self):
+        result = await mcp_sse._execute_tool(
+            "project_work",
+            {
+                "project": "alpha",
+                "intent": (
+                    "Create a full project task, not an improvement: title 'Adaptive MCP response informativeness'. "
+                    "Description: compact responses must preserve useful IDs."
+                ),
+                "summary": "Compact responses must preserve useful IDs.",
+                "scorer_backend": "lexical",
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["status"] == "planned"
+        assert data["selected_route"]["intent_type"] == "create_task"
+        assert data["selected_route"]["tool"] == "mailbox_submit"
+        assert data["submit_payload"]["payload"]["title"] == "Adaptive MCP response informativeness"
+        assert data["submit_payload"]["payload"]["summary"] == "Compact responses must preserve useful IDs."
+
     async def test_project_work_allow_mutation_executes_create_task_without_existing_task_claim(self, monkeypatch):
-        calls: list[tuple[str, dict]] = []
+        calls: list[tuple[dict, dict]] = []
 
-        async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
-            calls.append((name, args))
-            assert name == "record_work_result"
-            assert args["task_id"] == ""
-            assert args["create_issue_if_unmatched"] is True
-            assert args["skip_auto_task_match"] is True
-            return json.dumps({
-                "status": "recorded",
-                "route": ["memory", "improvement"],
-                "created_issue": {"id": "issue-1", "status": "open"},
-            })
+        async def fake_mailbox_submit(*, args: dict, payload: dict, api_base: str, session_id: str | None = None):
+            calls.append((args, payload))
+            assert args["form_id"] == "create_improvement"
+            assert payload["title"] == "Memory attribution"
+            return {
+                "state": "planning",
+                "project": "alpha",
+                "receipt": {
+                    "status": "accepted",
+                    "form_id": "create_improvement",
+                    "id": "issue-1",
+                    "artifact_key": "improvement:alpha:issue-1",
+                    "task_id": "issue-1",
+                    "linked_artifact_key": "task:alpha:issue-1",
+                    "task_status": "planning",
+                    "lifecycle_stage": "proposal",
+                    "implementation_ready": False,
+                    "claim_allowed": False,
+                    "framing_required": True,
+                },
+            }
 
-        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute_tool)
+        monkeypatch.setattr(mcp_sse, "_build_mailbox_submit_packet", fake_mailbox_submit)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
 
         data = await mcp_sse._build_project_work_payload(
@@ -5647,6 +5679,7 @@ class TestMcpToolExecution:
             {
                 "project": "alpha",
                 "intent": "create improvement task for memory attribution",
+                "title": "Memory attribution",
                 "summary": "Create a governed backlog item for memory attribution.",
                 "allow_mutation": True,
                 "scorer_backend": "lexical",
@@ -5656,7 +5689,9 @@ class TestMcpToolExecution:
         assert data["status"] == "executed"
         assert data["action_status"] == "executed"
         assert data["executed"] is True
-        assert data["result"]["created_issue"]["id"] == "issue-1"
+        assert data["result"]["receipt"]["id"] == "issue-1"
+        assert data["compact_result"]["task_id"] == "issue-1"
+        assert data["compact_result"]["implementation_ready"] is False
         assert calls
 
     async def test_project_work_routes_localized_new_task_creation_via_learned_pattern(self, monkeypatch):
@@ -5687,10 +5722,10 @@ class TestMcpToolExecution:
 
         data = json.loads(result)
         assert data["selected_route"]["intent_type"] == "create_task"
-        assert data["selected_route"]["tool"] == "record_work_result"
+        assert data["selected_route"]["tool"] == "mailbox_submit"
         assert data["selected_route"]["scorer"]["backend_used"] == "learned_semantic"
-        assert data["submit_payload"]["create_issue_if_unmatched"] is True
-        assert data["submit_payload"]["skip_auto_task_match"] is True
+        assert data["submit_payload"]["form_id"] == "create_improvement"
+        assert data["submit_payload"]["payload"]["title"] == "Profile note gamma three."
 
     async def test_project_work_guarded_create_task_answer_is_hard_to_misread(self):
         text = await mcp_sse._execute_tool(

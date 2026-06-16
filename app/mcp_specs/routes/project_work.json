@@ -104,7 +104,7 @@
     },
     {
       "intent_type": "create_task",
-      "tool": "record_work_result",
+      "tool": "mailbox_submit",
       "family": "project_knowledge",
       "mutating": true,
       "examples": [
@@ -116,7 +116,7 @@
         "formulate this task",
         "capture this as future work"
       ],
-      "reason": "Explicit new-task/improvement creation intent maps to record_work_result with auto task matching disabled so the new backlog item is not silently attached to current work."
+      "reason": "Explicit new-task/improvement creation intent maps to the governed create_improvement mailbox form so new work starts as an embryo/improvement with a linked planning task and canonical IDs in the receipt."
     },
     {
       "intent_type": "verify_or_live_validate",

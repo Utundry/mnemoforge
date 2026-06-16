@@ -257,22 +257,27 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
         }
     elif route["intent_type"] == "create_task":
         summary = str(args.get("summary") or args.get("raw_notes") or intent).strip()
+        explicit_title_source = str(args.get("title") or "").strip()
+        if not explicit_title_source and re.search(r"\btitle\s*[:=]?\s*['\"]", intent, flags=re.IGNORECASE):
+            explicit_title_source = intent
+        title = _title_from_text(
+            explicit_title_source or summary or intent,
+            fallback="New project improvement",
+        )
+        next_step = str(args.get("next_step") or "").strip() or "Review and complete task framing before implementation."
+        route["tool"] = "mailbox_submit"
         route["payload"] = {
+            "form_id": "create_improvement",
+            "state": "planning",
             "project": project,
-            "task_id": "",
-            "artifact_key": "",
-            "title": _title_from_text(summary or intent, fallback="New project improvement"),
-            "summary": summary or "Create a new project improvement task.",
-            "changed_files": changed_files,
-            "verification": verification,
-            "stage": "planning",
-            "checkpoint_mode": "lightweight",
-            "next_step_scope": "follow_up_task",
-            "create_issue_if_unmatched": True,
-            "skip_auto_task_match": True,
-            "acted_by": str(args.get("acted_by") or "codex").strip() or "codex",
-            "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
-            "source": "project_work:create_task",
+            "payload": {
+                "project": project,
+                "title": title,
+                "summary": summary or title,
+                "next_step": next_step,
+                "evidence_refs": [*changed_files, *verification],
+                "importance_score": float(args.get("importance_score") or 0.7),
+            },
         }
     elif route["intent_type"] == "verify_or_live_validate":
         tokens = _route_tokens(text)
@@ -475,6 +480,13 @@ def _title_from_text(text: str, *, fallback: str) -> str:
     clean = re.sub(r"\s+", " ", str(text or "").strip())
     if not clean:
         return fallback
+    explicit = re.search(
+        r"\btitle\s*[:=]?\s*['\"]([^'\"]{1,200})['\"]",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    if explicit:
+        return explicit.group(1).strip()[:96] or fallback
     clean = re.sub(r"^(create|save|record|add|formulate|capture)\s+", "", clean, flags=re.IGNORECASE).strip(" :-")
     return (clean or fallback)[:96]
 

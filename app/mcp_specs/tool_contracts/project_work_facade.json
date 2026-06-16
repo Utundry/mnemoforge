@@ -19,8 +19,21 @@
             "enum": ["planning", "implementation", "verification", "live_validation", "documentation", "checkpointing", "handoff", "operator_review"],
             "description": "Optional current task state used for routing evidence"
           },
+          "title": {
+            "type": "string",
+            "description": "Explicit title for create/save improvement-task routes. Preferred over deriving a title from intent or summary."
+          },
           "summary": {"type": "string", "description": "Optional work summary for checkpoint/closeout routes"},
           "raw_notes": {"type": "string", "description": "Optional raw notes for capture/checkpoint routes"},
+          "next_step": {
+            "type": "string",
+            "description": "Next safe action for create/save improvement-task routes; defaults to task-framing review before implementation."
+          },
+          "importance_score": {
+            "type": "number",
+            "default": 0.7,
+            "description": "Importance for created improvements, using the normal 0..1 project scale."
+          },
           "draft_id": {"type": "string", "description": "Checkpoint draft id for approve/reject draft routes"},
           "version": {"type": "integer", "description": "Checkpoint draft version for approve/reject draft routes"},
           "reason": {"type": "string", "description": "Optional reason for mutating lifecycle routes"},

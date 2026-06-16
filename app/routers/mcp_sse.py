@@ -2319,6 +2319,22 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
             "work_session_id": (result.get("work_session") or {}).get("work_id"),
             "auto_heartbeat": result.get("auto_heartbeat"),
         }
+    if route.get("tool") == "mailbox_submit" and isinstance(result, dict):
+        receipt = result.get("receipt") if isinstance(result.get("receipt"), dict) else {}
+        return {
+            "status": receipt.get("status"),
+            "form_id": receipt.get("form_id"),
+            "improvement_id": receipt.get("id"),
+            "artifact_key": receipt.get("artifact_key"),
+            "task_id": receipt.get("task_id"),
+            "linked_artifact_key": receipt.get("linked_artifact_key"),
+            "task_status": receipt.get("task_status"),
+            "lifecycle_stage": receipt.get("lifecycle_stage"),
+            "implementation_ready": receipt.get("implementation_ready"),
+            "claim_allowed": receipt.get("claim_allowed"),
+            "framing_required": receipt.get("framing_required"),
+            "next_safe_action": receipt.get("next_safe_action") or result.get("next_safe_action"),
+        }
     return result
 
 
@@ -2609,6 +2625,9 @@ def _first_route_diagnostic_task_id(result: Any, *, preferred_task_id: str = "")
     if isinstance(result, dict):
         if result.get("task_id"):
             return str(result["task_id"])
+        receipt = result.get("receipt")
+        if isinstance(receipt, dict) and receipt.get("task_id"):
+            return str(receipt["task_id"])
         items = result.get("items")
         if isinstance(items, list) and items:
             preferred = str(preferred_task_id or "").strip().casefold()
@@ -2626,6 +2645,9 @@ def _first_route_result_item(result: Any, *, preferred_task_id: str = "") -> dic
     if isinstance(result, dict):
         if any(key in result for key in ("task_id", "title", "status", "artifact_key")):
             return result
+        receipt = result.get("receipt")
+        if isinstance(receipt, dict) and any(key in receipt for key in ("task_id", "title", "status", "artifact_key")):
+            return receipt
         items = result.get("items")
         if isinstance(items, list) and items and isinstance(items[0], dict):
             preferred = str(preferred_task_id or "").strip().casefold()
@@ -3811,6 +3833,8 @@ def _project_work_action_card(
     do_not_call = []
     if route.get("tool") in {"record_work_result", "record_task_checkpoint"} and not executed:
         do_not_call = ["record_task_checkpoint", "record_work_result"]
+    elif route.get("tool") == "mailbox_submit" and not executed:
+        do_not_call = ["mailbox_submit", "submit"]
     elif route.get("tool") == "project_rules":
         do_not_call = ["promote_rule_candidate", "revise_law_from_rule_candidate"]
 
@@ -4286,6 +4310,16 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
             result = json.loads(result_text)
         except Exception:
             result = result_text
+        executed = True
+    elif route["tool"] == "mailbox_submit":
+        submit_args = dict(route["payload"])
+        submit_payload = dict(submit_args.get("payload")) if isinstance(submit_args.get("payload"), dict) else {}
+        result = await _build_mailbox_submit_packet(
+            args=submit_args,
+            payload=submit_payload,
+            api_base=api_base,
+            session_id=session_id,
+        )
         executed = True
     elif route["tool"] == "project_rules":
         result_text = await _execute_tool("project_rules", route["payload"], api_base)
