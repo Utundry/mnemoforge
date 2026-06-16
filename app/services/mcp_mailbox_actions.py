@@ -583,6 +583,12 @@ async def mailbox_start_task(
             isinstance(task, dict)
             and task.get("linked_improvement_id")
             and bool(task.get("task_statement_incomplete"))
+            and not await _task_has_prior_claim_or_progress(
+                api_base=api_base,
+                project=project,
+                task_id=str(payload["task_id"]),
+                dependencies=dependencies,
+            )
             and not (
                 (explicit_framing and approval_intent == "user_approved_start")
                 or autonomous_mode.get("authority_granted")
@@ -699,6 +705,46 @@ async def mailbox_start_task(
     if diagnostic:
         packet["_internal"] = {"visibility": "internal", "actual_metadata": actual_metadata, "postcondition_health": health}
     return packet
+
+
+async def _task_has_prior_claim_or_progress(
+    *,
+    api_base: str,
+    project: str,
+    task_id: str,
+    dependencies: MailboxActionDependencies,
+) -> bool:
+    if dependencies.get is None:
+        return False
+    try:
+        changes = await dependencies.get(
+            api_base,
+            f"/project/tasks/{quote(task_id, safe='')}/changes?project={quote(project, safe='')}&limit=100",
+        )
+    except Exception:
+        return False
+    if not isinstance(changes, list):
+        return False
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        tags = {str(tag or "").strip().casefold() for tag in (change.get("tags") or [])}
+        content = str(change.get("content") or "").casefold()
+        reason = str(change.get("reason") or change.get("why") or "").casefold()
+        source = str(change.get("source") or "").casefold()
+        haystack = " ".join((content, reason, source))
+        if "task_checkpoint" not in tags and "[task_checkpoint]" not in haystack:
+            continue
+        if (
+            "start_task_session" in haystack
+            or "mailbox_submit.start_task" in haystack
+            or "task claimed" in haystack
+            or "work session started" in haystack
+            or "task_stage:in_progress" in tags
+            or "checkpoint stage: in_progress" in haystack
+        ):
+            return True
+    return False
 
 
 async def mailbox_release_task_claim(
