@@ -1429,6 +1429,7 @@ def mailbox_route_hygiene(
     limit = max(1, min(int(payload.get("limit") or 50), 200))
     stale_after_days = max(1, min(int(payload.get("stale_after_days") or 30), 365))
     report = get_route_pattern_store().hygiene_report(
+        facade=facade,
         known_tools=_known_route_tools(),
         limit=limit,
         stale_after_days=stale_after_days,

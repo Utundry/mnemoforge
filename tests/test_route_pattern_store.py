@@ -229,3 +229,100 @@ def test_route_pattern_store_hygiene_report_flags_unknown_tools(tmp_path):
     assert "unknown_tool" in finding_types
     assert "negative_feedback" in finding_types
     assert report["summary"]["active_patterns"] == 1
+
+
+def test_route_pattern_store_hygiene_report_flags_unsafe_active_patterns(tmp_path):
+    store = RoutePatternStore(tmp_path / "route_patterns.db")
+
+    low_confidence_id = store.record(
+        facade="project_work",
+        pattern="weakly inferred next work phrase",
+        intent_type="next_priority",
+        tool="list_open_tasks",
+        confidence=0.1,
+        source="operator_feedback",
+    )
+    stale_id = store.record(
+        facade="project_context",
+        pattern="old fuzzy artifact lookup",
+        intent_type="artifact_lookup",
+        tool="list_artifacts",
+        confidence=0.4,
+        source="llm",
+    )
+    contaminated_id = store.record(
+        facade="ask_project",
+        pattern="operator approved diagnostic misroute phrase",
+        intent_type="project_work",
+        tool="project_work",
+        confidence=0.8,
+        source="llm",
+        metadata={"allow_learning": True, "diagnostic": True},
+    )
+    mismatch_id = store.record(
+        facade="project_work",
+        pattern="create task through old route",
+        intent_type="create_task",
+        tool="record_work_result",
+        confidence=0.8,
+        source="operator_feedback",
+    )
+    weak_provenance_id = store.record(
+        facade="project_verify",
+        pattern="maybe restart check maybe tests",
+        intent_type="verify_or_live_validate",
+        tool="get_task_execution_context",
+        confidence=0.8,
+        source="llm",
+    )
+
+    old_timestamp = 1.0
+    with store._lock:
+        store._conn.execute(
+            "UPDATE route_patterns SET updated_at = ?, created_at = ? WHERE id = ?",
+            (old_timestamp, old_timestamp, stale_id),
+        )
+        store._conn.commit()
+
+    report = store.hygiene_report(
+        known_tools={"list_open_tasks", "list_artifacts", "project_work", "record_work_result", "get_task_execution_context"},
+        limit=50,
+    )
+    findings_by_type = {item["type"]: item for item in report["findings"]}
+
+    assert findings_by_type["very_low_confidence_pattern"]["pattern_id"] == low_confidence_id
+    assert findings_by_type["no_hit_low_evidence_pattern"]["pattern_id"] == stale_id
+    assert findings_by_type["diagnostic_or_meta_contamination"]["pattern_id"] == contaminated_id
+    assert findings_by_type["route_tool_mismatch"]["pattern_id"] == mismatch_id
+    assert findings_by_type["route_tool_mismatch"]["expected_tool"] == "mailbox_submit"
+    assert any(
+        item["type"] == "weak_learning_provenance" and item["pattern_id"] == weak_provenance_id
+        for item in report["findings"]
+    )
+
+
+def test_route_pattern_store_hygiene_report_summarizes_finding_types_and_safe_dispositions(tmp_path):
+    store = RoutePatternStore(tmp_path / "route_patterns.db")
+    store.record(
+        facade="project_work",
+        pattern="low confidence route fixture",
+        intent_type="next_priority",
+        tool="list_open_tasks",
+        confidence=0.05,
+        source="operator_feedback",
+    )
+    store.record(
+        facade="project_context",
+        pattern="diagnostic route_hygiene fixture",
+        intent_type="artifact_lookup",
+        tool="list_artifacts",
+        confidence=0.8,
+        metadata={"allow_learning": True},
+    )
+
+    report = store.hygiene_report(known_tools={"list_open_tasks", "list_artifacts"}, limit=20)
+
+    assert report["summary"]["finding_types"]["very_low_confidence_pattern"] == 1
+    assert report["summary"]["finding_types"]["diagnostic_or_meta_contamination"] == 1
+    assert {item["disposition"] for item in report["findings"]} <= {"observe", "request-feedback", "quarantine", "disable"}
+    assert all("recommended_action" in item for item in report["findings"])

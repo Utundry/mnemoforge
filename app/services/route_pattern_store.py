@@ -11,8 +11,21 @@ from typing import Any
 
 from app.services.learning_eligibility_service import evaluate_learning_eligibility
 from app.services.system_data_root import data_path
+from app.services.mcp_workflow_specs import load_route_catalog_spec
 
 _DB_PATH = data_path("route_patterns.db")
+_VERY_LOW_CONFIDENCE_THRESHOLD = 0.2
+_NO_HIT_LOW_EVIDENCE_CONFIDENCE_THRESHOLD = 0.55
+_NO_HIT_LOW_EVIDENCE_PROBATION_DAYS = 3
+_DIAGNOSTIC_META_MARKERS = (
+    "diagnostic",
+    "route_hygiene",
+    "misroute",
+    "misclassification",
+    "failed_route",
+    "problem_report",
+    "hygiene_review",
+)
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS route_patterns (
@@ -149,6 +162,71 @@ def _row_to_pattern(row: sqlite3.Row) -> dict[str, Any]:
         "updated_at": float(row["updated_at"] or 0.0),
         "metadata": metadata,
     }
+
+
+def _finding(
+    *,
+    type: str,
+    severity: str,
+    item: dict[str, Any],
+    reason: str,
+    recommended_action: str,
+    disposition: str,
+    **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "type": type,
+        "severity": severity,
+        "pattern_id": item["pattern_id"],
+        "facade": item["facade"],
+        "tool": item.get("tool"),
+        "intent_type": item.get("intent_type"),
+        "reason": reason,
+        "recommended_action": recommended_action,
+        "disposition": disposition,
+        **{key: value for key, value in extra.items() if value not in (None, "", [])},
+    }
+
+
+def _finding_type_counts(findings: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for finding in findings:
+        type_name = str(finding.get("type") or "").strip()
+        if not type_name:
+            continue
+        counts[type_name] = counts.get(type_name, 0) + 1
+    return counts
+
+
+def _catalog_tool_for_intent(facade: str, intent_type: str) -> str:
+    try:
+        catalog = load_route_catalog_spec(str(facade or "").strip())
+    except Exception:
+        return ""
+    intent = str(intent_type or "").strip()
+    for route in catalog.routes:
+        if route.intent_type == intent:
+            return str(route.tool or "").strip()
+    return ""
+
+
+def _metadata_contains_marker(metadata: dict[str, Any], pattern: str) -> str:
+    haystack = " ".join([str(pattern or ""), json.dumps(metadata, ensure_ascii=False, sort_keys=True)]).casefold()
+    for marker in _DIAGNOSTIC_META_MARKERS:
+        if marker and marker in haystack:
+            return marker
+    return ""
+
+
+def _learning_provenance(metadata: dict[str, Any], source: str) -> dict[str, Any]:
+    eligibility = metadata.get("learning_eligibility")
+    if isinstance(eligibility, dict):
+        return {
+            "decision": str(eligibility.get("decision") or "").strip(),
+            "eligible": bool(eligibility.get("eligible", False)),
+            "source": str(source or "").strip(),
+        }
+    return {"decision": "", "eligible": False, "source": str(source or "").strip()}
 
 
 class RoutePatternStore:
@@ -521,61 +599,156 @@ class RoutePatternStore:
     def hygiene_report(
         self,
         *,
+        facade: str = "",
         known_tools: set[str] | None = None,
         limit: int = 100,
         stale_after_days: int = 30,
     ) -> dict[str, Any]:
-        active = self.list_patterns(disabled=False, limit=limit)
-        disabled = self.list_patterns(disabled=True, limit=limit)
+        active = self.list_patterns(facade=facade, disabled=False, limit=limit)
+        disabled = self.list_patterns(facade=facade, disabled=True, limit=limit)
         known = {str(tool or "").strip() for tool in (known_tools or set()) if str(tool or "").strip()}
         now = time.time()
         stale_after_seconds = max(1, int(stale_after_days or 30)) * 86400
+        low_evidence_probation_seconds = _NO_HIT_LOW_EVIDENCE_PROBATION_DAYS * 86400
         findings: list[dict[str, Any]] = []
         for item in active:
             tool = str(item.get("tool") or "").strip()
+            intent_type = str(item.get("intent_type") or "").strip()
+            confidence = float(item.get("confidence") or 0.0)
+            evidence_count = int(item.get("evidence_count") or 0)
+            hit_count = int(item.get("hit_count") or 0)
+            updated_at = float(item.get("updated_at") or 0.0)
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
             if known and tool not in known:
                 findings.append(
-                    {
-                        "type": "unknown_tool",
-                        "severity": "high",
-                        "pattern_id": item["pattern_id"],
-                        "facade": item["facade"],
-                        "tool": tool,
-                        "reason": "Learned route points to a tool that is not in the current known tool set.",
-                    }
+                    _finding(
+                        type="unknown_tool",
+                        severity="high",
+                        item=item,
+                        reason="Learned route points to a tool that is not in the current known tool set.",
+                        recommended_action="disable",
+                        disposition="disable",
+                    )
                 )
             negative = int(item.get("negative_feedback") or 0)
             positive = int(item.get("positive_feedback") or 0)
             if negative >= positive + 2:
                 findings.append(
-                    {
-                        "type": "negative_feedback",
-                        "severity": "medium",
-                        "pattern_id": item["pattern_id"],
-                        "facade": item["facade"],
-                        "tool": tool,
-                        "reason": "Learned route has more negative than positive feedback.",
-                    }
+                    _finding(
+                        type="negative_feedback",
+                        severity="medium",
+                        item=item,
+                        reason="Learned route has more negative than positive feedback.",
+                        recommended_action="disable",
+                        disposition="disable",
+                        positive_feedback=positive,
+                        negative_feedback=negative,
+                    )
                 )
             last_hit = float(item.get("last_hit_at") or 0.0)
             age_source = last_hit or float(item.get("updated_at") or 0.0)
             if age_source and now - age_source > stale_after_seconds and int(item.get("evidence_count") or 0) <= 1:
                 findings.append(
-                    {
-                        "type": "low_evidence_stale_pattern",
-                        "severity": "low",
-                        "pattern_id": item["pattern_id"],
-                        "facade": item["facade"],
-                        "tool": tool,
-                        "reason": "Learned route has low evidence and has not been used recently.",
-                    }
+                    _finding(
+                        type="low_evidence_stale_pattern",
+                        severity="low",
+                        item=item,
+                        reason="Learned route has low evidence and has not been used recently.",
+                        recommended_action="request-feedback",
+                        disposition="observe",
+                    )
                 )
+            if confidence < _VERY_LOW_CONFIDENCE_THRESHOLD:
+                findings.append(
+                    _finding(
+                        type="very_low_confidence_pattern",
+                        severity="high",
+                        item=item,
+                        reason="Learned route confidence is below the safe active-pattern threshold.",
+                        recommended_action="quarantine",
+                        disposition="quarantine",
+                        confidence=round(confidence, 3),
+                        threshold=_VERY_LOW_CONFIDENCE_THRESHOLD,
+                    )
+                )
+            if (
+                hit_count == 0
+                and evidence_count <= 1
+                and confidence < _NO_HIT_LOW_EVIDENCE_CONFIDENCE_THRESHOLD
+                and updated_at
+                and now - updated_at > low_evidence_probation_seconds
+            ):
+                findings.append(
+                    _finding(
+                        type="no_hit_low_evidence_pattern",
+                        severity="medium",
+                        item=item,
+                        reason="Learned route has no hits, only weak evidence, and has passed the short probation window.",
+                        recommended_action="request-feedback",
+                        disposition="observe",
+                        confidence=round(confidence, 3),
+                        hit_count=hit_count,
+                        evidence_count=evidence_count,
+                        probation_days=_NO_HIT_LOW_EVIDENCE_PROBATION_DAYS,
+                    )
+                )
+            marker = _metadata_contains_marker(metadata, str(item.get("normalized_pattern") or ""))
+            if marker:
+                findings.append(
+                    _finding(
+                        type="diagnostic_or_meta_contamination",
+                        severity="high",
+                        item=item,
+                        reason="Learned route contains diagnostic, hygiene, misroute, or other meta-analysis markers.",
+                        recommended_action="quarantine",
+                        disposition="quarantine",
+                        marker=marker,
+                    )
+                )
+            expected_tool = _catalog_tool_for_intent(str(item.get("facade") or ""), intent_type)
+            if expected_tool and tool and expected_tool != tool:
+                findings.append(
+                    _finding(
+                        type="route_tool_mismatch",
+                        severity="high",
+                        item=item,
+                        reason="Learned route tool does not match the current route catalog for its facade and intent_type.",
+                        recommended_action="quarantine",
+                        disposition="quarantine",
+                        expected_tool=expected_tool,
+                        actual_tool=tool,
+                    )
+                )
+            provenance = _learning_provenance(metadata, str(item.get("source") or ""))
+            if (
+                not provenance["decision"]
+                or (
+                    str(provenance["source"]).casefold() == "llm"
+                    and provenance["decision"] == "default"
+                    and positive <= 0
+                    and hit_count <= 0
+                )
+            ):
+                findings.append(
+                    _finding(
+                        type="weak_learning_provenance",
+                        severity="medium",
+                        item=item,
+                        reason="Learned route lacks strong operator/user feedback provenance.",
+                        recommended_action="request-feedback",
+                        disposition="observe",
+                        source=provenance["source"],
+                        eligibility_decision=provenance["decision"] or "missing",
+                    )
+                )
+        finding_types = _finding_type_counts(findings)
         return {
             "status": "ok",
             "summary": {
                 "active_patterns": len(active),
                 "disabled_patterns": len(disabled),
                 "findings": len(findings),
+                "finding_types": finding_types,
             },
             "findings": findings[:limit],
             "patterns": active[: min(limit, 50)],

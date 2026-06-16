@@ -2374,7 +2374,8 @@ class TestMcpToolExecution:
         from app.services import mcp_mailbox_actions
 
         class FakeRoutePatternStore:
-            def hygiene_report(self, *, known_tools: set[str] | None = None, limit: int = 100, stale_after_days: int = 30):
+            def hygiene_report(self, *, facade: str = "", known_tools: set[str] | None = None, limit: int = 100, stale_after_days: int = 30):
+                assert facade == "project_work"
                 assert "list_open_tasks" in (known_tools or set())
                 assert "project_work" in (known_tools or set())
                 return {
