@@ -111,6 +111,9 @@ async def build_simple_state_response(
     data["next_safe_action"] = data.get("next_safe_action") or "Use get for reads or submit with one of the listed forms."
     if not _full_detail_requested(args):
         data["forms"] = [compact_public_form(form) for form in (data.get("forms") or []) if isinstance(form, dict)]
+        if isinstance(data.get("cue_packet"), dict):
+            data.pop("context_cues", None)
+            data.pop("health_nudge", None)
         data["details_available"] = True
     return data
 

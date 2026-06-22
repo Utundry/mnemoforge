@@ -44,6 +44,70 @@ def _public_cue(cue: dict[str, Any], *, reason: str) -> dict[str, Any]:
     return payload
 
 
+def build_stage_cue_packet(
+    *,
+    state: str,
+    project: str,
+    context_cues: list[dict[str, Any]],
+    health_nudge: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    state_text = str(state or "planning").strip() or "planning"
+    compact_cues = [_compact_cue(cue) for cue in context_cues if isinstance(cue, dict)]
+    nudge = _compact_health_nudge(health_nudge or {})
+    expand_refs = list(
+        dict.fromkeys(
+            str(item.get("expand_ref") or "").strip()
+            for item in [*compact_cues, nudge]
+            if isinstance(item, dict) and str(item.get("expand_ref") or "").strip()
+        )
+    )
+    packet = {
+        "stage": state_text,
+        "project": project,
+        "profile": "stage_aware_compact",
+        "compact": True,
+        "cues": compact_cues,
+        "expand_refs": expand_refs,
+        "details_available": True,
+        "next_safe_action": "Use expand_ref only when the compact cue is insufficient for the current stage.",
+    }
+    if nudge:
+        packet["health_nudge"] = nudge
+    return packet
+
+
+def _compact_cue(cue: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in {
+            "cue": cue.get("cue"),
+            "severity": cue.get("severity"),
+            "title": cue.get("title"),
+            "summary": cue.get("summary"),
+            "reason": cue.get("reason"),
+            "expand_ref": cue.get("expand_ref"),
+            "authority_layer": cue.get("authority_layer"),
+            "source": cue.get("source"),
+        }.items()
+        if value not in (None, "", [], {})
+    }
+
+
+def _compact_health_nudge(nudge: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in {
+            "reason": nudge.get("reason"),
+            "check": nudge.get("check"),
+            "severity": nudge.get("severity"),
+            "cue": nudge.get("cue"),
+            "summary": nudge.get("summary"),
+            "expand_ref": nudge.get("expand_ref"),
+            "next_safe_action": nudge.get("next_safe_action"),
+        }.items()
+        if value not in (None, "", [], {})
+    }
+
 def context_cues_for_state(
     *,
     state: str,

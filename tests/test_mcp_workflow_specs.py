@@ -646,6 +646,29 @@ def test_mailbox_state_packet_surfaces_compact_context_cues() -> None:
     assert all(str(cue.get("expand_ref") or "").startswith("cue:") for cue in cues)
 
 
+def test_mailbox_state_packet_surfaces_stage_aware_cue_packet() -> None:
+    planning = build_mailbox_state_packet(
+        state="planning",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+    )
+    verification = build_mailbox_state_packet(
+        state="verification",
+        project="sloplesscode",
+        runtime_profile_id="weak_mcp_operator",
+    )
+
+    packet = planning["cue_packet"]
+    assert packet["stage"] == "planning"
+    assert packet["profile"] == "stage_aware_compact"
+    assert packet["compact"] is True
+    assert packet["cues"] == planning["context_cues"]
+    assert packet["health_nudge"]["cue"] == planning["health_nudge"]["cue"]
+    assert packet["expand_refs"]
+    assert all("full_text" not in cue for cue in packet["cues"])
+    assert packet["health_nudge"]["cue"] == "adherence:authority_before_editing"
+    assert verification["cue_packet"]["health_nudge"]["cue"] == "law:test_contour_before_live"
+
 def test_mailbox_state_packet_surfaces_tool_independent_edit_authority() -> None:
     planning = build_mailbox_state_packet(
         state="planning",
@@ -1483,10 +1506,12 @@ async def test_mailbox_state_response_suppresses_repeated_health_nudge_per_sessi
     await store.close_session(session_id)
 
     assert "health_nudge" in first
+    assert "health_nudge" in first["cue_packet"]
     assert "health_nudge" not in second
+    assert "health_nudge" not in second["cue_packet"]
     assert "health_nudge" not in diagnostic
+    assert "health_nudge" not in diagnostic["cue_packet"]
     assert diagnostic["health_nudge_suppressed"]["reason"] == "already_shown_in_session"
-
 
 async def test_mailbox_state_response_suppresses_repeated_health_nudge_for_stateless_hosts() -> None:
     async def fake_identity_defaults(session_id_arg: str | None) -> dict[str, str]:

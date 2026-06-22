@@ -146,7 +146,7 @@ async def _suppress_repeated_health_nudge(
             await store.set_context(session_id, ctx)
         seen = [str(item) for item in (ctx.get("health_nudge_seen") or []) if str(item)]
         if repeat_key in seen:
-            packet.pop("health_nudge", None)
+            _remove_health_nudge(packet)
             if diagnostic:
                 packet["health_nudge_suppressed"] = {
                     "reason": "already_shown_in_session",
@@ -184,7 +184,7 @@ def _suppress_repeated_stateless_health_nudge(
         cooldown_seconds=_HEALTH_NUDGE_STATELESS_COOLDOWN_SECONDS,
     )
     if repeated:
-        packet.pop("health_nudge", None)
+        _remove_health_nudge(packet)
         if diagnostic:
             packet["health_nudge_suppressed"] = {
                 "reason": "stateless_cooldown",
@@ -195,6 +195,12 @@ def _suppress_repeated_stateless_health_nudge(
         return packet
     return packet
 
+
+def _remove_health_nudge(packet: dict[str, Any]) -> None:
+    packet.pop("health_nudge", None)
+    cue_packet = packet.get("cue_packet")
+    if isinstance(cue_packet, dict):
+        cue_packet.pop("health_nudge", None)
 
 def _health_nudge_scope_key(args: dict[str, Any], identity_defaults: dict[str, str]) -> str:
     agent_fingerprint = str(

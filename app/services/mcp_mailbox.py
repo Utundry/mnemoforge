@@ -15,7 +15,7 @@ from app.services.mcp_workflow_specs import (
     load_state_spec,
     list_mailbox_form_specs,
 )
-from app.services.context_cue_service import context_cues_for_state
+from app.services.context_cue_service import build_stage_cue_packet, context_cues_for_state
 from app.services.cognitive_health_service import build_health_nudge
 from app.services.edit_authority_service import build_edit_authority
 from app.services.autonomous_mode_service import evaluate_autonomous_mode, get_autonomous_mode_store
@@ -114,12 +114,20 @@ def build_mailbox_state_packet(
     if diagnostic and not runtime_profile.allow_internal_diagnostics:
         warnings.append("Internal diagnostics are not available for this runtime profile.")
 
+    context_cues = context_cues_for_state(state=state_spec.id, project=project, governed_laws=governed_laws)
+    health_nudge = build_health_nudge(project=project, state=state_spec.id)
     public_packet: dict[str, Any] = {
         "state": state_spec.id,
         "project": project,
         "instruction": state_spec.purpose,
-        "context_cues": context_cues_for_state(state=state_spec.id, project=project, governed_laws=governed_laws),
-        "health_nudge": build_health_nudge(project=project, state=state_spec.id),
+        "cue_packet": build_stage_cue_packet(
+            state=state_spec.id,
+            project=project,
+            context_cues=context_cues,
+            health_nudge=health_nudge,
+        ),
+        "context_cues": context_cues,
+        "health_nudge": health_nudge,
         "forms": [_public_form_payload(form) for form in forms],
         "hidden_forms": hidden_form_ids,
         "warnings": warnings,
