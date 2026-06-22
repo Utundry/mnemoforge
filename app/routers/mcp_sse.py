@@ -107,6 +107,7 @@ from app.services.mcp_project_work_routing import (
     project_work_route as _project_work_route,
 )
 from app.services.planning_advisor_service import collaborative_control_packet
+from app.services.task_reconciliation_service import COVERED_DECISIONS, get_task_reconciliation_store
 from app.services.mcp_project_rules_routing import (
     PROJECT_RULES_ROUTE_CATALOG as _PROJECT_RULES_ROUTE_CATALOG,
     project_rules_route,
@@ -1959,6 +1960,35 @@ def _open_work_priority(item: dict[str, Any]) -> float:
     return 0.7
 
 
+def _reconciliation_refs_for_open_item(item: dict[str, Any]) -> list[str]:
+    refs: list[str] = []
+    for key in ("artifact_key", "linked_artifact_key"):
+        value = str(item.get(key) or "").strip()
+        if value and value not in refs:
+            refs.append(value)
+    project = str(item.get("project") or "").strip()
+    item_id = str(item.get("task_id") or item.get("id") or "").strip()
+    if project and item_id:
+        for prefix in ("task", "improvement"):
+            ref = f"{prefix}:{project}:{item_id}"
+            if ref not in refs:
+                refs.append(ref)
+    return refs
+
+
+def _covered_reconciliation_packet_for_open_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        store = get_task_reconciliation_store()
+    except Exception:
+        return None
+    for ref in _reconciliation_refs_for_open_item(item):
+        packet = store.packet_for_target(ref)
+        decision = str(packet.get("decision") or "").strip().lower()
+        if packet.get("status") == "reviewed" and decision in COVERED_DECISIONS:
+            return packet
+    return None
+
+
 def _prepare_open_work_items(data: dict[str, Any], *, limit: int) -> dict[str, Any]:
     items = data.get("items") or []
     if not isinstance(items, list):
@@ -1971,8 +2001,10 @@ def _prepare_open_work_items(data: dict[str, Any], *, limit: int) -> dict[str, A
         if isinstance(item, dict) and str(item.get("type") or "").strip() == "improvement"
     }
     visible: list[dict[str, Any]] = []
+    reconciled: list[dict[str, Any]] = []
     suppressed_projection_count = 0
     suppressed_completed_count = 0
+    suppressed_reconciled_count = 0
     for raw_item in items:
         if not isinstance(raw_item, dict):
             continue
@@ -1990,6 +2022,20 @@ def _prepare_open_work_items(data: dict[str, Any], *, limit: int) -> dict[str, A
         )
         if is_projection:
             suppressed_projection_count += 1
+            continue
+        reconciliation_packet = _covered_reconciliation_packet_for_open_item(item)
+        if reconciliation_packet:
+            suppressed_reconciled_count += 1
+            reconciled.append(
+                {
+                    "artifact_key": item.get("artifact_key"),
+                    "linked_artifact_key": item.get("linked_artifact_key"),
+                    "title": item.get("title"),
+                    "status": item.get("status"),
+                    "reconciliation": reconciliation_packet,
+                    "next_safe_action": reconciliation_packet.get("next_safe_action"),
+                }
+            )
             continue
         item["work_priority"] = _open_work_priority(item)
         if item_type == "improvement":
@@ -2015,6 +2061,13 @@ def _prepare_open_work_items(data: dict[str, Any], *, limit: int) -> dict[str, A
         enriched["suppressed_projection_count"] = suppressed_projection_count
     if suppressed_completed_count:
         enriched["suppressed_completed_count"] = suppressed_completed_count
+    if suppressed_reconciled_count:
+        enriched["suppressed_reconciled_count"] = suppressed_reconciled_count
+        enriched["reconciliation_warning"] = (
+            "Some open work items were hidden from ordinary next-priority results because an "
+            "operator-reviewed reconciliation decision marks them covered by implemented work."
+        )
+        enriched["reconciled_items"] = reconciled[:10]
     return enriched
 
 
@@ -9606,6 +9659,3 @@ async def sse_post(sessionId: str, request: Request) -> Response:
         await _touch_session(sessionId)
 
     return Response(status_code=202)
-
-
-

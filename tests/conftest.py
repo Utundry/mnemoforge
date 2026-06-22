@@ -84,6 +84,27 @@ def _reset_project_tasks_store():
 
 
 @pytest.fixture(autouse=True)
+def _reset_task_reconciliation_store():
+    """Use fresh in-memory task reconciliation store for each test."""
+    import app.services.task_reconciliation_service as _trs
+    from pathlib import Path
+
+    if _trs._STORE is not None:
+        try:
+            _trs._STORE.close()
+        except Exception:
+            pass
+    _trs._STORE = _trs.TaskReconciliationStore(Path(":memory:"))
+    yield
+    if _trs._STORE is not None:
+        try:
+            _trs._STORE.close()
+        except Exception:
+            pass
+        _trs._STORE = None
+
+
+@pytest.fixture(autouse=True)
 def _reset_context_page_store():
     """Use fresh in-memory context page store for each test to avoid production SQLite writes."""
     import app.services.context_page_store as _cps

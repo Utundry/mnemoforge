@@ -209,6 +209,12 @@ async def build_mailbox_submit_packet(
             api_base=api_base,
             dependencies=dependencies,
         )
+    if form_id == "review_task_reconciliation":
+        return await mailbox_review_task_reconciliation(
+            **common,
+            api_base=api_base,
+            dependencies=dependencies,
+        )
 
     return preflight
 
@@ -334,6 +340,53 @@ def _mailbox_context_page_error(*, form, state: str, project: str, message: str)
             "next_safe_action": "Submit the context page form again with the required fields.",
         },
     }
+
+
+async def mailbox_review_task_reconciliation(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+    api_base: str,
+    dependencies: MailboxActionDependencies,
+) -> dict[str, Any]:
+    result = await dependencies.post(
+        api_base,
+        "/task-reconciliation/review",
+        {
+            "target_task_ref": str(payload.get("target_task_ref") or "").strip(),
+            "implemented_task_ref": str(payload.get("implemented_task_ref") or "").strip(),
+            "decision": str(payload.get("decision") or "").strip(),
+            "reason": str(payload.get("reason") or "").strip(),
+            "acted_by": str(payload.get("acted_by") or "codex").strip() or "codex",
+            "evidence_refs": payload.get("evidence_refs") if isinstance(payload.get("evidence_refs"), list) else [],
+            "metadata": payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+        },
+    )
+    decision_record = result.get("decision_record") if isinstance(result.get("decision_record"), dict) else {}
+    packet = build_mailbox_mutation_packet(
+        form=form,
+        payload=payload,
+        state=state,
+        project=project,
+        actual_metadata={"result_kind": "task_reconciliation", "mutation": True, "review_mode": True, "route_id": "mailbox.task_reconciliation.review.v1"},
+        result={"id": decision_record.get("decision_id"), **result},
+        runtime_profile_id=runtime_profile_id,
+        diagnostic=diagnostic,
+    )
+    packet["receipt"].update(_compact({
+        "decision_id": decision_record.get("decision_id"),
+        "target_ref": decision_record.get("target_task_ref"),
+        "decision": decision_record.get("decision"),
+        "implemented_task_ref": decision_record.get("implemented_task_ref"),
+        "next_safe_action": "Use get/query for the reconciliation packet or request next priority again.",
+    }))
+    packet["result"] = result.get("packet")
+    packet["next_safe_action"] = packet["receipt"]["next_safe_action"]
+    return packet
 
 
 async def mailbox_get_task_context(

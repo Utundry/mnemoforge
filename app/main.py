@@ -10,7 +10,7 @@ from qdrant_client import AsyncQdrantClient
 from app.config import settings
 from app.core.logging import setup_logging
 from app.dependencies import set_ollama_service, set_qdrant_client
-from app.routers import admin, auto_memory, batch, code_search, context_pages, crystallizer, dashboard, docs, entities, governance, health, improvements, ingest, knowledge_tree_api, laws, layout_fixer, learning, log_filter, memories, mcp_sse, models, normalization, openai_compat, outcomes, project, project_tasks, registry, router_api, setup, skills, task_execution_context, tasks, tracker, tree, unified_artifacts, watcher
+from app.routers import admin, auto_memory, batch, code_search, context_pages, crystallizer, dashboard, docs, entities, governance, health, improvements, ingest, knowledge_tree_api, laws, layout_fixer, learning, log_filter, memories, mcp_sse, models, normalization, openai_compat, outcomes, project, project_tasks, registry, router_api, setup, skills, task_execution_context, task_reconciliation, tasks, tracker, tree, unified_artifacts, watcher
 from app.services.data_hygiene_service import (
     apply_approved_delete,
     apply_reviewed_delete,
@@ -1842,6 +1842,8 @@ async def lifespan(app: FastAPI):
         close_memory_store()
         from app.services.context_page_store import close_context_page_store
         close_context_page_store()
+        from app.services.task_reconciliation_service import close_task_reconciliation_store
+        close_task_reconciliation_store()
         close_data_integrity_store()
         close_data_hygiene_store()
         logger.info("Memory server stopped")
@@ -1965,6 +1967,7 @@ def create_app() -> FastAPI:
     _try_include(app, project_tasks.router, "project_tasks", prefix, disabled)
     _try_include(app, unified_artifacts.router, "unified_artifacts", prefix, disabled)
     _try_include(app, context_pages.router, "context_pages", prefix, disabled)
+    _try_include(app, task_reconciliation.router, "task_reconciliation", prefix, disabled)
     _try_include(app, laws.router, "laws", prefix, disabled)
     _try_include(app, task_execution_context.router, "task_execution_context", prefix, disabled)
     _try_include(app, tasks.router, "tasks", prefix, disabled)

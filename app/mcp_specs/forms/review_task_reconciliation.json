@@ -1,0 +1,30 @@
+{
+  "id": "review_task_reconciliation",
+  "title": "Review task reconciliation",
+  "purpose": "Record an operator-reviewed reconciliation decision for a parent/refinement task after related implementation work closes.",
+  "states": ["planning", "implementation", "checkpointing", "operator_review"],
+  "mode": "write",
+  "required_fields": ["project", "target_task_ref", "decision", "reason"],
+  "optional_fields": ["implemented_task_ref", "acted_by", "evidence_refs", "metadata"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "target_task_ref": {"type": "string"},
+      "implemented_task_ref": {"type": "string"},
+      "decision": {"type": "string", "enum": ["supersede", "resolve", "link", "keep_open", "create_follow_up"]},
+      "reason": {"type": "string"},
+      "acted_by": {"type": "string", "default": "codex"},
+      "evidence_refs": {"type": "array", "items": {"type": "string"}, "default": []},
+      "metadata": {"type": "object", "additionalProperties": true, "default": {}}
+    },
+    "required": ["project", "target_task_ref", "decision", "reason"]
+  },
+  "assistance": {"clerk_available": false, "can_use_stenography": false, "default_mode": "validate"},
+  "feature_toggles": [],
+  "replacement_form_ids": ["record_progress"],
+  "postconditions": {
+    "expected_metadata": {"result_kind": "task_reconciliation", "mutation": true, "review_mode": true}
+  },
+  "public_hint": "This records an explicit operator-reviewed decision; it does not silently delete or close tasks."
+}

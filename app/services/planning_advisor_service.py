@@ -7,6 +7,7 @@ from typing import Any
 from app.services.mcp_workflow_specs import load_named_json_spec
 from app.services.stage_applicability_service import stage_allows_block
 from app.services.data_hygiene_service import build_maintenance_suggestion
+from app.services.task_reconciliation_service import COVERED_DECISIONS, get_task_reconciliation_store
 
 
 @lru_cache(maxsize=1)
@@ -70,6 +71,7 @@ def task_framing_gaps_from_context(task_context: dict[str, Any], *, state: str =
 def _candidate_from_artifact(item: dict[str, Any]) -> dict[str, Any]:
     artifact_key = str(item.get("artifact_key") or "").strip()
     item_type = str(item.get("type") or "artifact").strip() or "artifact"
+    reconciliation = reconciliation_packet_for_artifact(item)
     candidate = {
         "type": item_type,
         "ref": artifact_key,
@@ -79,7 +81,31 @@ def _candidate_from_artifact(item: dict[str, Any]) -> dict[str, Any]:
         "why_next": item.get("match_reason") or _why_next_for_type(item_type),
         "recommended_next_call": _recommended_next_call(item),
     }
+    if reconciliation:
+        candidate["reconciliation"] = reconciliation
+        candidate["why_next"] = "Operator-reviewed reconciliation exists; do not treat as ordinary next work."
+        candidate["recommended_next_call"] = {
+            "tool": "get",
+            "query": f"task reconciliation packet for {artifact_key}",
+        }
     return {key: value for key, value in candidate.items() if value not in (None, "", [], {})}
+
+
+def reconciliation_packet_for_artifact(item: dict[str, Any]) -> dict[str, Any]:
+    artifact_key = str(item.get("artifact_key") or "").strip()
+    if not artifact_key:
+        return {}
+    decision = get_task_reconciliation_store().latest_for_target(artifact_key)
+    if not decision:
+        return {}
+    packet = get_task_reconciliation_store().packet_for_target(artifact_key)
+    return {key: value for key, value in packet.items() if value not in (None, "", [], {})}
+
+
+def _is_covered_by_reconciliation(item: dict[str, Any]) -> bool:
+    artifact_key = str(item.get("artifact_key") or "").strip()
+    decision = get_task_reconciliation_store().latest_for_target(artifact_key) if artifact_key else None
+    return bool(decision and str(decision.get("decision") or "") in COVERED_DECISIONS)
 
 
 def _why_next_for_type(item_type: str) -> str:
@@ -157,9 +183,14 @@ def build_next_work_advisor(
     max_candidates = limit or int(_advisor_spec().get("max_candidates") or 5)
     tasks = [item for item in items if str(item.get("type") or "") == "task"]
     improvements = [item for item in items if str(item.get("type") or "") == "improvement"]
-    if tasks:
+    active_tasks = [item for item in tasks if not _is_covered_by_reconciliation(item)]
+    reconciled_tasks = [item for item in tasks if _is_covered_by_reconciliation(item)]
+    if active_tasks:
         rule_id = "prefer_open_tasks"
-        chosen = tasks + improvements
+        chosen = active_tasks + improvements + reconciled_tasks
+    elif tasks:
+        rule_id = "prefer_open_tasks"
+        chosen = improvements + reconciled_tasks
     elif improvements:
         rule_id = "promote_open_improvements"
         chosen = improvements
@@ -176,6 +207,12 @@ def build_next_work_advisor(
         "next_work_candidates": [_candidate_from_artifact(item) for item in chosen[:max_candidates]],
         "next_safe_action": _next_work_safe_action(has_candidate=bool(chosen)),
     }
+    reconciled_count = sum(1 for item in chosen if _is_covered_by_reconciliation(item))
+    if reconciled_count:
+        advisor["reconciliation_warning"] = {
+            "covered_candidate_count": reconciled_count,
+            "next_safe_action": "Review reconciliation packets before selecting covered/superseded candidates as work.",
+        }
     maintenance_suggestion = _next_work_maintenance_suggestion(project=project)
     if maintenance_suggestion:
         advisor["maintenance_suggestion"] = maintenance_suggestion

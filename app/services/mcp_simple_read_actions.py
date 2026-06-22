@@ -24,6 +24,7 @@ from app.services.context_cue_service import (
 from app.services.cognitive_health_service import build_cognitive_health_packet
 from app.services.memory_store import get_memory_store
 from app.services.context_page_store import get_context_page_store
+from app.services.task_reconciliation_service import get_task_reconciliation_store
 from app.services.planning_advisor_service import build_next_work_advisor, is_planning_advisor_query
 from app.services.public_diagnostic_service import attach_public_diagnostic_incident
 from app.services.route_pattern_store import get_route_pattern_store
@@ -558,6 +559,25 @@ async def build_simple_get_query_response(
             "next_safe_action": "Use these aliases as compatibility names; do not rewrite stored refs without rename_project/apply review.",
             "details_available": True,
         }
+    reconciliation_ref = explicit_task_reconciliation_ref(query)
+    if reconciliation_ref:
+        packet = get_task_reconciliation_store().packet_for_target(reconciliation_ref)
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Task reconciliation packet resolved through the public read surface.",
+                "resource_kind": "task_reconciliation",
+                "data_ref": reconciliation_ref,
+                "next_safe_action": packet.get("next_safe_action"),
+            },
+            "result": packet,
+            "simple_interface": {"tool": "get", "mode": "query", "route": "task_reconciliation"},
+            "next_safe_action": packet.get("next_safe_action"),
+            "details_available": True,
+        }
+
     spec_route = select_simple_get_spec_route(query)
     if spec_route:
         routed = await execute_simple_get_spec_route(
@@ -1033,6 +1053,15 @@ def explicit_memory_lookup_id(query: str) -> str:
         return uuid_match.group(0)
     short_match = re.search(r"\b[0-9a-fA-F]{6,12}\b", text)
     return short_match.group(0) if short_match else ""
+
+
+def explicit_task_reconciliation_ref(query: str) -> str:
+    text = str(query or "").strip()
+    lowered = text.casefold()
+    if "reconciliation" not in lowered and "superseded" not in lowered:
+        return ""
+    match = re.search(r"task:[^\s,;]+:[^\s,;]+", text)
+    return match.group(0) if match else ""
 
 
 def explicit_project_alias_lookup(query: str) -> bool:

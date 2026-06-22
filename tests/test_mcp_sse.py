@@ -8509,6 +8509,59 @@ class TestMcpToolExecution:
         assert "Still open improvement" in result
         assert "Stale linked improvement" not in result
 
+    async def test_list_open_tasks_suppresses_reconciled_work_items(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_reconciliation_service as reconciliation_mod
+
+        store = reconciliation_mod.TaskReconciliationStore(Path(":memory:"))
+        monkeypatch.setattr(reconciliation_mod, "_STORE", store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        store.record_decision(
+            target_task_ref="task:alpha:imp-covered",
+            implemented_task_ref="task:alpha:impl-1",
+            decision="supersede",
+            reason="Covered by implemented generic work.",
+            acted_by="codex",
+        )
+
+        raw_data = {
+            "items": [
+                {
+                    "artifact_key": "improvement:alpha:imp-covered",
+                    "type": "improvement",
+                    "id": "imp-covered",
+                    "project": "alpha",
+                    "title": "Covered improvement",
+                    "status": "open",
+                    "linked_artifact_key": "task:alpha:imp-covered",
+                },
+                {
+                    "artifact_key": "improvement:alpha:imp-open",
+                    "type": "improvement",
+                    "id": "imp-open",
+                    "project": "alpha",
+                    "title": "Still selectable",
+                    "status": "open",
+                },
+            ]
+        }
+
+        async def fake_get(api_base: str, path: str):
+            assert path == "/artifacts?project=alpha&status=open&limit=100"
+            return raw_data
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+
+        enriched = mcp_sse._prepare_open_work_items(raw_data, limit=5)
+        assert [item["artifact_key"] for item in enriched["items"]] == ["improvement:alpha:imp-open"]
+        assert enriched["suppressed_reconciled_count"] == 1
+        assert enriched["reconciled_items"][0]["artifact_key"] == "improvement:alpha:imp-covered"
+        assert enriched["reconciled_items"][0]["reconciliation"]["decision"] == "supersede"
+
+        result = await mcp_sse._execute_tool("list_open_tasks", {"project": "alpha", "limit": 5}, "http://test")
+        assert "Still selectable" in result
+        assert "Covered improvement" not in result
+
     async def test_list_open_tasks_suppresses_terminal_status_leaks(self, monkeypatch):
         async def fake_get(api_base: str, path: str):
             assert path == "/artifacts?project=alpha&status=open&limit=100"
