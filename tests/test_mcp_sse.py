@@ -722,7 +722,7 @@ class TestMcpToolExecution:
 
         packet = await mailbox_start_task(
             form=form,
-            payload={"project": "alpha", "task_id": "missing-task"},
+            payload={"project": "alpha", "task_id": "missing-task", "approved_framing": "Approved bounded missing-task start."},
             state="planning",
             project="alpha",
             runtime_profile_id="strong_mcp_operator",
@@ -785,6 +785,7 @@ class TestMcpToolExecution:
                 "owner_agent": "codex",
                 "agent_fingerprint": "agentfp:stable",
                 "work_token": "known-token",
+                "approved_framing": "Approved bounded recovery start.",
             },
             state="planning",
             project="alpha",
@@ -816,6 +817,7 @@ class TestMcpToolExecution:
                 "owner_agent": "codex",
                 "agent_fingerprint": "agentfp:stable",
                 "work_token": "known-token",
+                "approved_framing": "Approved bounded recovery start.",
             },
         }
         assert receipt["recovery_options"][1]["id"] == "same_fingerprint_reclaim"
@@ -2653,6 +2655,7 @@ class TestMcpToolExecution:
                         "session_id": "sess-simple-start",
                         "agent_fingerprint": "agentfp:simple-start",
                         "auto_heartbeat": False,
+                        "approved_framing": "Implement the reviewed simple start framing.",
                     },
                 },
                 "http://test",
@@ -2759,6 +2762,7 @@ class TestMcpToolExecution:
             "agent_fingerprint": "agentfp:simple-ttl-reclaim",
             "auto_heartbeat": False,
             "lease_ttl_seconds": 5,
+            "approved_framing": "Implement the reviewed TTL reclaim framing.",
         }
         try:
             started = json.loads(
@@ -4228,6 +4232,10 @@ class TestMcpToolExecution:
         assert control["approval_intent"] == "user_approved_start"
         assert control["approval_alias_source"] == "semantic_adaptation_or_learned_aliases"
         assert control["approval_required_before_claim"] is True
+        assert control["stop_and_confirm_before_claim"] is True
+        assert control["full_statement_required"] is True
+        assert control["generic_continuation_is_not_approval"] is True
+        assert "stop for operator confirmation" in result["result"]["next_safe_action"]
         assert "user_approved_start" in result["result"]["next_safe_action"]
         assert result["result"]["next_work_candidates"][0]["ref"] == "task:alpha:task-1"
         assert result["result"]["next_work_candidates"][0]["recommended_next_call"]["form_id"] == "get_task_context"
@@ -5027,6 +5035,46 @@ class TestMcpToolExecution:
         assert packet["receipt"]["status"] == "framing_required"
         assert packet["receipt"]["claim_allowed"] is False
         assert packet["receipt"]["implementation_ready"] is False
+
+    async def test_mailbox_start_task_requires_approved_framing_before_new_claim(self):
+        async def fake_get(api_base: str, path: str):
+            if path == "/project/tasks/task-1/changes?project=alpha&limit=100":
+                return []
+            if path == "/project/tasks/task-1?project=alpha":
+                return {"task_id": "task-1", "task_statement_incomplete": False}
+            raise AssertionError(path)
+
+        async def fail_execute(*args, **kwargs):
+            raise AssertionError("start_task must stop before claim without approved_framing")
+
+        async def fake_identity_defaults(session_id: str | None):
+            return {}
+
+        form = mcp_sse.mailbox_form_by_id("start_task")
+        assert form is not None
+        packet = await mailbox_start_task(
+            form=form,
+            payload={"project": "alpha", "task_id": "task-1", "summary": "Continue by priority."},
+            state="planning",
+            project="alpha",
+            runtime_profile_id="strong_mcp_operator",
+            diagnostic=False,
+            api_base="http://test",
+            session_id="sess-start",
+            dependencies=MailboxActionDependencies(
+                post=lambda *args, **kwargs: None,
+                get=fake_get,
+                execute_tool=fail_execute,
+                get_session_identity_defaults=fake_identity_defaults,
+                task_mutation_guard=lambda **kwargs: None,
+            ),
+        )
+
+        assert packet["receipt"]["status"] == "framing_required"
+        assert packet["receipt"]["claim_allowed"] is False
+        assert packet["receipt"]["approval_required_before_claim"] is True
+        assert packet["receipt"]["required_field"] == "approved_framing"
+        assert "full task statement" in packet["receipt"]["next_safe_action"]
 
     async def test_mailbox_start_task_allows_approved_framing_for_improvement_projection(self):
         async def fake_get(api_base: str, path: str):

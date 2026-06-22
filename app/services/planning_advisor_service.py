@@ -124,6 +124,9 @@ def collaborative_control_packet() -> dict[str, Any]:
         "review_first_tool",
         "review_first_form_id",
         "claim_form_id",
+        "stop_and_confirm_before_claim",
+        "full_statement_required",
+        "generic_continuation_is_not_approval",
         "why",
     }
     return {key: value for key, value in spec.items() if key in keep_fields and value not in (None, "", [], {})}
@@ -137,8 +140,8 @@ def _next_work_safe_action(*, has_candidate: bool) -> str:
     review_form = str(control.get("review_first_form_id") or "get_task_context")
     claim_form = str(control.get("claim_form_id") or "start_task")
     return (
-        f"Review the first candidate with {review_form}, frame the task for the operator, "
-        f"then submit {claim_form} only after {approval_intent} or explicit autonomous mode."
+        f"Review the first candidate with {review_form}, show the full task statement, and stop for operator confirmation. "
+        f"Submit {claim_form} only after explicit {approval_intent} for that statement or explicit autonomous mode."
     )
 
 

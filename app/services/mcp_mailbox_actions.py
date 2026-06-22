@@ -569,6 +569,24 @@ async def mailbox_start_task(
             "next_safe_action": autonomous_mode["next_safe_action"],
         }
 
+    has_prior_claim_or_progress = False
+    if not explicit_user_approval and not autonomous_mode.get("authority_granted"):
+        has_prior_claim_or_progress = await _task_has_prior_claim_or_progress(
+            api_base=api_base,
+            project=project,
+            task_id=str(payload["task_id"]),
+            dependencies=dependencies,
+        )
+        if not has_prior_claim_or_progress:
+            return _start_task_framing_required_packet(
+                state=state,
+                project=project,
+                form_id=form.id,
+                task_id=str(payload["task_id"]),
+                message="Starting implementation requires the latest full task statement to be explicitly approved.",
+                linked_artifact_key="",
+            )
+
     if dependencies.get is not None:
         try:
             task = await dependencies.get(
@@ -581,38 +599,20 @@ async def mailbox_start_task(
             isinstance(task, dict)
             and task.get("linked_improvement_id")
             and bool(task.get("task_statement_incomplete"))
-            and not await _task_has_prior_claim_or_progress(
-                api_base=api_base,
-                project=project,
-                task_id=str(payload["task_id"]),
-                dependencies=dependencies,
-            )
+            and not has_prior_claim_or_progress
             and not (
                 (explicit_framing and approval_intent == "user_approved_start")
                 or autonomous_mode.get("authority_granted")
             )
         ):
-            return {
-                "state": state,
-                "project": project,
-                "receipt": {
-                    "status": "framing_required",
-                    "form_id": form.id,
-                    "message": "This task is a technical projection of an improvement and is not ready for implementation.",
-                    "task_id": str(payload["task_id"]),
-                    "linked_artifact_key": f"improvement:{project}:{task['linked_improvement_id']}",
-                    "implementation_ready": False,
-                    "claim_allowed": False,
-                    "next_safe_action": (
-                        "Review the improvement, complete the task framing, obtain explicit approval, "
-                        "then submit start_task with approved_framing."
-                    ),
-                },
-                "next_safe_action": (
-                    "Review the improvement, complete the task framing, obtain explicit approval, "
-                    "then submit start_task with approved_framing."
-                ),
-            }
+            return _start_task_framing_required_packet(
+                state=state,
+                project=project,
+                form_id=form.id,
+                task_id=str(payload["task_id"]),
+                message="This task is a technical projection of an improvement and is not ready for implementation.",
+                linked_artifact_key=f"improvement:{project}:{task['linked_improvement_id']}",
+            )
     start_args = {
         **payload,
         "project": project,
@@ -657,7 +657,7 @@ async def mailbox_start_task(
     resumed = bool(result.get("work_session_resumed"))
     if supplied_mode is not None and autonomous_mode.get("authority_granted"):
         mode_store.save(session_id=lease_session_id, project=project, grant=normalize_autonomous_mode(supplied_mode))
-    approved_framing = str(payload.get("approved_framing") or payload.get("summary") or "").strip()
+    approved_framing = str(payload.get("approved_framing") or "").strip()
     edit_authority = build_edit_authority(
         state="implementation",
         task_id=str(payload["task_id"]),
@@ -703,6 +703,42 @@ async def mailbox_start_task(
     if diagnostic:
         packet["_internal"] = {"visibility": "internal", "actual_metadata": actual_metadata, "postcondition_health": health}
     return packet
+
+
+def _start_task_framing_required_packet(
+    *,
+    state: str,
+    project: str,
+    form_id: str,
+    task_id: str,
+    message: str,
+    linked_artifact_key: str = "",
+) -> dict[str, Any]:
+    next_safe_action = (
+        "Stop and show the full task statement to the operator. Submit start_task only after explicit "
+        "user_approved_start with approved_framing, unless explicit_autonomous_mode authorizes this task."
+    )
+    receipt = {
+        "status": "framing_required",
+        "form_id": form_id,
+        "message": message,
+        "task_id": task_id,
+        "implementation_ready": False,
+        "claim_allowed": False,
+        "approval_required_before_claim": True,
+        "approval_intent": "user_approved_start",
+        "autonomous_override": "explicit_autonomous_mode",
+        "required_field": "approved_framing",
+        "next_safe_action": next_safe_action,
+    }
+    if linked_artifact_key:
+        receipt["linked_artifact_key"] = linked_artifact_key
+    return {
+        "state": state,
+        "project": project,
+        "receipt": receipt,
+        "next_safe_action": next_safe_action,
+    }
 
 
 async def _task_has_prior_claim_or_progress(
@@ -2245,6 +2281,9 @@ def _start_task_recommended_reclaim_call(
             "owner_agent": payload.get("owner_agent") or payload.get("agent_id"),
             "agent_fingerprint": payload.get("agent_fingerprint"),
             "work_token": work_token,
+            "approved_framing": payload.get("approved_framing"),
+            "framing_version": payload.get("framing_version"),
+            "approval_intent": payload.get("approval_intent"),
             "runtime_profile_id": payload.get("runtime_profile_id"),
             "lease_ttl_seconds": payload.get("lease_ttl_seconds"),
         }

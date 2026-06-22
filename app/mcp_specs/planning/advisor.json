@@ -22,7 +22,10 @@
     "review_first_tool": "submit",
     "review_first_form_id": "get_task_context",
     "claim_form_id": "start_task",
-    "why": "Normal agent sessions should keep the operator in the loop: frame the selected work, wait for an approved start intent, then claim the task for implementation."
+    "stop_and_confirm_before_claim": true,
+    "full_statement_required": true,
+    "generic_continuation_is_not_approval": true,
+    "why": "Normal agent sessions should keep the operator in the loop: select work, show the full task statement, stop for explicit implementation approval, then claim the task. Generic continuation by priority is not autonomous mode."
   },
   "framing_fields": [
     {

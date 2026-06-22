@@ -1341,6 +1341,9 @@ async def test_next_work_advisor_surfaces_improvements_when_no_tasks(monkeypatch
     control = packet["result"]["collaborative_control"]
     assert control["framing_required"] is True
     assert control["approval_required_before_claim"] is True
+    assert control["stop_and_confirm_before_claim"] is True
+    assert control["full_statement_required"] is True
+    assert control["generic_continuation_is_not_approval"] is True
     assert control["approval_intent"] == "user_approved_start"
     assert control["approval_alias_source"] == "semantic_adaptation_or_learned_aliases"
     assert "user_approved_start" in packet["result"]["next_safe_action"]
@@ -1358,6 +1361,8 @@ def test_planning_advisor_collaborative_control_uses_internal_english_contracts(
     text = json.dumps(spec, ensure_ascii=False)
 
     assert spec["collaborative_control"]["approval_intent"] == "user_approved_start"
+    assert spec["collaborative_control"]["stop_and_confirm_before_claim"] is True
+    assert spec["collaborative_control"]["full_statement_required"] is True
     assert spec["collaborative_control"]["approval_alias_source"] == "semantic_adaptation_or_learned_aliases"
     assert "приступ" not in text.casefold()
     assert "начинай" not in text.casefold()
