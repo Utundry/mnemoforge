@@ -3065,12 +3065,15 @@ class TestMcpToolExecution:
                             "project_id": "mnemoforge",
                             "status": "active",
                             "reason": "self_project_id",
+                            "effective_from": 100.0,
                         },
                         {
                             "alias": "sloplesscode",
                             "project_id": "mnemoforge",
                             "status": "active",
                             "reason": "public rename alias",
+                            "effective_from": 200.0,
+                            "effective_to": 300.0,
                         },
                     ],
                 }
@@ -3100,6 +3103,8 @@ class TestMcpToolExecution:
         assert result["receipt"]["count"] == 2
         assert result["simple_interface"]["route"] == "project_aliases"
         assert result["result"]["aliases"][1]["alias"] == "sloplesscode"
+        assert result["result"]["aliases"][1]["effective_from"] == 200.0
+        assert result["result"]["aliases"][1]["effective_to"] == 300.0
 
     async def test_simple_get_resolves_short_improvement_refs(self, monkeypatch):
         from app.services.public_ref_index import get_public_ref_index_store

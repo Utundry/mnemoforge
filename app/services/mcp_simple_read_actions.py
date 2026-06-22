@@ -1646,7 +1646,7 @@ def compact_project_alias_results(data: Any) -> dict[str, Any]:
         compact_aliases.append(
             {
                 key: item.get(key)
-                for key in ("alias", "project_id", "status", "reason")
+                for key in ("alias", "project_id", "status", "reason", "effective_from", "effective_to")
                 if item.get(key) not in (None, "", [])
             }
         )

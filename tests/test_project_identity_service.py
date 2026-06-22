@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 from app.services import project_identity_service as pis
@@ -66,3 +67,49 @@ def test_project_identity_store_seeds_public_alias(monkeypatch):
     finally:
         store.close()
         pis.sqlite3.connect = original_connect
+
+def test_project_identity_store_migrates_effective_dates(tmp_path: Path):
+    db_path = tmp_path / "project_identity.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE project_identity_aliases (
+            alias TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            reason TEXT NOT NULL DEFAULT '',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO project_identity_aliases (alias, project_id, status, reason, created_at, updated_at)
+        VALUES ('supermemory', 'mnemoforge', 'active', 'old working name', 123.0, 124.0)
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    store = ProjectIdentityStore(db_path)
+    try:
+        aliases = store.list_aliases("mnemoforge")
+        migrated = next(item for item in aliases if item["alias"] == "supermemory")
+        assert migrated["effective_from"] == 123.0
+        assert migrated["effective_to"] is None
+
+        created = store.upsert_alias(
+            alias="sloplesscode",
+            project_id="mnemoforge",
+            reason="public rename",
+            effective_from=456.0,
+            effective_to=789.0,
+        )
+        assert created["effective_from"] == 456.0
+        assert created["effective_to"] == 789.0
+        listed = next(item for item in store.list_aliases("mnemoforge") if item["alias"] == "sloplesscode")
+        assert listed["effective_from"] == 456.0
+        assert listed["effective_to"] == 789.0
+    finally:
+        store.close()

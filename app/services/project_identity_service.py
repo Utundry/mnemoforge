@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS project_identity_aliases (
     status      TEXT NOT NULL DEFAULT 'active',
     reason      TEXT NOT NULL DEFAULT '',
     created_at  REAL NOT NULL,
-    updated_at  REAL NOT NULL
+    updated_at  REAL NOT NULL,
+    effective_from REAL,
+    effective_to   REAL
 );
 CREATE INDEX IF NOT EXISTS idx_project_identity_project
     ON project_identity_aliases(project_id, status);
@@ -37,7 +39,25 @@ class ProjectIdentityStore:
         self._lock = RLock()
         with self._lock:
             self._conn.executescript(_CREATE_SQL)
+            self._ensure_schema_unlocked()
             self._conn.commit()
+
+    def _ensure_schema_unlocked(self) -> None:
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(project_identity_aliases)").fetchall()
+        }
+        if "effective_from" not in columns:
+            self._conn.execute("ALTER TABLE project_identity_aliases ADD COLUMN effective_from REAL")
+        if "effective_to" not in columns:
+            self._conn.execute("ALTER TABLE project_identity_aliases ADD COLUMN effective_to REAL")
+        self._conn.execute(
+            """
+            UPDATE project_identity_aliases
+            SET effective_from = COALESCE(effective_from, created_at)
+            WHERE effective_from IS NULL
+            """
+        )
 
     def close(self) -> None:
         with self._lock:
@@ -67,25 +87,58 @@ class ProjectIdentityStore:
             current = next_project
         return current or clean
 
-    def upsert_alias(self, *, alias: str, project_id: str, reason: str = "", status: str = "active") -> dict:
+    def upsert_alias(
+        self,
+        *,
+        alias: str,
+        project_id: str,
+        reason: str = "",
+        status: str = "active",
+        effective_from: float | None = None,
+        effective_to: float | None = None,
+    ) -> dict:
         clean_alias = _clean_project_id(alias)
         clean_project = _clean_project_id(project_id)
         if not clean_alias or not clean_project:
             raise ValueError("alias and project_id are required")
         now = time.time()
+        effective_from_value = effective_from if effective_from is not None else now
+        effective_from_supplied = effective_from is not None
+        effective_to_supplied = effective_to is not None
         with self._lock:
             canonical_project = self._resolve_unlocked(clean_project)
             self._conn.execute(
                 """
-                INSERT INTO project_identity_aliases (alias, project_id, status, reason, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO project_identity_aliases (
+                    alias, project_id, status, reason, created_at, updated_at, effective_from, effective_to
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(alias) DO UPDATE SET
                     project_id = excluded.project_id,
                     status = excluded.status,
                     reason = excluded.reason,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    effective_from = CASE
+                        WHEN ? THEN excluded.effective_from
+                        ELSE COALESCE(project_identity_aliases.effective_from, project_identity_aliases.created_at, excluded.effective_from)
+                    END,
+                    effective_to = CASE
+                        WHEN ? THEN excluded.effective_to
+                        ELSE project_identity_aliases.effective_to
+                    END
                 """,
-                (clean_alias, canonical_project, status or "active", reason or "", now, now),
+                (
+                    clean_alias,
+                    canonical_project,
+                    status or "active",
+                    reason or "",
+                    now,
+                    now,
+                    effective_from_value,
+                    effective_to,
+                    effective_from_supplied,
+                    effective_to_supplied,
+                ),
             )
             self._conn.commit()
         return {
@@ -93,6 +146,8 @@ class ProjectIdentityStore:
             "project_id": canonical_project,
             "status": status or "active",
             "reason": reason or "",
+            "effective_from": effective_from_value,
+            "effective_to": effective_to,
         }
 
     def resolve(self, project_id: str | None) -> str:
@@ -127,7 +182,7 @@ class ProjectIdentityStore:
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT alias, project_id, status, reason, created_at, updated_at
+                SELECT alias, project_id, status, reason, created_at, updated_at, effective_from, effective_to
                 FROM project_identity_aliases
                 WHERE status = 'active'
                 ORDER BY project_id, alias
