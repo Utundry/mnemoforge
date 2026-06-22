@@ -3610,6 +3610,94 @@ class TestMcpToolExecution:
         assert result["result"]["task_id"] == "task-123"
         assert result["result"]["title"] == "Auto format task."
 
+    async def test_simple_get_context_response_returns_agent_context_for_task_ref(self, monkeypatch):
+        async def fake_pull_context(api_base: str, args: dict):
+            return {
+                "project": args["project"],
+                "task_id": args["task_id"],
+                "status": "ready",
+                "task": {"title": "Context mode task.", "status": "planning"},
+                "latest_checkpoint": {"summary": "Task context is available.", "next_step": "Inspect before editing."},
+                "execution_readiness": {"status": "ready"},
+            }
+
+        monkeypatch.setattr(mcp_sse, "_build_pull_task_context_payload", fake_pull_context)
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "get")
+        assert "context" in tool["inputSchema"]["properties"]["response_format"]["enum"]
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"ref": "task:alpha:task-123", "state": "planning", "response_format": "context"},
+                "http://test",
+            )
+        )
+
+        assert result["kind"] == "task"
+        assert result["ref"] == "task:alpha:task-123"
+        assert result["task_id"] == "task-123"
+        assert result["title"] == "Context mode task."
+        assert result["summary"] == "Task context is available."
+        assert "receipt" not in result
+        assert "details_available" not in result
+        assert "recommended_next_call" not in result
+        assert "stage" not in result
+
+    async def test_simple_get_context_response_returns_context_items_for_artifact_list(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            assert path == "/artifacts?project=alpha&limit=5&type=improvement"
+            return {
+                "items": [
+                    {
+                        "artifact_key": "improvement:alpha:imp-1",
+                        "type": "improvement",
+                        "id": "imp-1",
+                        "title": "Reduce response overhead",
+                        "description": "Keep retrieval compact for agents.",
+                        "status": "open",
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "list recent improvements", "limit": 5, "response_format": "context"},
+                "http://test",
+            )
+        )
+
+        assert result["kind"] == "artifact_list"
+        assert result["artifact_type"] == "improvement"
+        assert result["count"] == 1
+        assert result["items"][0]["kind"] == "improvement"
+        assert result["items"][0]["ref"] == "improvement:alpha:imp-1"
+        assert "embryonic task candidate" in result["items"][0]["user_explanation"]
+        assert "receipt" not in result
+        assert "details_available" not in result
+
+    async def test_simple_get_context_response_guards_workflow_decision_queries(self, monkeypatch):
+        async def fake_get(api_base: str, path: str):
+            assert path == "/artifacts?project=alpha&status=open&limit=5"
+            return {"items": [{"artifact_key": "task:alpha:task-1", "type": "task", "task_id": "task-1", "title": "Do next"}]}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {"project": "alpha", "query": "what should I do next?", "limit": 5, "response_format": "context"},
+                "http://test",
+            )
+        )
+
+        assert result["kind"] == "workflow_decision_guardrail"
+        assert "not next-work or workflow decisions" in result["warning"]
+        assert "receipt" not in result
+        assert "next_work_candidates" not in result
+
     async def test_simple_state_merges_governed_law_cues_from_laws_endpoint(self, monkeypatch):
         seen: dict[str, str] = {}
 

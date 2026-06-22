@@ -45,7 +45,7 @@
           "state": {"type": "string", "default": "planning", "enum": ["planning", "implementation", "verification", "live_validation", "checkpointing", "handoff", "operator_review"]},
           "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"},
           "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20},
-          "response_format": {"type": "string", "enum": ["auto", "json", "answer", "diagnostic"], "default": "auto"},
+          "response_format": {"type": "string", "enum": ["auto", "json", "answer", "diagnostic", "context"], "default": "auto"},
           "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
           "diagnostic": {"type": "boolean", "default": false}
         }

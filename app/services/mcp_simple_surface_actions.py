@@ -152,6 +152,8 @@ async def build_simple_get_response(
             result = data.get("result") if isinstance(data.get("result"), dict) else {}
             if cues and not data.get("context_cues") and not result.get("context_cues"):
                 data["context_cues"] = cues
+            if _context_response_requested(scoped_args) and not _full_detail_requested(scoped_args):
+                return context_simple_get_packet(data, scoped_args, tool_surface_role=dependencies.tool_surface_role)
             return data
 
     data = await build_simple_state_response(args=scoped_args, dependencies=dependencies, session_id=session_id)
@@ -241,6 +243,8 @@ def compact_simple_get_packet(
 ) -> dict[str, Any]:
     if _full_detail_requested(args):
         return data
+    if _context_response_requested(args):
+        return context_simple_get_packet(data, args, tool_surface_role=tool_surface_role)
     receipt = data.get("receipt") if isinstance(data.get("receipt"), dict) else {}
     kind = str(receipt.get("resource_kind") or "").strip()
     compact = dict(data)
@@ -252,6 +256,139 @@ def compact_simple_get_packet(
     )
     compact["details_available"] = True
     return compact
+
+
+def context_simple_get_packet(
+    data: dict[str, Any],
+    args: dict[str, Any],
+    *,
+    tool_surface_role: ToolSurfaceRoleCallback,
+) -> dict[str, Any]:
+    receipt = data.get("receipt") if isinstance(data.get("receipt"), dict) else {}
+    result = data.get("result")
+    kind = resource_kind_from_receipt_or_result(receipt, result)
+    project = str(data.get("project") or args.get("project") or receipt.get("project") or "").strip()
+    status = str(receipt.get("status") or data.get("status") or "").strip()
+    if kind == "planning_advisor":
+        return _clean_context_packet(
+            {
+                "kind": "workflow_decision_guardrail",
+                "project": project,
+                "status": status or "needs_compact_or_full",
+                "warning": "Context response_format is for auxiliary read-only retrieval, not next-work or workflow decisions.",
+                "next_safe_action": "Repeat this get request with response_format=auto or detail=compact for the workflow packet.",
+            }
+        )
+    packet: dict[str, Any] = {
+        "kind": kind or "resource",
+        "project": project,
+        "status": status,
+    }
+    ref = str(receipt.get("data_ref") or "").strip()
+    if ref:
+        packet["ref"] = ref
+    requested_ref = str(receipt.get("requested_ref") or args.get("ref") or "").strip()
+    if requested_ref and requested_ref != ref:
+        packet["requested_ref"] = requested_ref
+    if kind == "artifact_list" and isinstance(result, dict):
+        packet["artifact_type"] = receipt.get("artifact_type")
+        packet["status_filter"] = receipt.get("status_filter")
+        items = result.get("items") if isinstance(result.get("items"), list) else []
+        packet["items"] = [_context_item(item, tool_surface_role=tool_surface_role) for item in items if isinstance(item, dict)]
+        packet["count"] = len(packet["items"])
+    elif kind == "project_aliases" and isinstance(result, dict):
+        packet["canonical_project_id"] = result.get("project_id") or result.get("canonical_project_id")
+        packet["aliases"] = result.get("aliases") or []
+    elif isinstance(result, dict):
+        compact = compact_resource_result(
+            kind,
+            result,
+            tool_surface_role=tool_surface_role,
+            state=str(data.get("state") or args.get("state") or "planning"),
+        )
+        if isinstance(compact, dict):
+            packet.update(_context_fields_from_compact(kind, compact))
+    elif result not in (None, "", []):
+        packet["content"] = result
+    warning = _critical_warning(data, receipt)
+    if warning:
+        packet["warning"] = warning
+    if status and status != "accepted":
+        packet["next_safe_action"] = receipt.get("next_safe_action") or data.get("next_safe_action")
+    return _clean_context_packet(packet)
+
+
+def _context_item(item: dict[str, Any], *, tool_surface_role: ToolSurfaceRoleCallback) -> dict[str, Any]:
+    kind = str(item.get("type") or item.get("kind") or "artifact").strip()
+    compact = compact_resource_result(kind, item, tool_surface_role=tool_surface_role)
+    if not isinstance(compact, dict):
+        compact = dict(item)
+    packet = _context_fields_from_compact(kind, compact)
+    if compact.get("artifact_key") and "ref" not in packet:
+        packet["ref"] = compact.get("artifact_key")
+    packet["kind"] = kind
+    return _clean_context_packet(packet)
+
+
+def _context_fields_from_compact(kind: str, compact: dict[str, Any]) -> dict[str, Any]:
+    packet: dict[str, Any] = {}
+    direct_keys = (
+        "kind",
+        "ref",
+        "artifact_key",
+        "id",
+        "task_id",
+        "title",
+        "status",
+        "task_status",
+        "description",
+        "content",
+        "statement",
+        "summary",
+        "memory_type",
+        "category",
+        "project",
+        "user_explanation",
+        "linked_artifact_key",
+        "linked_status",
+    )
+    for key in direct_keys:
+        if compact.get(key) not in (None, "", []):
+            packet[key] = compact.get(key)
+    if kind == "task":
+        latest = compact.get("latest_checkpoint") if isinstance(compact.get("latest_checkpoint"), dict) else {}
+        if latest.get("summary") and "summary" not in packet:
+            packet["summary"] = latest.get("summary")
+        if latest.get("next_step"):
+            packet["checkpoint_next_step"] = latest.get("next_step")
+        gaps = compact.get("task_framing_gaps")
+        if gaps:
+            packet["warning"] = "Task framing has gaps: " + ", ".join(str(item) for item in gaps[:5])
+        readiness = compact.get("execution_readiness") if isinstance(compact.get("execution_readiness"), dict) else {}
+        if readiness.get("status") and readiness.get("status") != "ready":
+            packet["readiness"] = readiness.get("status")
+            if readiness.get("recommended_next_action"):
+                packet["next_safe_action"] = readiness.get("recommended_next_action")
+    if "artifact_key" in packet and "ref" not in packet:
+        packet["ref"] = packet["artifact_key"]
+    return packet
+
+
+def _critical_warning(data: dict[str, Any], receipt: dict[str, Any]) -> str:
+    incident = receipt.get("diagnostic_incident") if isinstance(receipt.get("diagnostic_incident"), dict) else {}
+    if incident.get("summary"):
+        return str(incident.get("summary"))
+    message = str(receipt.get("message") or "").strip()
+    status = str(receipt.get("status") or "").strip()
+    if status and status not in {"accepted", "ok"} and message:
+        return message
+    if data.get("warning"):
+        return str(data.get("warning"))
+    return ""
+
+
+def _clean_context_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in packet.items() if value not in (None, "", [])}
 
 
 def compact_simple_submit_packet(
@@ -423,6 +560,10 @@ def _form_recommendation(form_id: str, project: str, task_id: str, internal_tool
         "why": why,
         "internal_tool": internal_tool,
     }
+
+
+def _context_response_requested(args: dict[str, Any]) -> bool:
+    return str(args.get("response_format") or "").strip().lower() == "context"
 
 
 def _full_detail_requested(args: dict[str, Any]) -> bool:

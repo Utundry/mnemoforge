@@ -1012,6 +1012,8 @@ def _annotate_structured_tool_payload(
 
 
 def _public_simple_tool_payload(tool_name: str, data: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    if tool_name == "get" and str(args.get("response_format") or "").strip().lower() == "context":
+        return data
     profile = response_profile_from_args(args)
     if _wants_route_diagnostic(args) or server_build_diagnostics_enabled():
         profile = "diagnostic"

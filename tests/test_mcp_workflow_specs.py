@@ -380,6 +380,7 @@ def test_public_tool_contracts_are_declarative() -> None:
 
     assert list(contracts)[:4] == ["help", "state", "get", "submit"]
     assert contracts["get"].inputSchema["properties"]["response_format"]["default"] == "auto"
+    assert "context" in contracts["get"].inputSchema["properties"]["response_format"]["enum"]
     assert contracts["put"].description.startswith("Compatibility alias")
 
 
