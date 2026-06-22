@@ -84,6 +84,27 @@ def _reset_project_tasks_store():
 
 
 @pytest.fixture(autouse=True)
+def _reset_context_page_store():
+    """Use fresh in-memory context page store for each test to avoid production SQLite writes."""
+    import app.services.context_page_store as _cps
+    from pathlib import Path
+
+    if _cps._STORE is not None:
+        try:
+            _cps._STORE.close()
+        except Exception:
+            pass
+    _cps._STORE = _cps.ContextPageStore(Path(":memory:"))
+    yield
+    if _cps._STORE is not None:
+        try:
+            _cps._STORE.close()
+        except Exception:
+            pass
+        _cps._STORE = None
+
+
+@pytest.fixture(autouse=True)
 def _reset_mcp_feature_gate_store():
     """Use fresh in-memory MCP feature gates for each test."""
     import app.services.mcp_feature_gates as _fg

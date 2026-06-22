@@ -197,8 +197,143 @@ async def build_mailbox_submit_packet(
             api_base=api_base,
             dependencies=dependencies,
         )
+    if form_id == "upsert_context_page":
+        return await mailbox_upsert_context_page(
+            **common,
+            api_base=api_base,
+            dependencies=dependencies,
+        )
+    if form_id == "archive_context_page":
+        return await mailbox_archive_context_page(
+            **common,
+            api_base=api_base,
+            dependencies=dependencies,
+        )
 
     return preflight
+
+
+async def mailbox_upsert_context_page(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+    api_base: str,
+    dependencies: MailboxActionDependencies,
+) -> dict[str, Any]:
+    page_id = str(payload.get("page_id") or "").strip()
+    body = {
+        "project": project,
+        "parent_ref": str(payload.get("parent_ref") or "").strip(),
+        "page_kind": str(payload.get("page_kind") or "entry").strip() or "entry",
+        "page_index": int(payload.get("page_index") or 1),
+        "title": str(payload.get("title") or "").strip(),
+        "summary": str(payload.get("summary") or "").strip(),
+        "content": str(payload.get("content") or ""),
+        "created_by": str(payload.get("created_by") or payload.get("updated_by") or "codex").strip() or "codex",
+        "metadata": payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+    }
+    if page_id:
+        if dependencies.patch is None:
+            return _mailbox_context_page_error(form=form, state=state, project=project, message="Context page update route is unavailable.")
+        result = await dependencies.patch(
+            api_base,
+            f"/context-pages/{quote(page_id, safe='')}",
+            {
+                "title": body["title"] or None,
+                "summary": body["summary"] or None,
+                "content": body["content"] or None,
+                "updated_by": str(payload.get("updated_by") or body["created_by"]),
+                "metadata": body["metadata"],
+            },
+        )
+        action = "superseded"
+    else:
+        result = await dependencies.post(api_base, "/context-pages", body)
+        action = "created"
+    result["id"] = result.get("page_id")
+    packet = build_mailbox_mutation_packet(
+        form=form,
+        payload=payload,
+        state=state,
+        project=project,
+        actual_metadata={"result_kind": "context_page", "mutation": True, "review_mode": False, "route_id": "mailbox.context_page.upsert.v1"},
+        result=result,
+        runtime_profile_id=runtime_profile_id,
+        diagnostic=diagnostic,
+    )
+    packet["receipt"].update(_compact({
+        "message": f"Context page {action}.",
+        "page_ref": result.get("page_ref"),
+        "page_id": result.get("page_id"),
+        "parent_ref": result.get("parent_ref"),
+        "page_kind": result.get("page_kind"),
+        "page_index": result.get("page_index"),
+        "version": result.get("version"),
+        "next_safe_action": "Use get with the returned context_page ref to read this page, or continue the approved workflow.",
+    }))
+    packet["next_safe_action"] = packet["receipt"]["next_safe_action"]
+    return packet
+
+
+async def mailbox_archive_context_page(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+    api_base: str,
+    dependencies: MailboxActionDependencies,
+) -> dict[str, Any]:
+    page_id = str(payload.get("page_id") or "").strip()
+    if not page_id:
+        return _mailbox_context_page_error(form=form, state=state, project=project, message="page_id is required.")
+    result = await dependencies.post(
+        api_base,
+        f"/context-pages/{quote(page_id, safe='')}/archive",
+        {
+            "updated_by": str(payload.get("updated_by") or "codex").strip() or "codex",
+            "reason": str(payload.get("reason") or "").strip(),
+        },
+    )
+    result["id"] = result.get("page_id")
+    packet = build_mailbox_mutation_packet(
+        form=form,
+        payload=payload,
+        state=state,
+        project=project,
+        actual_metadata={"result_kind": "context_page", "mutation": True, "review_mode": False, "route_id": "mailbox.context_page.archive.v1"},
+        result=result,
+        runtime_profile_id=runtime_profile_id,
+        diagnostic=diagnostic,
+    )
+    packet["receipt"].update(_compact({
+        "message": "Context page archived.",
+        "page_ref": result.get("page_ref"),
+        "page_id": result.get("page_id"),
+        "parent_ref": result.get("parent_ref"),
+        "next_safe_action": "Ordinary retrieval will now exclude this page; use include_history only for audit/history.",
+    }))
+    packet["next_safe_action"] = packet["receipt"]["next_safe_action"]
+    return packet
+
+
+def _mailbox_context_page_error(*, form, state: str, project: str, message: str) -> dict[str, Any]:
+    return {
+        "state": state,
+        "project": project,
+        "receipt": {
+            "status": "needs_input",
+            "form_id": form.id,
+            "message": message,
+            "next_safe_action": "Submit the context page form again with the required fields.",
+        },
+    }
 
 
 async def mailbox_get_task_context(

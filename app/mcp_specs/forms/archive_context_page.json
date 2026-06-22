@@ -1,0 +1,59 @@
+{
+  "id": "archive_context_page",
+  "title": "Archive context page",
+  "purpose": "Archive an authoritative context page so ordinary retrieval no longer treats it as active.",
+  "states": [
+    "planning",
+    "implementation",
+    "checkpointing"
+  ],
+  "mode": "write",
+  "required_fields": [
+    "project",
+    "page_id"
+  ],
+  "optional_fields": [
+    "updated_by",
+    "reason"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {
+        "type": "string",
+        "default": "mnemoforge"
+      },
+      "page_id": {
+        "type": "string"
+      },
+      "updated_by": {
+        "type": "string",
+        "default": "codex"
+      },
+      "reason": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "project",
+      "page_id"
+    ]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "validate"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": [
+    "upsert_context_page"
+  ],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "context_page",
+      "mutation": true,
+      "review_mode": false
+    }
+  },
+  "public_hint": "Archive instead of deleting. Archived pages remain available only through explicit history/diagnostic retrieval."
+}

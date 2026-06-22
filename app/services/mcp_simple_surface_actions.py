@@ -351,6 +351,13 @@ def _context_fields_from_compact(kind: str, compact: dict[str, Any]) -> dict[str
         "user_explanation",
         "linked_artifact_key",
         "linked_status",
+        "page_ref",
+        "page_id",
+        "parent_ref",
+        "page_kind",
+        "page_index",
+        "version",
+        "superseded_by_page_id",
     )
     for key in direct_keys:
         if compact.get(key) not in (None, "", []):
@@ -369,6 +376,8 @@ def _context_fields_from_compact(kind: str, compact: dict[str, Any]) -> dict[str
             packet["readiness"] = readiness.get("status")
             if readiness.get("recommended_next_action"):
                 packet["next_safe_action"] = readiness.get("recommended_next_action")
+    if "page_ref" in packet and "ref" not in packet:
+        packet["ref"] = packet["page_ref"]
     if "artifact_key" in packet and "ref" not in packet:
         packet["ref"] = packet["artifact_key"]
     return packet
@@ -417,6 +426,7 @@ def compact_simple_submit_packet(
             "pattern_id", "feedback_action", "facade", "vote",
             "target_ref", "target_type", "refinement_type", "refinement_status", "mutation_executed",
             "postcondition_satisfied",
+            "page_ref", "page_id", "parent_ref", "page_kind", "page_index", "version",
         )
         compact["receipt"] = {key: receipt.get(key) for key in receipt_keys if receipt.get(key) not in (None, "", [])}
     if "result" in compact:
@@ -481,6 +491,7 @@ def compact_resource_result(
         "rule_candidate": ("candidate_id", "project", "status", "scope", "statement", "rationale", "trial_review_after", "trial_expires_at"),
         "memory": ("id", "content", "memory_type", "category", "project", "created_at", "updated_at", "importance_score"),
         "cue": ("ref", "cue", "project", "severity", "scope", "title", "summary", "full_text", "source"),
+        "context_page": ("page_ref", "page_id", "parent_ref", "project", "page_kind", "page_index", "title", "summary", "content", "version", "status", "superseded_by_page_id"),
     }
     fields = fields_by_kind.get(kind)
     if not fields:

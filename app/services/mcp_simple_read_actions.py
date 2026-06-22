@@ -23,6 +23,7 @@ from app.services.context_cue_service import (
 )
 from app.services.cognitive_health_service import build_cognitive_health_packet
 from app.services.memory_store import get_memory_store
+from app.services.context_page_store import get_context_page_store
 from app.services.planning_advisor_service import build_next_work_advisor, is_planning_advisor_query
 from app.services.public_diagnostic_service import attach_public_diagnostic_incident
 from app.services.route_pattern_store import get_route_pattern_store
@@ -145,6 +146,17 @@ async def build_simple_public_ref_response(
                 dependencies=dependencies,
             )
             next_safe_action = "Review this read-only memory before creating new facts or updates."
+        elif kind == "context_page":
+            ref_source = "direct"
+            include_history = bool(args.get("include_history", False)) or bool(args.get("diagnostic", False))
+            result = get_context_page_store().get_page(
+                page_id=local_id,
+                include_history=include_history,
+            )
+            if result is None:
+                raise PublicRefNotFoundError("Context page ref did not resolve as an active page.")
+            normalized_ref = str(result.get("page_ref") or normalized_ref)
+            next_safe_action = "Use this context page as auxiliary read-only context, then return to the current workflow step."
         elif kind == "cue":
             ref_source = "direct"
             result = expand_context_cue(requested_ref, project=project, state=str(args.get("state") or ""))
@@ -165,7 +177,7 @@ async def build_simple_public_ref_response(
                 receipt={
                     "status": "unsupported_ref_kind",
                     "message": f"Mailbox public ref kind is not yet mapped to a read-only resolver: {kind}",
-                    "supported_ref_kinds": ["task", "improvement", "artifact", "law", "rule_candidate", "memory", "cue"],
+                    "supported_ref_kinds": ["task", "improvement", "artifact", "law", "rule_candidate", "memory", "context_page", "cue"],
                     "next_safe_action": "Use mailbox_state for available forms, or ask_project/project_work for natural read-only lookup.",
                 },
             )
@@ -491,6 +503,10 @@ def public_ref_address(args: dict[str, Any]) -> dict[str, str] | None:
                 "local_id": local_id,
                 "artifact_key": f"{kind}:{project}:{local_id}",
             }
+    if kind == "context_page" and len(parts) >= 2:
+        page_id = ":".join(parts[1:]).strip()
+        if page_id:
+            return {"kind": "context_page", "project": default_project, "local_id": page_id, "artifact_key": f"context_page:{page_id}"}
     if kind == "cue" and len(parts) >= 2:
         cue_id = ":".join(parts[1:]).strip()
         if cue_id:

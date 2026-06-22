@@ -1,0 +1,98 @@
+{
+  "id": "upsert_context_page",
+  "title": "Create or update context page",
+  "purpose": "Create an authoritative SQLite-backed context page or supersede an existing active page.",
+  "states": [
+    "planning",
+    "implementation",
+    "checkpointing"
+  ],
+  "mode": "write",
+  "required_fields": [
+    "project",
+    "parent_ref",
+    "page_kind",
+    "page_index",
+    "summary"
+  ],
+  "optional_fields": [
+    "page_id",
+    "title",
+    "content",
+    "created_by",
+    "updated_by",
+    "metadata"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {
+        "type": "string",
+        "default": "mnemoforge"
+      },
+      "parent_ref": {
+        "type": "string",
+        "description": "Parent artifact ref, e.g. task:project:id or improvement:project:id."
+      },
+      "page_id": {
+        "type": "string",
+        "description": "Existing page id to supersede; omit to create a new page."
+      },
+      "page_kind": {
+        "type": "string",
+        "default": "entry"
+      },
+      "page_index": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1
+      },
+      "title": {
+        "type": "string"
+      },
+      "summary": {
+        "type": "string"
+      },
+      "content": {
+        "type": "string"
+      },
+      "created_by": {
+        "type": "string",
+        "default": "codex"
+      },
+      "updated_by": {
+        "type": "string",
+        "default": "codex"
+      },
+      "metadata": {
+        "type": "object",
+        "additionalProperties": true,
+        "default": {}
+      }
+    },
+    "required": [
+      "project",
+      "parent_ref",
+      "page_kind",
+      "page_index",
+      "summary"
+    ]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "validate"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": [
+    "record_progress"
+  ],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "context_page",
+      "mutation": true,
+      "review_mode": false
+    }
+  },
+  "public_hint": "Use this only after task framing approves paged context artifact writes. SQLite is source of truth; Qdrant is derived."
+}
