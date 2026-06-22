@@ -5023,6 +5023,61 @@ class TestMcpToolExecution:
         assert packet["receipt"]["claim_allowed"] is False
         assert packet["receipt"]["implementation_ready"] is False
 
+    async def test_mailbox_start_task_allows_approved_framing_for_improvement_projection(self):
+        async def fake_get(api_base: str, path: str):
+            return {
+                "task_id": "imp-1",
+                "linked_improvement_id": "imp-1",
+                "task_statement_incomplete": True,
+            }
+
+        async def fake_execute(name: str, args: dict, api_base: str, session_id: str | None):
+            assert name == "start_task_session"
+            assert args["task_id"] == "imp-1"
+            assert args["approved_framing"] == "Approved bounded implementation framing."
+            return json.dumps(
+                {
+                    "status": "started",
+                    "lease": {"lease_id": "lease-approved", "status": "active"},
+                    "work_token": "token-approved",
+                    "work_session": {"work_id": "work-approved", "status": "active"},
+                }
+            )
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            return {"readiness": {"ready_to_enter": True}, "required_rules": [], "risk_controls": []}
+
+        async def fake_identity_defaults(session_id: str | None):
+            return {}
+
+        form = mcp_sse.mailbox_form_by_id("start_task")
+        assert form is not None
+        packet = await mailbox_start_task(
+            form=form,
+            payload={
+                "project": "alpha",
+                "task_id": "imp-1",
+                "approved_framing": "Approved bounded implementation framing.",
+            },
+            state="planning",
+            project="alpha",
+            runtime_profile_id="strong_mcp_operator",
+            diagnostic=False,
+            api_base="http://test",
+            session_id="sess-approved",
+            dependencies=MailboxActionDependencies(
+                post=fake_post,
+                get=fake_get,
+                execute_tool=fake_execute,
+                get_session_identity_defaults=fake_identity_defaults,
+                task_mutation_guard=lambda **kwargs: None,
+            ),
+        )
+
+        assert packet["receipt"]["status"] == "started"
+        assert packet["receipt"]["work_token"] == "token-approved"
+        assert packet["receipt"]["edit_authority"]["status"] == "approved_implementation"
+
     async def test_mailbox_start_task_allows_reclaim_for_previously_started_projection(self):
         async def fake_get(api_base: str, path: str):
             if path == "/project/tasks/imp-1?project=alpha":

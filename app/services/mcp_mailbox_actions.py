@@ -550,10 +550,9 @@ async def mailbox_start_task(
         action="start_task",
         framing_version=candidate_framing_version,
     )
-    explicit_user_approval = bool(
-        str(payload.get("approved_framing") or "").strip()
-        and str(payload.get("approval_intent") or "").strip() == "user_approved_start"
-    )
+    explicit_framing = str(payload.get("approved_framing") or "").strip()
+    approval_intent = str(payload.get("approval_intent") or "user_approved_start").strip()
+    explicit_user_approval = bool(explicit_framing and approval_intent == "user_approved_start")
     candidate_is_autonomous = bool(normalize_autonomous_mode(candidate_mode).get("active"))
     if candidate_is_autonomous and not autonomous_mode.get("authority_granted") and not explicit_user_approval:
         return {
@@ -569,8 +568,7 @@ async def mailbox_start_task(
             },
             "next_safe_action": autonomous_mode["next_safe_action"],
         }
-    explicit_framing = str(payload.get("approved_framing") or "").strip()
-    approval_intent = str(payload.get("approval_intent") or "").strip()
+
     if dependencies.get is not None:
         try:
             task = await dependencies.get(
