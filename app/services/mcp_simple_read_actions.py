@@ -28,6 +28,7 @@ from app.services.public_diagnostic_service import attach_public_diagnostic_inci
 from app.services.route_pattern_store import get_route_pattern_store
 from app.services.stage_applicability_service import stage_applicability_metadata
 from app.services.mcp_workflow_specs import load_named_json_spec
+from app.services.mcp_user_explanation_service import user_explanation_for_artifact
 
 
 GetCallback = Callable[[str, str], Awaitable[Any]]
@@ -1693,6 +1694,7 @@ def compact_artifact_list_results(data: dict[str, Any], *, limit: int) -> dict[s
             "linked_artifact_key": item.get("linked_artifact_key"),
             "linked_status": item.get("linked_status"),
             "match_reason": item.get("match_reason"),
+            "user_explanation": user_explanation_for_artifact(item),
             "matched_topic_tags": item.get("matched_topic_tags"),
         }
         compact_items.append({key: value for key, value in compact.items() if value not in (None, "", [])})

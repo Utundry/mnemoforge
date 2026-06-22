@@ -10,6 +10,7 @@ from app.services.mcp_mailbox_read import (
 )
 from app.services.context_cue_service import context_cues_for_query
 from app.services.planning_advisor_service import task_framing_gaps_from_context
+from app.services.mcp_user_explanation_service import user_explanation_for_artifact, user_explanation_for_task
 
 
 SessionIdentityCallback = Callable[[str | None], Awaitable[dict[str, str]]]
@@ -345,7 +346,12 @@ def compact_resource_result(
         "cue": ("ref", "cue", "project", "severity", "scope", "title", "summary", "full_text", "source"),
     }
     fields = fields_by_kind.get(kind)
-    return {key: result.get(key) for key in fields if result.get(key) not in (None, "", [])} if fields else result
+    if not fields:
+        return result
+    compact = {key: result.get(key) for key in fields if result.get(key) not in (None, "", [])}
+    if kind in {"artifact", "improvement"}:
+        compact["user_explanation"] = user_explanation_for_artifact(result, kind=kind)
+    return {key: value for key, value in compact.items() if value not in (None, "", [])}
 
 
 def compact_task_resource(result: dict[str, Any], *, tool_surface_role: ToolSurfaceRoleCallback, state: str = "planning") -> dict[str, Any]:
@@ -359,6 +365,7 @@ def compact_task_resource(result: dict[str, Any], *, tool_surface_role: ToolSurf
         tool_surface_role=tool_surface_role,
     )
     return {
+        "user_explanation": user_explanation_for_task(result, state=state),
         "task_id": result.get("task_id") or task.get("task_id"),
         "status": result.get("status"),
         "title": task.get("title") or result.get("title"),

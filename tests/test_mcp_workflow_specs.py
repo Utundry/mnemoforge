@@ -1390,6 +1390,8 @@ def test_task_compact_resource_includes_spec_driven_framing_gaps() -> None:
         tool_surface_role=lambda _tool: "public_entrypoint",
     )
 
+    assert "not ready for implementation" in compact["user_explanation"].casefold()
+    assert "definition of done" in compact["user_explanation"].casefold()
     assert compact["task_framing_gaps"][0]["field"] == "definition_of_done"
     assert compact["task_framing_gaps"][0]["severity"] == "high"
     assert compact["task_framing_gaps"][0]["suggestions"]
@@ -1413,6 +1415,7 @@ def test_task_compact_resource_hides_framing_gaps_for_done_tasks() -> None:
     )
 
     assert compact["status"] == "done"
+    assert "completed" in compact["user_explanation"].casefold()
     assert compact["task_status"] == "done"
     assert "task_framing_gaps" not in compact
 

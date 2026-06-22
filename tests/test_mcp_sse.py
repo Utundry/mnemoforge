@@ -3967,6 +3967,7 @@ class TestMcpToolExecution:
         assert result["receipt"]["artifact_type"] == "improvement"
         assert result["result"]["items"][0]["artifact_key"] == "improvement:alpha:imp-1"
         assert result["result"]["items"][0]["type"] == "improvement"
+        assert "embryonic task candidate" in result["result"]["items"][0]["user_explanation"]
         assert "simple_interface" not in result
 
     async def test_simple_get_query_lists_mixed_tasks_and_improvements(self, monkeypatch):
