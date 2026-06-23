@@ -42,6 +42,7 @@ from app.services.stage_applicability_service import stage_allows_block
 from app.services.public_ref_index import AmbiguousPublicRefError, is_short_public_id
 from app.services.public_diagnostic_service import attach_public_diagnostic_incident
 from app.services.route_pattern_store import get_route_pattern_store
+from app.services.authority_classification_service import classify_improvement_authority
 
 
 PostCallback = Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -1397,6 +1398,35 @@ async def mailbox_create_improvement(
     evidence_refs = _string_list_arg(payload.get("evidence_refs"))
     if evidence_refs:
         description_parts.append("Evidence refs: " + ", ".join(evidence_refs))
+    authority = await _classify_create_improvement_authority(
+        api_base=api_base,
+        dependencies=dependencies,
+        project=project,
+        title=title,
+        summary=summary,
+        next_step=next_step,
+    )
+    if authority.get("suppress_improvement"):
+        receipt = _compact({
+            "status": "suppressed",
+            "form_id": form.id,
+            "mode": form.mode,
+            "message": "Proposed improvement duplicates an active project law.",
+            **authority,
+            "mutation_executed": False,
+            "implementation_ready": False,
+            "claim_allowed": False,
+            "framing_required": False,
+            "submitted_fields": sorted(str(key) for key in payload.keys()),
+            "next_safe_action": "Reference the matched project law instead of creating a duplicate product improvement.",
+        })
+        return {
+            "state": state,
+            "project": project,
+            "receipt": receipt,
+            "next_safe_action": receipt["next_safe_action"],
+            "result": {key: receipt[key] for key in receipt if key not in {"submitted_fields", "next_safe_action"}},
+        }
     uid, created = await get_improvements_store().upsert_by_title(
         title=title,
         description="\n".join(description_parts),
@@ -1458,6 +1488,7 @@ async def mailbox_create_improvement(
     result = {
         "id": str(uid),
         "artifact_key": f"improvement:{project}:{uid}",
+        **authority,
         "created": bool(created),
         "created_task": bool(created),
         "idempotent_reuse": not bool(created),
@@ -1491,6 +1522,11 @@ async def mailbox_create_improvement(
         runtime_profile_id=runtime_profile_id,
         diagnostic=diagnostic,
     )
+    packet["receipt"]["authority_layer"] = result.get("authority_layer")
+    packet["receipt"]["classification_reason"] = result.get("classification_reason")
+    packet["receipt"]["matched_law_ref"] = result.get("matched_law_ref")
+    packet["receipt"]["matched_law_title"] = result.get("matched_law_title")
+    packet["receipt"]["matched_law_status"] = result.get("matched_law_status")
     packet["receipt"]["task_id"] = canonical_task_id
     packet["receipt"]["canonical_task_id"] = canonical_task_id
     packet["receipt"]["task_artifact_key"] = task_artifact_key
@@ -1509,6 +1545,35 @@ async def mailbox_create_improvement(
     )
     packet["next_safe_action"] = packet["receipt"]["next_safe_action"]
     return packet
+
+
+async def _classify_create_improvement_authority(
+    *,
+    api_base: str,
+    dependencies: MailboxActionDependencies,
+    project: str,
+    title: str,
+    summary: str,
+    next_step: str,
+) -> dict[str, Any]:
+    laws: list[dict[str, Any]] = []
+    if dependencies.get is not None:
+        try:
+            data = await dependencies.get(
+                api_base,
+                f"/laws?project={quote(project, safe='')}&status=active&include_promoted=true&limit=100",
+            )
+            if isinstance(data, dict):
+                laws = [item for item in (data.get("items") or []) if isinstance(item, dict)]
+        except Exception:
+            laws = []
+    return _compact(classify_improvement_authority(
+        project=project,
+        title=title,
+        summary=summary,
+        next_step=next_step,
+        laws=laws,
+    ).public_dict())
 
 
 async def mailbox_store_memory(

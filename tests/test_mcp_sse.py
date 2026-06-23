@@ -1628,8 +1628,183 @@ class TestMcpToolExecution:
         assert data["receipt"]["framing_required"] is True
         assert "start_task" not in data["receipt"]["next_safe_action"]
         assert "_internal" not in data
+        task_posts = [item for item in posted if item[0] == "/project/tasks"]
+        change_posts = [item for item in posted if item[0].startswith("/project/tasks/")]
+        assert task_posts
+        assert change_posts
+
+    async def test_mailbox_submit_create_improvement_suppresses_duplicate_active_law(self, monkeypatch):
+        from app.services import improvements_store as improvements_store_mod
+
+        posted: list[tuple[str, dict]] = []
+
+        class FailingImprovementStore:
+            async def upsert_by_title(self, **kwargs):
+                raise AssertionError("duplicate law should not create an improvement")
+
+        async def fake_get(api_base: str, path: str):
+            assert path.startswith("/laws?")
+            return {
+                "items": [
+                    {
+                        "id": "law-1",
+                        "project": "alpha",
+                        "status": "active",
+                        "scope": "project",
+                        "title": "Laws live in memory, not in code",
+                        "statement": "Project laws must be represented as project-scoped knowledge artifacts and must not be embedded as private implementation assumptions.",
+                    }
+                ]
+            }
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "unexpected", **payload}
+
+        monkeypatch.setattr(improvements_store_mod, "get_improvements_store", lambda: FailingImprovementStore())
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "create_improvement",
+                "payload": {
+                    "project": "alpha",
+                    "title": "Laws live in memory, not in code",
+                    "summary": "Project laws must be represented as project-scoped knowledge artifacts and must not be embedded as private implementation assumptions.",
+                    "next_step": "Reference the existing project law.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "suppressed"
+        assert data["receipt"]["authority_layer"] == "duplicate_law"
+        assert data["receipt"]["matched_law_ref"] == "law:alpha:law-1"
+        assert data["receipt"]["mutation_executed"] is False
+        assert posted == []
+
+    async def test_mailbox_submit_create_improvement_classifies_product_capability(self, monkeypatch):
+        from uuid import UUID
+
+        from app.services import improvements_store as improvements_store_mod
+
+        improvement_id = UUID("cccccccc-cccc-4ccc-cccc-cccccccccccc")
+        posted: list[tuple[str, dict]] = []
+
+        class FakeImprovementStore:
+            async def upsert_by_title(self, **kwargs):
+                return improvement_id, True
+
+            async def get(self, uid):
+                return {
+                    "id": str(uid),
+                    "project": "alpha",
+                    "title": "Add public route incident packets",
+                    "description": "Expose compact diagnostics for wrong route selection.",
+                    "status": "open",
+                }
+
+        async def fake_get(api_base: str, path: str):
+            return {"items": []}
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "task-memory-id", **payload}
+
+        monkeypatch.setattr(improvements_store_mod, "get_improvements_store", lambda: FakeImprovementStore())
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "create_improvement",
+                "payload": {
+                    "project": "alpha",
+                    "title": "Add public route incident packets",
+                    "summary": "Expose compact diagnostics for wrong route selection.",
+                    "next_step": "Implement a generic public incident template.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["authority_layer"] == "product_capability"
         assert posted[0][0] == "/project/tasks"
-        assert posted[1][0].startswith("/project/tasks/")
+
+    async def test_mailbox_submit_create_improvement_keeps_law_application_gap_actionable(self, monkeypatch):
+        from uuid import UUID
+
+        from app.services import improvements_store as improvements_store_mod
+
+        improvement_id = UUID("dddddddd-dddd-4ddd-dddd-dddddddddddd")
+        posted: list[tuple[str, dict]] = []
+
+        class FakeImprovementStore:
+            async def upsert_by_title(self, **kwargs):
+                return improvement_id, True
+
+            async def get(self, uid):
+                return {
+                    "id": str(uid),
+                    "project": "alpha",
+                    "title": "Detect when laws are retrieved but not applied",
+                    "description": "Existing law is retrieved but not applied by recommendation ranking.",
+                    "status": "open",
+                }
+
+        async def fake_get(api_base: str, path: str):
+            return {
+                "items": [
+                    {
+                        "id": "law-2",
+                        "project": "alpha",
+                        "status": "active",
+                        "scope": "project",
+                        "title": "Laws live in memory, not in code",
+                        "statement": "Project laws must be represented as project-scoped knowledge artifacts and must not be embedded as private implementation assumptions.",
+                    }
+                ]
+            }
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": "task-memory-id", **payload}
+
+        monkeypatch.setattr(improvements_store_mod, "get_improvements_store", lambda: FakeImprovementStore())
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+
+        result = await mcp_sse._execute_tool(
+            "mailbox_submit",
+            {
+                "project": "alpha",
+                "state": "planning",
+                "form_id": "create_improvement",
+                "payload": {
+                    "project": "alpha",
+                    "title": "Detect when laws are retrieved but not applied",
+                    "summary": "The existing law about laws living in memory is retrieved but not applied by recommendation ranking.",
+                    "next_step": "Return an application-gap diagnostic instead of duplicating the law.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["authority_layer"] == "application_gap"
+        assert data["receipt"]["matched_law_ref"] == "law:alpha:law-2"
+        assert posted[0][0] == "/project/tasks"
 
     async def test_simple_submit_create_improvement_allows_explicit_cross_project_target(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
