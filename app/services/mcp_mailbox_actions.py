@@ -1431,6 +1431,9 @@ async def mailbox_create_improvement(
     if source_project and source_project != project:
         task_payload["tags"].append(f"source_project:{source_project}")
     task_result = await dependencies.post(api_base, "/project/tasks", task_payload)
+    canonical_task_id = str(task_result.get("task_id") or task_id)
+    task_artifact_key = f"task:{project}:{canonical_task_id}"
+    canonical_task_status = str(task_result.get("status") or "planning")
     await dependencies.post(
         api_base,
         f"/project/tasks/{quote(task_id, safe='')}/changes",
@@ -1456,10 +1459,15 @@ async def mailbox_create_improvement(
         "id": str(uid),
         "artifact_key": f"improvement:{project}:{uid}",
         "created": bool(created),
+        "created_task": bool(created),
+        "idempotent_reuse": not bool(created),
         "title": task_payload["title"],
-        "task_id": task_id,
-        "linked_artifact_key": f"task:{project}:{task_id}",
-        "task_status": task_result.get("status") or "planning",
+        "task_id": canonical_task_id,
+        "canonical_task_id": canonical_task_id,
+        "task_artifact_key": task_artifact_key,
+        "linked_artifact_key": task_artifact_key,
+        "task_status": canonical_task_status,
+        "canonical_status": canonical_task_status,
         "lifecycle_stage": "proposal",
         "implementation_ready": False,
         "claim_allowed": False,
@@ -1483,9 +1491,14 @@ async def mailbox_create_improvement(
         runtime_profile_id=runtime_profile_id,
         diagnostic=diagnostic,
     )
-    packet["receipt"]["task_id"] = task_id
+    packet["receipt"]["task_id"] = canonical_task_id
+    packet["receipt"]["canonical_task_id"] = canonical_task_id
+    packet["receipt"]["task_artifact_key"] = task_artifact_key
     packet["receipt"]["linked_artifact_key"] = result["linked_artifact_key"]
     packet["receipt"]["task_status"] = result["task_status"]
+    packet["receipt"]["canonical_status"] = result["canonical_status"]
+    packet["receipt"]["created_task"] = result["created_task"]
+    packet["receipt"]["idempotent_reuse"] = result["idempotent_reuse"]
     packet["receipt"]["lifecycle_stage"] = result["lifecycle_stage"]
     packet["receipt"]["implementation_ready"] = False
     packet["receipt"]["claim_allowed"] = False

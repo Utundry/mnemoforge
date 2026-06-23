@@ -257,13 +257,15 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
         }
     elif route["intent_type"] == "create_task":
         summary = str(args.get("summary") or args.get("raw_notes") or intent).strip()
-        explicit_title_source = str(args.get("title") or "").strip()
-        if not explicit_title_source and re.search(r"\btitle\s*[:=]?\s*['\"]", intent, flags=re.IGNORECASE):
-            explicit_title_source = intent
-        title = _title_from_text(
-            explicit_title_source or summary or intent,
+        explicit_title_arg = str(args.get("title") or "").strip()
+        title_source = explicit_title_arg
+        if not title_source and re.search(r"\btitle\s*[:=]?\s*['\"]", intent, flags=re.IGNORECASE):
+            title_source = intent
+        title = explicit_title_arg or _title_from_text(
+            title_source or summary or intent,
             fallback="New project improvement",
         )
+        title = title[:256].strip() or "New project improvement"
         next_step = str(args.get("next_step") or "").strip() or "Review and complete task framing before implementation."
         route["tool"] = "mailbox_submit"
         route["payload"] = {
