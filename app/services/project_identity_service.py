@@ -228,3 +228,62 @@ def resolve_project_id(project_id: str | None) -> str:
 
 def project_lookup_ids(project_id: str | None) -> list[str]:
     return get_project_identity_store().aliases_for(project_id)
+
+
+def project_identity_envelope(
+    *,
+    requested_project: str | None,
+    observed_project: str | None = None,
+) -> dict:
+    """Return a compact explanation for project alias resolution in public responses."""
+    store = get_project_identity_store()
+    requested = _clean_project_id(requested_project)
+    observed = _clean_project_id(observed_project)
+    canonical = store.resolve(requested or observed or None)
+    aliases = store.list_aliases(canonical)
+    alias_names = {str(item.get("alias") or "") for item in aliases}
+    matched_alias = ""
+    if requested and requested != canonical and store.resolve(requested) == canonical:
+        matched_alias = requested
+    elif observed and observed != canonical and store.resolve(observed) == canonical:
+        matched_alias = observed
+    elif requested and requested in alias_names:
+        matched_alias = requested
+    elif observed and observed in alias_names:
+        matched_alias = observed
+
+    public_alias = _clean_project_id(settings.public_project_alias)
+    current_project = public_alias if public_alias and store.resolve(public_alias) == canonical else canonical
+    known_aliases = []
+    for item in aliases:
+        alias = str(item.get("alias") or "")
+        if not alias:
+            continue
+        known_aliases.append(
+            {
+                key: value
+                for key, value in {
+                    "alias": alias,
+                    "project_id": item.get("project_id"),
+                    "status": item.get("status"),
+                    "reason": item.get("reason"),
+                    "effective_from": item.get("effective_from"),
+                    "effective_to": item.get("effective_to"),
+                    "current": alias == current_project,
+                }.items()
+                if value not in (None, "", [])
+            }
+        )
+
+    return {
+        key: value
+        for key, value in {
+            "requested_project": requested,
+            "canonical_project": canonical,
+            "current_project": current_project,
+            "matched_alias": matched_alias,
+            "known_aliases": known_aliases,
+            "resolution_source": "project_identity_aliases" if known_aliases else "identity_default",
+        }.items()
+        if value not in (None, "", [])
+    }

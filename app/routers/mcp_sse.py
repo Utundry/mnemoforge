@@ -108,6 +108,7 @@ from app.services.mcp_project_work_routing import (
 )
 from app.services.planning_advisor_service import collaborative_control_packet
 from app.services.task_reconciliation_service import COVERED_DECISIONS, get_task_reconciliation_store
+from app.services.project_identity_service import project_identity_envelope
 from app.services.mcp_project_rules_routing import (
     PROJECT_RULES_ROUTE_CATALOG as _PROJECT_RULES_ROUTE_CATALOG,
     project_rules_route,
@@ -4419,11 +4420,16 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
     await _session_observe(session_id, "project_work:route", {"route_telemetry": route_telemetry})
     maintenance_suggestion = _project_work_maintenance_suggestion(route=route, args=args)
 
+    payload_project = route["payload"].get("project") or route["payload"].get("project_id") or args.get("project") or "mnemoforge"
     payload = {
         "status": "executed" if executed else "planned",
         "action_status": action_card["action_status"],
         "facade": "project_work",
-        "project": route["payload"].get("project") or route["payload"].get("project_id") or args.get("project") or "mnemoforge",
+        "project": payload_project,
+        "project_identity": project_identity_envelope(
+            requested_project=str(args.get("project") or payload_project),
+            observed_project=str(payload_project),
+        ),
         "intent": str(args.get("intent") or "").strip(),
         "agent_action": action_card,
         "selected_route": {
@@ -7134,6 +7140,7 @@ async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) 
             "status": "no_open_task",
             "next_safe_action": "Create or reopen a project task before continuing.",
         }
+        payload.setdefault("project_identity", project_identity_envelope(requested_project=project, observed_project=project))
         payload["token_budget"] = _estimate_response_tokens(payload, budget_args)
         payload["token_overhead"] = payload["token_budget"]
         return payload
@@ -7158,6 +7165,7 @@ async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) 
                 "do not start work from pull_task_context."
             ),
         }
+        payload.setdefault("project_identity", project_identity_envelope(requested_project=project, observed_project=project))
         payload["token_budget"] = _estimate_response_tokens(payload, budget_args)
         payload["token_overhead"] = payload["token_budget"]
         return payload
@@ -7219,6 +7227,7 @@ async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) 
         "resume_handoffs": handoffs[:5],
         "recommended_first_tool": "record_task_checkpoint" if not latest_checkpoint else "pull_task_context",
     }
+    payload.setdefault("project_identity", project_identity_envelope(requested_project=project, observed_project=project))
     payload["replay_bundle"] = _build_replay_bundle(
         project=project,
         task_id=task_id,
@@ -8426,6 +8435,14 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
         data = _prepare_open_work_items(data, limit=int(args.get("limit", 50)))
         data = _annotate_open_tasks_with_claims(data, args)
         data = _annotate_open_tasks_with_assignment_safety(data, args)
+        if isinstance(data, dict):
+            data.setdefault(
+                "project_identity",
+                project_identity_envelope(
+                    requested_project=str(args.get("project") or args.get("project_id") or ""),
+                    observed_project=str(data.get("project") or args.get("project") or args.get("project_id") or ""),
+                ),
+            )
         return format_list_open_tasks_response(data)
     elif name == "normalize_mcp_intent":
         payload = build_normalize_mcp_intent_payload(args)

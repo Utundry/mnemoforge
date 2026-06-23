@@ -113,3 +113,30 @@ def test_project_identity_store_migrates_effective_dates(tmp_path: Path):
         assert listed["effective_to"] == 789.0
     finally:
         store.close()
+
+
+def test_project_identity_envelope_exposes_current_alias_and_dates(monkeypatch):
+    original_connect = pis.sqlite3.connect
+    pis.sqlite3.connect = lambda *args, **kwargs: original_connect(":memory:", check_same_thread=False)
+    try:
+        monkeypatch.setattr(pis.settings, "public_project_alias", "sloplesscode", raising=False)
+        store = ProjectIdentityStore(Path("qdrant_data") / "project_identity_test.db")
+        monkeypatch.setattr(pis, "_STORE", store, raising=False)
+        store.upsert_alias(alias="mnemoforge", project_id="mnemoforge", reason="canonical", effective_from=100.0)
+        store.upsert_alias(alias="supermemory", project_id="mnemoforge", reason="old name", effective_from=200.0, effective_to=300.0)
+        store.upsert_alias(alias="sloplesscode", project_id="mnemoforge", reason="public rename", effective_from=400.0)
+
+        envelope = pis.project_identity_envelope(requested_project="sloplesscode", observed_project="supermemory")
+
+        assert envelope["requested_project"] == "sloplesscode"
+        assert envelope["canonical_project"] == "mnemoforge"
+        assert envelope["current_project"] == "sloplesscode"
+        assert envelope["matched_alias"] == "sloplesscode"
+        assert envelope["resolution_source"] == "project_identity_aliases"
+        aliases = {item["alias"]: item for item in envelope["known_aliases"]}
+        assert aliases["supermemory"]["effective_to"] == 300.0
+        assert aliases["sloplesscode"]["current"] is True
+    finally:
+        store.close()
+        monkeypatch.setattr(pis, "_STORE", None, raising=False)
+        pis.sqlite3.connect = original_connect

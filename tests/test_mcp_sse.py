@@ -3183,6 +3183,10 @@ class TestMcpToolExecution:
         assert result["result"]["aliases"][1]["alias"] == "sloplesscode"
         assert result["result"]["aliases"][1]["effective_from"] == 200.0
         assert result["result"]["aliases"][1]["effective_to"] == 300.0
+        assert result["project_identity"]["requested_project"] == "sloplesscode"
+        assert result["project_identity"]["canonical_project"] in {"mnemoforge", "sloplesscode"}
+        assert result["project_identity"]["matched_alias"] == "sloplesscode"
+        assert any(alias["alias"] == "sloplesscode" for alias in result["project_identity"]["known_aliases"])
 
     async def test_simple_get_resolves_short_improvement_refs(self, monkeypatch):
         from app.services.public_ref_index import get_public_ref_index_store
@@ -8544,6 +8548,7 @@ class TestMcpToolExecution:
         result = await mcp_sse._execute_tool("list_open_tasks", {"project": "alpha", "limit": 5}, "http://test")
 
         assert "Available open work items: 1" in result
+        assert "Project identity: requested=alpha" in result
         assert "Fix memory attribution" in result
         assert "type=improvement" in result
         assert "Raw memory must become visible governed work." in result

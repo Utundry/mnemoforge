@@ -1269,6 +1269,21 @@ def format_list_open_tasks_response(data: dict[str, Any]) -> str:
     else:
         heading = f"Available open {noun}: {len(items)}"
     lines = [heading]
+    project_identity = data.get("project_identity") if isinstance(data.get("project_identity"), dict) else {}
+    if project_identity:
+        alias_names = [
+            str(item.get("alias") or "")
+            for item in project_identity.get("known_aliases") or []
+            if isinstance(item, dict) and str(item.get("alias") or "").strip()
+        ]
+        lines.append(
+            "Project identity: "
+            f"requested={project_identity.get('requested_project')} "
+            f"canonical={project_identity.get('canonical_project')} "
+            f"current={project_identity.get('current_project')} "
+            f"matched_alias={project_identity.get('matched_alias')} "
+            f"aliases={', '.join(alias_names[:8])}"
+        )
     for i, item in enumerate(items, 1):
         linked = item.get("linked_artifact_key") or item.get("linked_status") or ""
         suffix = f" linked={linked}" if linked else ""

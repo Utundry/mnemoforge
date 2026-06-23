@@ -31,6 +31,7 @@ from app.services.route_pattern_store import get_route_pattern_store
 from app.services.stage_applicability_service import stage_applicability_metadata
 from app.services.mcp_workflow_specs import load_named_json_spec
 from app.services.mcp_user_explanation_service import user_explanation_for_artifact
+from app.services.project_identity_service import project_identity_envelope
 
 
 GetCallback = Callable[[str, str], Awaitable[Any]]
@@ -54,6 +55,28 @@ class PublicRefDependencies:
     get: GetCallback
     get_task_context: TaskRefCallback
     public_error_message: PublicErrorCallback
+
+
+def attach_project_identity(
+    packet: dict[str, Any],
+    *,
+    requested_project: str | None,
+    observed_project: str | None = None,
+) -> dict[str, Any]:
+    if not isinstance(packet, dict):
+        return packet
+    project = observed_project or str(packet.get("project") or "")
+    if not (requested_project or project):
+        return packet
+    enriched = dict(packet)
+    enriched.setdefault(
+        "project_identity",
+        project_identity_envelope(
+            requested_project=requested_project or project,
+            observed_project=project,
+        ),
+    )
+    return enriched
 
 
 async def build_simple_public_ref_response(
@@ -547,6 +570,10 @@ async def build_simple_get_query_response(
         return {
             "state": state,
             "project": project_id,
+            "project_identity": project_identity_envelope(
+                requested_project=project_id,
+                observed_project=str(data.get("project_id") or "") if isinstance(data, dict) else project_id,
+            ),
             "receipt": {
                 "status": "accepted",
                 "message": "Project identity aliases resolved through the public read surface.",
@@ -591,7 +618,7 @@ async def build_simple_get_query_response(
             dependencies=dependencies,
         )
         if routed is not None:
-            return routed
+            return attach_project_identity(routed, requested_project=project, observed_project=str(routed.get("project") or project))
     learned_route = get_route_pattern_store().match(
         facade="get",
         pattern=query,
@@ -610,7 +637,7 @@ async def build_simple_get_query_response(
             dependencies=dependencies,
         )
         if routed is not None:
-            return routed
+            return attach_project_identity(routed, requested_project=project, observed_project=str(routed.get("project") or project))
     memory_lookup_id = explicit_memory_lookup_id(query)
     if memory_lookup_id:
         if not project:
@@ -1859,6 +1886,10 @@ def _public_ref_envelope(
     packet = {
         "state": str(args.get("state") or "planning"),
         "project": project,
+        "project_identity": project_identity_envelope(
+            requested_project=str(args.get("project") or project),
+            observed_project=project,
+        ),
         "receipt": public_receipt,
         "next_safe_action": safe_action,
     }
