@@ -8,6 +8,7 @@ from app.services.task_lease_service import (
     TaskLeaseConflict,
     TaskLeaseUnavailable,
     WorkTokenMismatch,
+    find_continuity_lease_for_mutation,
     get_task_lease_store,
     stop_task_lease_auto_heartbeat,
     verify_work_token_for_mutation,
@@ -49,8 +50,19 @@ def task_mutation_requires_owned_claim(
             "next_safe_action": "Provide task_id for mutating task operations.",
         }
 
-    active = get_task_lease_store().get_active_claim(project=project_clean, task_id=task_clean)
+    store = get_task_lease_store()
+    active = store.get_active_claim(project=project_clean, task_id=task_clean)
     if active is None:
+        continuity_lease = find_continuity_lease_for_mutation(
+            store=store,
+            project=project_clean,
+            task_id=task_clean,
+            owner_agent=owner_clean,
+            session_id=session_clean,
+            work_token=work_token_clean,
+        )
+        if continuity_lease is not None:
+            return None
         if not bypass_authorized:
             return {
                 "status": "conflict",
@@ -59,15 +71,16 @@ def task_mutation_requires_owned_claim(
                 "project": project_clean,
                 "task_id": task_clean,
                 "claim_allowed": False,
+                "continuity_reclaim_available": bool(work_token_clean and session_clean),
                 "next_safe_action": (
-                    "Submit start_task again with the same task_id and agent_fingerprint to reclaim free work "
-                    "after TTL/session loss, or start another task if someone else claimed it."
+                    "Pass the original owner_agent, session_id, and work_token to continue or finish after TTL/session loss; "
+                    "otherwise submit start_task to claim available work."
                 ),
             }
         return None
 
     if work_token_clean and verify_work_token_for_mutation(
-        store=get_task_lease_store(),
+        store=store,
         lease_id=active.lease_id,
         work_token=work_token_clean,
         task_id=task_clean,
@@ -114,7 +127,7 @@ def task_mutation_requires_owned_claim(
                 "next_safe_action": "Pass work_token from start_task_session for mutating operations.",
             }
     elif not verify_work_token_for_mutation(
-        store=get_task_lease_store(),
+        store=store,
         lease_id=active.lease_id,
         work_token=work_token_clean,
         task_id=task_clean,

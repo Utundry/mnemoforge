@@ -87,6 +87,70 @@ def test_mcp_task_mutation_guard_accepts_valid_work_token(monkeypatch) -> None:
     assert guard is None
 
 
+def test_mcp_task_mutation_guard_accepts_same_owner_continuity_after_expired_claim(monkeypatch) -> None:
+    store = TaskLeaseStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", store)
+    now = _now()
+    try:
+        claim = store.claim(
+            project="alpha",
+            task_id="task-continuity",
+            owner_agent="codex",
+            session_id="sess-continuity",
+            lease_ttl_seconds=5,
+            now=now,
+        )
+        store.expire_stale(now=now + timedelta(seconds=10))
+        guard = task_mutation_requires_owned_claim(
+            project="alpha",
+            task_id="task-continuity",
+            owner_agent="codex",
+            owner_session_id="sess-continuity",
+            tool_name="record_task_checkpoint",
+            work_token=claim.work_token,
+        )
+    finally:
+        store.close()
+
+    assert guard is None
+
+
+def test_mcp_task_mutation_guard_blocks_active_other_owner_even_with_old_token(monkeypatch) -> None:
+    store = TaskLeaseStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", store)
+    now = datetime.now(timezone.utc)
+    try:
+        first = store.claim(
+            project="alpha",
+            task_id="task-takeover",
+            owner_agent="codex",
+            session_id="sess-codex",
+            lease_ttl_seconds=5,
+            now=now,
+        )
+        store.expire_stale(now=now + timedelta(seconds=10))
+        store.claim(
+            project="alpha",
+            task_id="task-takeover",
+            owner_agent="other",
+            session_id="sess-other",
+            now=now + timedelta(seconds=11),
+        )
+        guard = task_mutation_requires_owned_claim(
+            project="alpha",
+            task_id="task-takeover",
+            owner_agent="codex",
+            owner_session_id="sess-codex",
+            tool_name="record_task_checkpoint",
+            work_token=first.work_token,
+        )
+    finally:
+        store.close()
+
+    assert guard is not None
+    assert guard["error"] == "lease_owner_mismatch"
+
+
 async def test_mcp_start_task_session_action_starts_work_and_checkpoint(monkeypatch) -> None:
     from app.services import stenographer_service as stenographer_mod
 
@@ -193,6 +257,73 @@ async def test_mcp_finish_task_session_action_finishes_work_and_releases(monkeyp
     assert data["work_session"]["status"] == "completed"
     assert posted[0][0] == "/project/tasks/task-finish/changes"
 
+
+async def test_mcp_finish_task_session_uses_same_owner_continuity_after_expired_claim(monkeypatch) -> None:
+    from app.services import stenographer_service as stenographer_mod
+
+    lease_store = TaskLeaseStore(Path(":memory:"))
+    stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+    monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+    now = _now()
+    claim = lease_store.claim(
+        project="alpha",
+        task_id="task-finish-continuity",
+        owner_agent="codex",
+        session_id="sess-finish-continuity",
+        lease_ttl_seconds=5,
+        now=now,
+    )
+    work = stenographer_store.start_work_session(
+        project="alpha",
+        task_id="task-finish-continuity",
+        agent_id="codex",
+        session_id="sess-finish-continuity",
+        summary="Active work survives lease expiry.",
+    )
+    lease_store.expire_stale(now=now + timedelta(seconds=10))
+    posted: list[tuple[str, dict]] = []
+
+    async def fake_post(api_base: str, path: str, payload: dict) -> dict:
+        posted.append((path, payload))
+        if path.endswith("/changes"):
+            return {"id": "checkpoint-continuity-finish", **payload}
+        return {"status": "ok"}
+
+    async def fake_identity_defaults(session_id: str | None) -> dict[str, str]:
+        return {}
+
+    try:
+        data = await finish_task_session_action(
+            args={
+                "project": "alpha",
+                "task_id": "task-finish-continuity",
+                "agent_id": "codex",
+                "session_id": "sess-finish-continuity",
+                "work_id": work.work_id,
+                "work_token": claim.work_token,
+                "summary": "Finished through continuity.",
+                "changed_files": ["app/services/mcp_task_session_actions.py"],
+                "verification": ["Docker contour passed."],
+                "next_step": "No follow-up.",
+            },
+            api_base="http://test",
+            session_id="sess-finish-continuity",
+            dependencies=TaskSessionActionDependencies(
+                post=fake_post,
+                get_session_identity_defaults=fake_identity_defaults,
+            ),
+        )
+    finally:
+        lease_store.close()
+        stenographer_store.close()
+
+    assert data["status"] == "finished"
+    assert data["continuity_reclaim"] is True
+    assert data["release"]["status"] == "continuity_reclaim"
+    assert data["release"]["lease"]["status"] == "expired"
+    assert data["work_session"]["status"] == "completed"
+    assert posted[0][0] == "/project/tasks/task-finish-continuity/changes"
 
 def test_mcp_work_session_action_uses_mutation_guard(monkeypatch) -> None:
     from app.services import stenographer_service as stenographer_mod

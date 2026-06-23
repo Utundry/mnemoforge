@@ -578,6 +578,41 @@ class TaskLeaseStore:
         computed = _hash_work_token(work_token)
         return stored_hash == computed
 
+    def latest_continuity_lease(
+        self,
+        *,
+        project: str,
+        task_id: str,
+        owner_agent: str,
+        session_id: str = "",
+        work_token: str = "",
+    ) -> TaskLeaseRecord | None:
+        """Find the latest non-active lease that proves same-owner continuity."""
+        project = _clean_text(project, 128)
+        task_id = _clean_text(task_id, 128)
+        owner_agent = _clean_text(owner_agent, 128)
+        session_id = _clean_text(session_id, 256)
+        work_token = str(work_token or "").strip()
+        if not project or not task_id or not owner_agent or not session_id or not work_token:
+            return None
+        token_hash = _hash_work_token(work_token)
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT * FROM task_leases
+                 WHERE project = ? AND task_id = ? AND owner_agent = ? AND session_id = ?
+                   AND status != 'active'
+                 ORDER BY heartbeat_at DESC
+                 LIMIT 1
+                """,
+                (project, task_id, owner_agent, session_id),
+            ).fetchone()
+        if not row:
+            return None
+        lease = self._row_to_lease(row)
+        if not lease.work_token_hash or lease.work_token_hash != token_hash:
+            return None
+        return lease
 
 class TaskLeaseHeartbeatHandle:
     def __init__(
@@ -725,6 +760,25 @@ def verify_work_token_for_mutation(
     """
     return store.verify_work_token(lease_id=lease_id, work_token=work_token)
 
+
+
+def find_continuity_lease_for_mutation(
+    *,
+    store: TaskLeaseStore,
+    project: str,
+    task_id: str,
+    owner_agent: str,
+    session_id: str,
+    work_token: str,
+) -> TaskLeaseRecord | None:
+    """Return the latest non-active lease proving same-owner continuity."""
+    return store.latest_continuity_lease(
+        project=project,
+        task_id=task_id,
+        owner_agent=owner_agent,
+        session_id=session_id,
+        work_token=work_token,
+    )
 
 def redact_work_token_from_result(result: dict) -> dict:
     """Remove work_token from any result dict for safe public/log output."""

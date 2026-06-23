@@ -11,6 +11,7 @@ from app.services.stenographer_service import ProtocolViolation, get_stenographe
 from app.services.task_lease_service import (
     TaskLeaseConflict,
     WorkTokenMismatch,
+    find_continuity_lease_for_mutation,
     get_task_lease_store,
     start_task_lease_auto_heartbeat,
     stop_task_lease_auto_heartbeat,
@@ -224,15 +225,32 @@ async def finish_task_session_action(
 
     lease_store = get_task_lease_store()
     active = lease_store.get_active_claim(project=project, task_id=task_id)
+    continuity_lease = None
+    continuity_reclaim = False
     if active is None:
-        if not (danger_mode and danger_confirmation == "authorize_session_bypass"):
+        continuity_lease = find_continuity_lease_for_mutation(
+            store=lease_store,
+            project=project,
+            task_id=task_id,
+            owner_agent=owner_agent,
+            session_id=lease_session_id,
+            work_token=work_token,
+        )
+        continuity_reclaim = continuity_lease is not None
+        if not continuity_reclaim and not (danger_mode and danger_confirmation == "authorize_session_bypass"):
             return {
                 "status": "conflict",
                 "error": "active_claim_required",
                 "project": project,
                 "task_id": task_id,
                 "claim_allowed": False,
-                "next_safe_action": "Call start_task_session before finishing task work.",
+                "continuity_reclaim_available": bool(work_token and lease_session_id),
+                "recommended_reclaim_call": {
+                    "tool": "submit",
+                    "form_id": "finish_task",
+                    "payload_fields": ["project", "task_id", "owner_agent", "session_id", "work_id", "work_token"],
+                },
+                "next_safe_action": "Pass original owner_agent, session_id, work_id, and work_token to finish after TTL/session loss, or call start_task to claim available work.",
             }
 
     work_token_valid = False
@@ -274,6 +292,12 @@ async def finish_task_session_action(
             session_id=lease_session_id,
         )
         if active_work is None and work_token_valid:
+            active_work = session_store.get_active_work_by_task_any_session(
+                project=project,
+                task_id=task_id,
+                agent_id=owner_agent,
+            )
+        if active_work is None and continuity_reclaim:
             active_work = session_store.get_active_work_by_task_any_session(
                 project=project,
                 task_id=task_id,
@@ -349,7 +373,7 @@ async def finish_task_session_action(
                 content=next_step_text,
             )
     try:
-        if work_token_valid:
+        if work_token_valid or continuity_reclaim:
             work = session_store.end_work_session_by_work_id(
                 work_id=work_id,
                 status=str(args.get("status") or "completed"),
@@ -382,10 +406,17 @@ async def finish_task_session_action(
             "lease": released.model_dump(mode="json"),
         }
     else:
-        release_payload = {
-            "status": "bypassed",
-            "note": "No active lease to release; danger_mode bypass was used.",
-        }
+        if continuity_reclaim and continuity_lease is not None:
+            release_payload = {
+                "status": "continuity_reclaim",
+                "note": "No active lease existed; same-owner continuity evidence authorized finish without a manual start_task workaround.",
+                "lease": continuity_lease.model_dump(mode="json"),
+            }
+        else:
+            release_payload = {
+                "status": "bypassed",
+                "note": "No active lease to release; danger_mode bypass was used.",
+            }
 
     resolved = False
     get = dependencies.get
@@ -435,7 +466,13 @@ async def finish_task_session_action(
         "checkpoint": checkpoint,
         "work_session": work.model_dump(mode="json"),
         "release": release_payload,
-        "next_safe_action": "If release.status is conflict, coordinate with current owner or use force_release_task_claim.",
+        "continuity_reclaim": continuity_reclaim,
+        "continuity_lease": continuity_lease.model_dump(mode="json") if continuity_lease else None,
+        "next_safe_action": (
+            "Task finished by same-owner continuity evidence after TTL/session loss."
+            if continuity_reclaim
+            else "If release.status is conflict, coordinate with current owner or use force_release_task_claim."
+        ),
     }
 
 

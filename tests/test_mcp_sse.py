@@ -549,6 +549,80 @@ class TestMcpToolExecution:
             lease_store.close()
             stenographer_store.close()
 
+    async def test_mailbox_finish_task_uses_continuity_after_expired_claim(self, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+        from app.services import stenographer_service as stenographer_mod
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            if path.startswith("/project/tasks/") and path.endswith("/changes"):
+                return {"id": f"checkpoint-{payload.get('stage')}", **payload}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            started = json.loads(
+                await mcp_sse._execute_tool(
+                    "submit",
+                    {
+                        "form_id": "start_task",
+                        "state": "planning",
+                        "project": "alpha",
+                        "payload": {
+                            "project": "alpha",
+                            "task_id": "task-mailbox-continuity-finish",
+                            "owner_agent": "codex",
+                            "session_id": "sess-mailbox-continuity",
+                            "auto_heartbeat": False,
+                            "approved_framing": "Approved continuity finish test framing.",
+                        },
+                    },
+                    "http://test",
+                )
+            )
+            token = started["receipt"]["work_token"]
+            work_id = started["receipt"]["work_session"]["work_id"]
+            lease_store.expire_stale(now=datetime.now(timezone.utc) + timedelta(hours=1))
+            assert lease_store.get_active_claim(project="alpha", task_id="task-mailbox-continuity-finish") is None
+
+            finished = json.loads(
+                await mcp_sse._execute_tool(
+                    "submit",
+                    {
+                        "form_id": "finish_task",
+                        "state": "checkpointing",
+                        "project": "alpha",
+                        "payload": {
+                            "project": "alpha",
+                            "task_id": "task-mailbox-continuity-finish",
+                            "owner_agent": "codex",
+                            "session_id": "sess-mailbox-continuity",
+                            "work_id": work_id,
+                            "work_token": token,
+                            "summary": "Finished through continuity after lease loss.",
+                            "changed_files": ["app/services/mcp_task_session_actions.py"],
+                            "verification": ["Docker contour passed."],
+                            "next_step": "No follow-up.",
+                        },
+                    },
+                    "http://test",
+                )
+            )
+
+            assert finished["receipt"]["status"] == "finished"
+            assert finished["receipt"]["continuity_reclaim"] is True
+            assert finished["receipt"]["release"]["status"] == "continuity_reclaim"
+            assert finished["receipt"]["work_session"]["status"] == "completed"
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
     async def test_mailbox_record_progress_evidence_allows_finish_without_repeating_evidence(self, monkeypatch):
         from app.services import stenographer_service as stenographer_mod
         from app.services import task_lease_service as lease_mod

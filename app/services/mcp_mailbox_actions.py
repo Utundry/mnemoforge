@@ -1099,6 +1099,9 @@ async def mailbox_finish_task(
     release = dict(result.get("release") or {})
     if isinstance(release.get("lease"), dict):
         release["lease"] = public_lease_payload(release.get("lease"))
+    continuity_lease = result.get("continuity_lease") if isinstance(result.get("continuity_lease"), dict) else None
+    if continuity_lease:
+        continuity_lease = public_lease_payload(continuity_lease)
     evidence_classification = classify_evidence_items(_string_list_arg(payload.get("verification")))
     actual_metadata = {"result_kind": "task_finished", "mutation": True}
     health = evaluate_mailbox_postconditions(form, actual_metadata)
@@ -1109,8 +1112,11 @@ async def mailbox_finish_task(
         "message": "Task session finished and claim release was attempted.",
         "task_id": result.get("task_id"),
         "release": release,
+        "work_session": result.get("work_session") if isinstance(result.get("work_session"), dict) else None,
+        "continuity_reclaim": bool(result.get("continuity_reclaim")),
+        "continuity_lease": continuity_lease,
         "evidence_classification": evidence_classification,
-        "next_safe_action": "Request mailbox_state for planning or handoff before starting more work.",
+        "next_safe_action": result.get("next_safe_action") or "Request mailbox_state for planning or handoff before starting more work.",
     }
     packet: dict[str, Any] = {"state": state, "project": project, "receipt": _compact(receipt), "next_safe_action": receipt["next_safe_action"]}
     if diagnostic:
