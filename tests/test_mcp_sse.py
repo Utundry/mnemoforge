@@ -2517,10 +2517,65 @@ class TestMcpToolExecution:
         assert data["result"]["lifecycle"]["contract"] == "governed_refinement_lifecycle"
         assert data["result"]["lifecycle"]["adapter"]["id"] == "route_pattern_feedback"
         assert data["result"]["lifecycle"]["postcondition"]["actual"]["active"] is False
+        assert data["receipt"]["diagnostic_incident"]["kind"] == "stale_learned_route"
+        assert data["receipt"]["diagnostic_incident"]["safe_next_action"] == data["receipt"]["next_safe_action"]
+        assert "route_telemetry" not in data["receipt"]["diagnostic_incident"]
         assert calls[0][0] == "match"
         assert calls[1][0] == "feedback"
         assert calls[2][0] == "disable"
         assert calls[2][1]["metadata"]["expected_tool"] == "memory_search"
+
+    async def test_mailbox_submit_route_feedback_records_route_misclassification_incident_without_disable(self, monkeypatch):
+        from app.services import mcp_mailbox_actions
+
+        calls: list[tuple[str, dict]] = []
+
+        class FakeRoutePatternStore:
+            def match(self, *, facade: str, pattern: str, allowed_intent_types=None, semantic_threshold: float = 0.6):
+                return {
+                    "pattern_id": "learned-route-2",
+                    "tool": "project_work",
+                    "intent_type": "next_priority",
+                }
+
+            def record_feedback(self, pattern_id: str, *, vote: str, reason: str = "", metadata: dict | None = None):
+                calls.append(("feedback", {"pattern_id": pattern_id, "vote": vote, "reason": reason, "metadata": metadata or {}}))
+                return {"pattern_id": pattern_id, "positive_feedback": 0, "negative_feedback": 1}
+
+            def disable_pattern(self, pattern_id: str, *, reason: str, metadata: dict | None = None):
+                raise AssertionError("disable=false should not disable the pattern")
+
+        monkeypatch.setattr(mcp_mailbox_actions, "get_route_pattern_store", lambda: FakeRoutePatternStore())
+
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "project": "alpha",
+                "state": "operator_review",
+                "form_id": "route_feedback",
+                "payload": {
+                    "project": "alpha",
+                    "facade": "ask_project",
+                    "query": "find memory with content usability report",
+                    "expected_tool": "memory_search",
+                    "actual_tool": "project_work",
+                    "disable": False,
+                    "reason": "Observed read query routed to work facade.",
+                },
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        incident = data["receipt"]["diagnostic_incident"]
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["feedback_action"] == "negative_recorded"
+        assert incident["kind"] == "route_misclassification"
+        assert incident["resource_kind"] == "route_selection"
+        assert incident["recommended_next_call"]["form_id"] == "route_feedback"
+        assert incident["safe_next_action"] == data["receipt"]["next_safe_action"]
+        assert "route_telemetry" not in incident
+        assert calls[0][0] == "feedback"
 
     async def test_mailbox_submit_route_feedback_can_reinforce_learned_pattern(self, monkeypatch):
         from app.services import mcp_mailbox_actions
@@ -2561,6 +2616,7 @@ class TestMcpToolExecution:
         assert data["receipt"]["status"] == "accepted"
         assert data["receipt"]["feedback_action"] == "positive_recorded"
         assert data["receipt"]["vote"] == "positive"
+        assert "diagnostic_incident" not in data["receipt"]
         assert calls[0][1]["metadata"]["language"] == "ru"
         assert calls[0][1]["metadata"]["jargon_terms"] == ["podnimi"]
 
@@ -6240,6 +6296,35 @@ class TestMcpToolExecution:
         assert data["weak_model_guardrail"]["confirmation_required"] is True
         assert data["weak_model_guardrail"]["do_not_claim_created"] is True
         assert "No task" in data["weak_model_guardrail"]["plain_instruction"]
+
+    async def test_project_work_diagnostic_marks_ambiguous_route_selection_without_normal_noise(self):
+        route = {
+            "route_candidates": [
+                {"intent_type": "pull_task_context", "score": 0.41},
+                {"intent_type": "next_priority", "score": 0.38},
+            ]
+        }
+        normal_incident = mcp_sse._route_diagnostic_incident_for_payload(
+            facade="project_work",
+            route=route,
+            args={"project": "alpha", "intent": "continue priority task", "scorer_backend": "lexical"},
+        )
+        assert normal_incident == {}
+
+        incident = mcp_sse._route_diagnostic_incident_for_payload(
+            facade="project_work",
+            route=route,
+            args={
+                "project": "alpha",
+                "intent": "continue priority task",
+                "diagnostic": True,
+                "scorer_backend": "lexical",
+            },
+        )
+        assert incident["kind"] == "ambiguous_route_selection"
+        assert incident["resource_kind"] == "route_selection"
+        assert incident["recommended_next_call"]["tool"] == "project_work"
+        assert "route_telemetry" not in incident
 
     async def test_project_work_create_task_preserves_explicit_title_from_text(self):
         result = await mcp_sse._execute_tool(

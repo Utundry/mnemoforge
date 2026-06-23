@@ -866,8 +866,17 @@ def test_public_diagnostic_incidents_are_compact_and_actionable() -> None:
     assert missing_project["diagnostic_incident"]["missing_fields"] == ["project"]
     assert missing_project["diagnostic_incident"]["safe_next_action"] == "Call get again with project set."
     assert "route_telemetry" not in missing_project["diagnostic_incident"]
+    route_incident = build_public_diagnostic_incident(
+        kind="route_misclassification",
+        safe_next_action="Retry with an explicit facade or submit route_feedback.",
+    )
+
     assert missing_claim["kind"] == "work_started_without_claim_or_missing_token"
     assert missing_claim["recommended_next_call"]["form_id"] == "start_task"
+    assert route_incident["kind"] == "route_misclassification"
+    assert route_incident["resource_kind"] == "route_selection"
+    assert route_incident["safe_next_action"] == "Retry with an explicit facade or submit route_feedback."
+    assert "route_telemetry" not in route_incident
     assert "secret-token-value" not in str(missing_claim)
 
 

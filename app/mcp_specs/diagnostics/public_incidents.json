@@ -6,8 +6,12 @@
       "summary": "Project-scoped read request did not include a project.",
       "why": "Project data is intentionally scoped. The system should not answer by scanning every project or silently falling back to a default project.",
       "likely_source": "The user or host omitted the project field for a project-scoped query.",
-      "missing_fields": ["project"],
-      "expand_refs": ["help:get.project_scope"]
+      "missing_fields": [
+        "project"
+      ],
+      "expand_refs": [
+        "help:get.project_scope"
+      ]
     },
     "work_started_without_claim_or_missing_token": {
       "severity": "high",
@@ -15,21 +19,29 @@
       "why": "Implementation work should begin only after start_task returns work_token, so the system can provide stage guidance, enforce ownership, and keep an auditable work trail.",
       "likely_source": "No active owned claim was found, or the work_token/session identity did not match the active claim.",
       "resource_kind": "task_progress",
-      "expand_refs": ["help:submit.start_task", "help:workflow.owned_claim"]
+      "expand_refs": [
+        "help:submit.start_task",
+        "help:workflow.owned_claim"
+      ]
     },
     "ambiguous_public_ref": {
       "severity": "medium",
       "summary": "A short public reference matched more than one artifact.",
       "why": "Short ids are convenient, but the system must not guess when multiple durable refs match the same prefix.",
       "likely_source": "The supplied ref/id prefix is too short for the current project data.",
-      "expand_refs": ["help:get.ref_resolution"]
+      "expand_refs": [
+        "help:get.ref_resolution"
+      ]
     },
     "public_ref_not_found": {
       "severity": "medium",
       "summary": "The requested public reference did not resolve through the read surface.",
       "why": "The ref may be mistyped, stale, from another project alias, or not yet indexed in the public ref table.",
       "likely_source": "The user or agent supplied a ref that is not currently resolvable in the selected project scope.",
-      "expand_refs": ["help:get.ref_resolution", "help:get.project_aliases"]
+      "expand_refs": [
+        "help:get.ref_resolution",
+        "help:get.project_aliases"
+      ]
     },
     "unknown_mailbox_form": {
       "severity": "medium",
@@ -37,7 +49,10 @@
       "why": "Mailbox forms are state-machine actions. The server should reject unknown forms instead of guessing a mutating operation.",
       "likely_source": "The agent used an old tool name, a typo, or an internal form that is not exposed by the current mailbox state.",
       "resource_kind": "mailbox_form",
-      "expand_refs": ["help:state.forms", "help:submit.form_id"]
+      "expand_refs": [
+        "help:state.forms",
+        "help:submit.form_id"
+      ]
     },
     "form_unavailable_in_state": {
       "severity": "medium",
@@ -45,7 +60,10 @@
       "why": "Workflow state controls which actions are safe. The server should explain the state mismatch and ask the agent to request the current state packet.",
       "likely_source": "The agent reused a form from an earlier state, the host restarted, or the workflow advanced while the agent kept an old packet.",
       "resource_kind": "mailbox_form",
-      "expand_refs": ["help:state.forms", "help:workflow.state"]
+      "expand_refs": [
+        "help:state.forms",
+        "help:workflow.state"
+      ]
     },
     "missing_required_fields": {
       "severity": "low",
@@ -53,7 +71,9 @@
       "why": "Public forms are intentionally explicit so weak clients can repair one field list instead of guessing hidden defaults.",
       "likely_source": "The agent submitted a partial form payload or copied a recommended call without filling all required fields.",
       "resource_kind": "mailbox_form",
-      "expand_refs": ["help:submit.required_fields"]
+      "expand_refs": [
+        "help:submit.required_fields"
+      ]
     },
     "mailbox_action_conflict": {
       "severity": "medium",
@@ -61,7 +81,10 @@
       "why": "Some failures happen after form validation: ownership checks, closeout evidence checks, stale task identity, or action-specific guardrails may still reject the operation.",
       "likely_source": "The agent has a valid public form but missing or stale runtime evidence for the requested transition.",
       "resource_kind": "mailbox_action",
-      "expand_refs": ["help:submit.action_conflict", "help:workflow.safe_retry"]
+      "expand_refs": [
+        "help:submit.action_conflict",
+        "help:workflow.safe_retry"
+      ]
     },
     "completion_requires_owned_claim": {
       "severity": "high",
@@ -69,7 +92,11 @@
       "why": "Marking work completed is stronger than archiving obsolete work. The system requires ownership proof before accepting completed status.",
       "likely_source": "The agent tried to close a task as completed through a cleanup form instead of claiming the task and submitting finish_task with work_token.",
       "resource_kind": "task_completion",
-      "expand_refs": ["help:submit.start_task", "help:submit.finish_task", "help:workflow.owned_claim"]
+      "expand_refs": [
+        "help:submit.start_task",
+        "help:submit.finish_task",
+        "help:workflow.owned_claim"
+      ]
     },
     "edit_authority_scope_drift": {
       "severity": "high",
@@ -77,7 +104,10 @@
       "why": "Explicit approval applies only to the latest user-visible framing. New causes, solution directions, subsystems, behaviors, risks, completion criteria, change sets, or ambiguity require renewed approval; separate work should be captured as an improvement instead of expanding the current task.",
       "likely_source": "The agent discovered a new hypothesis or expanded the task after implementation authority was granted.",
       "resource_kind": "edit_authority",
-      "expand_refs": ["cue:adherence:authority_before_editing", "help:workflow.scope_drift"]
+      "expand_refs": [
+        "cue:adherence:authority_before_editing",
+        "help:workflow.scope_drift"
+      ]
     },
     "autonomous_mode_denied": {
       "severity": "high",
@@ -85,7 +115,43 @@
       "why": "Autonomous mode is deny-by-default. Only the exhaustive approved task list, matching framing versions, allowed actions, validity window, and separate commit/live permissions grant authority.",
       "likely_source": "The grant expired, was revoked, omitted the task or action, or no longer matches the approved framing version.",
       "resource_kind": "autonomous_mode",
-      "expand_refs": ["cue:adherence:authority_before_editing", "help:workflow.autonomous_mode"]
+      "expand_refs": [
+        "cue:adherence:authority_before_editing",
+        "help:workflow.autonomous_mode"
+      ]
+    },
+    "route_misclassification": {
+      "severity": "medium",
+      "summary": "A request appears to have routed to the wrong public facade or tool.",
+      "why": "Wrong route selection can make an agent act on a misleading answer even when the underlying data is healthy. The system should expose a compact public incident and a safe retry path instead of requiring internal telemetry.",
+      "likely_source": "The request wording was ambiguous, a learned route overmatched, or the expected facade/tool was not explicit enough.",
+      "resource_kind": "route_selection",
+      "expand_refs": [
+        "help:route.feedback",
+        "help:route.diagnostics"
+      ]
+    },
+    "stale_learned_route": {
+      "severity": "medium",
+      "summary": "A learned route pattern appears stale or misleading and was invalidated.",
+      "why": "Learned route aliases improve weak-client ergonomics, but stale aliases can keep sending similar requests to the wrong route until feedback disables or repairs them.",
+      "likely_source": "A previously useful learned phrase no longer matches the current route contract or was trained from an over-broad example.",
+      "resource_kind": "learned_route_pattern",
+      "expand_refs": [
+        "help:route.feedback",
+        "help:route.hygiene"
+      ]
+    },
+    "ambiguous_route_selection": {
+      "severity": "low",
+      "summary": "The request had multiple plausible route interpretations.",
+      "why": "When route candidates are close, the safest public response is to ask for a more explicit route or provide a diagnostic retry rather than silently trusting a weak match.",
+      "likely_source": "The request mixes lifecycle, read, feedback, or creation terms without a clear primary intent.",
+      "resource_kind": "route_selection",
+      "expand_refs": [
+        "help:route.disambiguation",
+        "help:route.diagnostics"
+      ]
     }
   }
 }

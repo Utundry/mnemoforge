@@ -109,6 +109,7 @@ from app.services.mcp_project_work_routing import (
 from app.services.planning_advisor_service import collaborative_control_packet
 from app.services.task_reconciliation_service import COVERED_DECISIONS, get_task_reconciliation_store
 from app.services.project_identity_service import project_identity_envelope
+from app.services.public_diagnostic_service import build_public_diagnostic_incident
 from app.services.mcp_project_rules_routing import (
     PROJECT_RULES_ROUTE_CATALOG as _PROJECT_RULES_ROUTE_CATALOG,
     project_rules_route,
@@ -4467,9 +4468,48 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
     }
     if isinstance(route.get("claim_filter_resolution"), dict):
         payload["selected_route"]["claim_filter_resolution"] = route["claim_filter_resolution"]
+    route_incident = _route_diagnostic_incident_for_payload(facade="project_work", route=route, args=args)
+    if route_incident:
+        payload["diagnostic_incident"] = route_incident
     if maintenance_suggestion:
         payload["maintenance_suggestion"] = maintenance_suggestion
     return payload
+
+
+def _route_diagnostic_incident_for_payload(*, facade: str, route: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    if not bool(args.get("diagnostic", False)):
+        return {}
+    candidates = route.get("route_candidates") if isinstance(route.get("route_candidates"), list) else []
+    if len(candidates) < 2:
+        return {}
+    top = candidates[0] if isinstance(candidates[0], dict) else {}
+    runner_up = candidates[1] if isinstance(candidates[1], dict) else {}
+    try:
+        top_score = float(top.get("score") or 0.0)
+        next_score = float(runner_up.get("score") or 0.0)
+    except (TypeError, ValueError):
+        return {}
+    if top_score <= 0 or (top_score - next_score) > 0.08:
+        return {}
+    query_text = str(args.get("intent") or args.get("question") or args.get("query") or "").strip()
+    return build_public_diagnostic_incident(
+        kind="ambiguous_route_selection",
+        safe_next_action="Retry with an explicit facade, task_id, form_id, or expected action; use route_feedback only after confirming a concrete misroute.",
+        recommended_next_call={
+            "tool": facade,
+            "arguments": _compact_public_dict({
+                "project": str(args.get("project") or "").strip(),
+                "intent": query_text if facade == "project_work" else "",
+                "question": query_text if facade == "ask_project" else "",
+                "diagnostic": True,
+                "scorer_backend": str(args.get("scorer_backend") or "lexical"),
+            }),
+        },
+    )
+
+
+def _compact_public_dict(value: dict[str, Any]) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if item not in (None, "", [], {})}
 
 
 def _redact_project_work_submit_payload(payload: dict[str, Any]) -> dict[str, Any]:

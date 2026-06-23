@@ -2189,8 +2189,38 @@ def mailbox_route_feedback(
         packet["next_safe_action"] = "The learned route pattern was reinforced; keep using this phrasing when it matches the desired route."
     elif disabled:
         packet["next_safe_action"] = "Retry the original user request; the stale learned route pattern is no longer active."
+        packet["receipt"] = attach_public_diagnostic_incident(
+            receipt=packet["receipt"],
+            kind="stale_learned_route",
+            safe_next_action=packet["next_safe_action"],
+            recommended_next_call={
+                "tool": facade or "ask_project",
+                "arguments": _compact({
+                    "project": project,
+                    "question": query if facade == "ask_project" else "",
+                    "intent": query if facade != "ask_project" else "",
+                    "response_format": "diagnostic",
+                }),
+            },
+        )
     else:
         packet["next_safe_action"] = "Negative feedback was recorded; use route_hygiene to decide whether to disable this pattern."
+        packet["receipt"] = attach_public_diagnostic_incident(
+            receipt=packet["receipt"],
+            kind="route_misclassification",
+            safe_next_action=packet["next_safe_action"],
+            recommended_next_call={
+                "tool": "submit",
+                "form_id": "route_feedback",
+                "payload": _compact({
+                    "project": project,
+                    "facade": facade,
+                    "pattern_id": pattern_id,
+                    "vote": "negative",
+                    "disable": True,
+                }),
+            },
+        )
     packet["receipt"]["next_safe_action"] = packet["next_safe_action"]
     return packet
 
