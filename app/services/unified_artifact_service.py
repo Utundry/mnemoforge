@@ -187,6 +187,7 @@ def _replace_task_status_tag(tags: list[str] | None, status: str) -> list[str]:
 
 
 _TERMINAL_UNIFIED_STATUSES = {"done", "resolved", "completed", "closed", "cancelled", "archived"}
+_OPEN_WORK_UNIFIED_STATUSES = {"open", "active"}
 _LEGACY_CLOSEOUT_MARKERS = ("finish_task", "finished_by_mailbox", "record_work_result closeout")
 
 
@@ -204,6 +205,34 @@ def task_has_closeout_evidence(changes: list[dict]) -> bool:
         if any(marker in closeout_text for marker in _LEGACY_CLOSEOUT_MARKERS):
             return True
     return False
+
+
+
+
+def _status_matches_request(item_status: str, requested_status: str | None) -> bool:
+    if not requested_status:
+        return True
+    status = str(item_status or "").strip().lower()
+    requested = str(requested_status or "").strip().lower()
+    if requested == "open":
+        return status in _OPEN_WORK_UNIFIED_STATUSES
+    return status == requested
+
+
+def _artifact_work_priority(item: UnifiedArtifactRecord) -> float:
+    if item.importance_score is not None:
+        try:
+            return float(item.importance_score)
+        except (TypeError, ValueError):
+            pass
+    tags = {str(tag).strip().casefold() for tag in (item.tags or []) if str(tag).strip()}
+    if tags & {"priority:critical", "critical"}:
+        return 1.0
+    if tags & {"priority:high", "high_priority"}:
+        return 0.9
+    if tags & {"priority:low", "low_priority"}:
+        return 0.4
+    return 0.7
 
 
 class UnifiedArtifactService:
@@ -405,7 +434,9 @@ class UnifiedArtifactService:
         canonical_project = resolve_project_id(project)
         lookup_projects = project_lookup_ids(canonical_project)
         items: list[UnifiedArtifactRecord] = []
-        fetch_limit = max(limit, 100) if query else limit
+        requested_status = str(status or "").strip().lower()
+        open_work_request = requested_status == "open"
+        fetch_limit = max(limit, 100) if query or open_work_request else limit
 
         if semantic_candidates is not None:
             for artifact_key, score in semantic_candidates.items():
@@ -421,26 +452,29 @@ class UnifiedArtifactService:
                 )
                 items.append(item)
 
-        # Преобразовать unified status в тип-специфичный
-        improvement_status = None
-        task_status = None
+        # Convert the requested unified status into source-specific status families.
+        improvement_statuses: list[str | None] = [None]
+        task_statuses: list[str | None] = [None]
         if status:
-            # Для improvements
-            improvement_status = from_unified_status("improvement", status)
-            # Для tasks
-            task_status = from_unified_status("task", status)
+            if open_work_request:
+                improvement_statuses = [from_unified_status("improvement", "open")]
+                task_statuses = ["planning", "active"]
+            else:
+                improvement_statuses = [from_unified_status("improvement", status)]
+                task_statuses = [from_unified_status("task", status)]
 
         # Получить improvements
         if semantic_candidates is None and (type_ is None or type_ == "improvement"):
             improvements = []
             for lookup_project in lookup_projects:
-                improvements.extend(
-                    await self._improvements_store.list(
-                        project=lookup_project,
-                        status=improvement_status,
-                        limit=fetch_limit,
+                for improvement_status in improvement_statuses:
+                    improvements.extend(
+                        await self._improvements_store.list(
+                            project=lookup_project,
+                            status=improvement_status,
+                            limit=fetch_limit,
+                        )
                     )
-                )
             for imp in improvements:
                 try:
                     key = ArtifactKey(type="improvement", project=canonical_project, local_id=str(imp["id"]))
@@ -452,13 +486,14 @@ class UnifiedArtifactService:
         if semantic_candidates is None and (type_ is None or type_ == "task"):
             tasks = []
             for lookup_project in lookup_projects:
-                tasks.extend(
-                    self._tasks_store.list_tasks(
-                        project=lookup_project,
-                        status=task_status,
-                        limit=fetch_limit,
+                for task_status in task_statuses:
+                    tasks.extend(
+                        self._tasks_store.list_tasks(
+                            project=lookup_project,
+                            status=task_status,
+                            limit=fetch_limit,
+                        )
                     )
-                )
             for task in tasks:
                 try:
                     key = ArtifactKey(type="task", project=canonical_project, local_id=task["task_id"])
@@ -468,7 +503,7 @@ class UnifiedArtifactService:
 
         # Защита от рассинхрона стора и API-параметров: фильтруем по итоговому unified status.
         if status:
-            items = [item for item in items if item.status == status]
+            items = [item for item in items if _status_matches_request(item.status, status)]
         if created_after or created_before:
             items = [
                 item for item in items
@@ -505,7 +540,13 @@ class UnifiedArtifactService:
                 reverse=True,
             )
         elif not query:
-            items.sort(key=lambda x: x.updated_at, reverse=True)
+            if open_work_request:
+                items.sort(
+                    key=lambda item: (_artifact_work_priority(item), item.updated_at.timestamp()),
+                    reverse=True,
+                )
+            else:
+                items.sort(key=lambda x: x.updated_at, reverse=True)
 
         # Ограничить количество
         items = items[:limit]

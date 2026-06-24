@@ -12779,3 +12779,42 @@ class TestAsyncioNoiseFilter:
             "exception": RuntimeError("boom"),
         }
         assert _should_suppress_asyncio_transport_error(context) is False
+
+
+@pytest.mark.asyncio
+async def test_list_open_tasks_keeps_high_priority_improvement_above_active_task(monkeypatch):
+    async def fake_get(api_base: str, path: str):
+        assert path == "/artifacts?project=alpha&status=open&limit=100"
+        return {
+            "items": [
+                {
+                    "artifact_key": "task:alpha:task-active",
+                    "type": "task",
+                    "task_id": "task-active",
+                    "title": "Fresh active task",
+                    "description": "Active tasks remain part of open work.",
+                    "status": "active",
+                    "updated_at": "2026-05-02T10:00:00Z",
+                },
+                {
+                    "artifact_key": "improvement:alpha:imp-high",
+                    "type": "improvement",
+                    "id": "imp-high",
+                    "title": "High priority improvement",
+                    "description": "A high-priority improvement can outrank a task.",
+                    "status": "open",
+                    "importance_score": 0.95,
+                    "updated_at": "2026-05-01T10:00:00Z",
+                },
+            ]
+        }
+
+    monkeypatch.setattr(mcp_sse, "_get", fake_get)
+    monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+    result = await mcp_sse._execute_tool("list_open_tasks", {"project": "alpha", "limit": 5}, "http://test")
+
+    assert "Available open work items: 2" in result
+    assert result.index("High priority improvement") < result.index("Fresh active task")
+    assert "type=improvement" in result
+    assert "[active] Fresh active task" in result

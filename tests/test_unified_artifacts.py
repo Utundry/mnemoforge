@@ -1134,3 +1134,94 @@ async def test_from_unified_status_task() -> None:
     # Note: "active" stays as "active" since it's not in the mapping
     assert from_unified_status("task", "active") == "active"
     assert from_unified_status("task", "unknown") == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_open_status_includes_active_tasks_and_prioritizes_high_value_improvements() -> None:
+    service = UnifiedArtifactService()
+    improvements_store = get_improvements_store()
+    tasks_store = get_project_tasks_store()
+
+    improvement_id = uuid4()
+    await improvements_store.insert(
+        improvement_id=improvement_id,
+        title="High priority process improvement",
+        description="Important active improvement should compete with tasks in open work.",
+        project="open-work-project",
+        agent_id="test-agent",
+        importance_score=0.95,
+        tags=["process"],
+        created_at=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc).timestamp(),
+    )
+
+    now = datetime(2026, 5, 2, 10, 0, tzinfo=timezone.utc).timestamp()
+    active_task_id = str(uuid4())
+    tasks_store.upsert_task(
+        memory_id=str(uuid4()),
+        task_id=active_task_id,
+        project="open-work-project",
+        title="Recently updated active task",
+        description="Active tasks are part of open work.",
+        agent_id="test-agent",
+        status="active",
+        source="manual",
+        tags=[],
+        created_at=now,
+        updated_at=now + 60,
+    )
+    done_task_id = str(uuid4())
+    tasks_store.upsert_task(
+        memory_id=str(uuid4()),
+        task_id=done_task_id,
+        project="open-work-project",
+        title="Closed task must stay out",
+        description="Done work is not open work.",
+        agent_id="test-agent",
+        status="done",
+        source="manual",
+        tags=[],
+        created_at=now,
+        updated_at=now + 120,
+    )
+
+    result = await service.list_artifacts(project="open-work-project", status="open", limit=5)
+
+    keys = [item.artifact_key for item in result.items]
+    assert keys[0] == f"improvement:open-work-project:{improvement_id}"
+    assert f"task:open-work-project:{active_task_id}" in keys
+    assert f"task:open-work-project:{done_task_id}" not in keys
+    assert {item.status for item in result.items} <= {"open", "active"}
+
+
+@pytest.mark.asyncio
+async def test_semantic_open_status_drops_sqlite_done_candidate() -> None:
+    service = UnifiedArtifactService()
+    tasks_store = get_project_tasks_store()
+    task_id = str(uuid4())
+    now = datetime.now(timezone.utc).timestamp()
+
+    tasks_store.upsert_task(
+        memory_id=str(uuid4()),
+        task_id=task_id,
+        project="semantic-open-project",
+        title="Stale completed semantic candidate",
+        description="Qdrant may still point here, but SQLite says the task is done.",
+        agent_id="test-agent",
+        status="done",
+        source="manual",
+        tags=[],
+        created_at=now,
+        updated_at=now,
+    )
+
+    result = await service.list_artifacts(
+        project="semantic-open-project",
+        status="open",
+        type_="task",
+        query="stale completed semantic candidate",
+        semantic_candidates={f"task:semantic-open-project:{task_id}": 0.99},
+    )
+
+    assert result.items == []
+    assert result.candidate_count == 1
+    assert result.sqlite_validated_count == 0
