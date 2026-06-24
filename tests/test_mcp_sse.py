@@ -1117,6 +1117,7 @@ class TestMcpToolExecution:
         assert "agent_fingerprint" in claim_props
         assert claim_props["runtime_profile_id"]["default"] == "unknown_cli"
         assert "work_token" in claim_props
+        assert "work_handle" in claim_props
         start_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "start_task_session")
         start_props = start_tool["inputSchema"]["properties"]
         assert start_props["auto_heartbeat"]["default"] is True
@@ -1124,6 +1125,15 @@ class TestMcpToolExecution:
         assert "agent_fingerprint" in start_props
         assert start_props["runtime_profile_id"]["default"] == "unknown_cli"
         assert "work_token" in start_props
+        assert "work_handle" in start_props
+        finish_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "finish_task_session")
+        finish_schema = finish_tool["inputSchema"]
+        finish_props = finish_schema["properties"]
+        assert finish_schema["required"] == ["project", "task_id"]
+        assert "work_id" not in finish_schema["required"]
+        assert "session_id" not in finish_schema["required"]
+        assert "work_handle" in finish_props
+        assert "work_token" in finish_props
         list_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "list_task_claims")
         list_props = list_tool["inputSchema"]["properties"]
         assert "agent_fingerprint" in list_props

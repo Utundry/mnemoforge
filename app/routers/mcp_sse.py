@@ -4305,6 +4305,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
             owner_session_id=str(route_payload.get("session_id") or args.get("session_id") or session_id or ""),
             tool_name=f"project_work:{route['tool']}",
             work_token=str(route_payload.get("work_token") or args.get("work_token") or ""),
+            work_handle=str(route_payload.get("work_handle") or args.get("work_handle") or ""),
             danger_mode=bool(args.get("danger_mode", False)),
             danger_confirmation=str(args.get("danger_confirmation") or ""),
         )
@@ -7309,6 +7310,7 @@ def _task_mutation_requires_owned_claim(
     owner_session_id: str,
     tool_name: str,
     work_token: str = "",
+    work_handle: str = "",
     danger_mode: bool = False,
     danger_confirmation: str = "",
 ) -> dict[str, Any] | None:
@@ -7319,6 +7321,7 @@ def _task_mutation_requires_owned_claim(
         owner_session_id=owner_session_id,
         tool_name=tool_name,
         work_token=work_token,
+        work_handle=work_handle,
         danger_mode=danger_mode,
         danger_confirmation=danger_confirmation,
     )
@@ -8557,6 +8560,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 owner_session_id=str(args.get("session_id") or session_id or ""),
                 tool_name=name,
                 work_token=str(args.get("work_token") or ""),
+                work_handle=str(args.get("work_handle") or ""),
                 danger_mode=bool(args.get("danger_mode", False)),
                 danger_confirmation=str(args.get("danger_confirmation") or ""),
             )

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from app.services.task_lease_service import (
+    WorkHandleInvalid,
+    build_work_handle,
     TaskLeaseConflict,
     TaskLeaseUnavailable,
     WorkTokenMismatch,
@@ -12,6 +14,7 @@ from app.services.task_lease_service import (
     get_task_lease_store,
     stop_task_lease_auto_heartbeat,
     verify_work_token_for_mutation,
+    work_handle_to_legacy_context,
 )
 
 
@@ -31,6 +34,7 @@ def task_mutation_requires_owned_claim(
     owner_session_id: str,
     tool_name: str,
     work_token: str = "",
+    work_handle: str = "",
     danger_mode: bool = False,
     danger_confirmation: str = "",
 ) -> dict[str, Any] | None:
@@ -39,6 +43,29 @@ def task_mutation_requires_owned_claim(
     owner_clean = str(owner_agent or "codex").strip() or "codex"
     session_clean = str(owner_session_id or "").strip()
     work_token_clean = str(work_token or "").strip()
+    work_handle_clean = str(work_handle or "").strip()
+    if work_handle_clean:
+        try:
+            handle_context = work_handle_to_legacy_context(
+                store=get_task_lease_store(),
+                work_handle=work_handle_clean,
+                project=project_clean,
+                task_id=task_clean,
+                owner_agent=owner_clean,
+            )
+        except WorkHandleInvalid as exc:
+            return {
+                "status": "conflict",
+                "error": exc.reason,
+                "tool": tool_name,
+                "project": project_clean,
+                "task_id": task_clean,
+                "claim_allowed": False,
+                "next_safe_action": "Use the work_handle returned by start_task_session for this task, or reclaim after the active lease expires.",
+            }
+        work_token_clean = str(handle_context["work_token"])
+        session_clean = str(handle_context["session_id"])
+        owner_clean = str(handle_context["owner_agent"])
     bypass_authorized = danger_mode and str(danger_confirmation).strip().lower() == "authorize_session_bypass"
 
     if not task_clean:
@@ -173,6 +200,7 @@ async def execute_task_lease_action(
                 lease_ttl_seconds=int(args.get("lease_ttl_seconds") or 900),
             )
             data = claim.model_dump(mode="json")
+            data["work_handle"] = build_work_handle(lease=claim.lease, work_token=claim.work_token)
             data["next_safe_action"] = "Start or continue work while the task claim is active."
             return data
 

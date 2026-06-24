@@ -9,6 +9,8 @@ from urllib.parse import quote
 from app.services.mcp_tool_contracts import build_report_task_checkpoint_payload
 from app.services.stenographer_service import ProtocolViolation, get_stenographer_store
 from app.services.task_lease_service import (
+    WorkHandleInvalid,
+    build_work_handle,
     TaskLeaseConflict,
     WorkTokenMismatch,
     find_continuity_lease_for_mutation,
@@ -16,6 +18,7 @@ from app.services.task_lease_service import (
     start_task_lease_auto_heartbeat,
     stop_task_lease_auto_heartbeat,
     verify_work_token_for_mutation,
+    work_handle_to_legacy_context,
 )
 
 
@@ -187,6 +190,7 @@ async def start_task_session_action(
         "previous_claim_expired": claim.previous_claim_expired,
         "previous_lease": claim.previous_lease.model_dump(mode="json") if claim.previous_lease else None,
         "work_token": claim.work_token,
+        "work_handle": build_work_handle(lease=claim.lease, work_token=claim.work_token),
         "auto_heartbeat": {
             "enabled": auto_heartbeat_enabled,
             "heartbeat_seconds": auto_heartbeat.heartbeat_seconds if auto_heartbeat is not None else None,
@@ -214,10 +218,33 @@ async def finish_task_session_action(
     owner_agent = str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex"
     lease_session_id = str(args.get("session_id") or session_id or "").strip()
     work_token = str(args.get("work_token") or "").strip()
+    work_handle = str(args.get("work_handle") or "").strip()
+    work_handle_context: dict[str, Any] | None = None
+    if work_handle:
+        try:
+            work_handle_context = work_handle_to_legacy_context(
+                store=get_task_lease_store(),
+                work_handle=work_handle,
+                project=project,
+                task_id=task_id,
+                owner_agent=owner_agent,
+            )
+        except WorkHandleInvalid as exc:
+            return {
+                "status": "conflict",
+                "error": exc.reason,
+                "project": project,
+                "task_id": task_id,
+                "claim_allowed": False,
+                "next_safe_action": "Use the work_handle returned by start_task_session for this task, or reclaim after the active lease expires.",
+            }
+        owner_agent = str(work_handle_context["owner_agent"])
+        lease_session_id = str(work_handle_context["session_id"])
+        work_token = str(work_handle_context["work_token"])
 
     danger_mode = bool(args.get("danger_mode", False))
     danger_confirmation = str(args.get("danger_confirmation", "")).strip().lower()
-    if not lease_session_id and not work_token:
+    if not lease_session_id and not work_token and not work_handle:
         if danger_mode and danger_confirmation == "authorize_session_bypass":
             lease_session_id = f"danger-mode-{uuid.uuid4().hex[:8]}"
         else:
@@ -248,9 +275,9 @@ async def finish_task_session_action(
                 "recommended_reclaim_call": {
                     "tool": "submit",
                     "form_id": "finish_task",
-                    "payload_fields": ["project", "task_id", "owner_agent", "session_id", "work_id", "work_token"],
+                    "payload_fields": ["project", "task_id", "owner_agent", "work_handle"],
                 },
-                "next_safe_action": "Pass original owner_agent, session_id, work_id, and work_token to finish after TTL/session loss, or call start_task to claim available work.",
+                "next_safe_action": "Pass the work_handle returned by start_task_session, or call start_task to claim available work.",
             }
 
     work_token_valid = False

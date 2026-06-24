@@ -54,6 +54,7 @@ async def execute_task_checkpoint_action(
         owner_session_id=str(args.get("session_id") or session_id or ""),
         tool_name=name,
         work_token=str(args.get("work_token") or ""),
+        work_handle=str(args.get("work_handle") or ""),
         danger_mode=bool(args.get("danger_mode", False)),
         danger_confirmation=str(args.get("danger_confirmation") or ""),
     )

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
+import json
 import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -85,6 +88,12 @@ class WorkTokenMismatch(PermissionError):
         self.lease_id = lease_id
 
 
+class WorkHandleInvalid(PermissionError):
+    def __init__(self, reason: str = "work_handle_invalid") -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 def _generate_work_token() -> str:
     return secrets.token_hex(_WORK_TOKEN_BYTES)
 
@@ -95,6 +104,62 @@ def _hash_work_token(token: str) -> str:
 
 def _work_token_preview(token: str) -> str:
     return token[:_WORK_TOKEN_PREVIEW_LEN]
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode("ascii"))
+
+
+def _canonical_handle_payload(payload: dict) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def build_work_handle(*, lease: TaskLeaseRecord, work_token: str) -> str:
+    """Build an opaque continuation handle backed by the existing lease token."""
+    token = str(work_token or "").strip()
+    if not token:
+        return ""
+    payload = {
+        "v": 1,
+        "lease_id": lease.lease_id,
+        "project": lease.project,
+        "task_id": lease.task_id,
+        "owner_agent": lease.owner_agent,
+        "session_id": lease.session_id,
+        "work_token": token,
+    }
+    payload_raw = _canonical_handle_payload(payload)
+    signature = hmac.new(token.encode("utf-8"), payload_raw, hashlib.sha256).digest()
+    return f"wh1.{_b64url_encode(payload_raw)}.{_b64url_encode(signature)}"
+
+
+def parse_work_handle(work_handle: str) -> dict:
+    handle = str(work_handle or "").strip()
+    if not handle:
+        raise WorkHandleInvalid("work_handle_required")
+    parts = handle.split(".")
+    if len(parts) != 3 or parts[0] != "wh1":
+        raise WorkHandleInvalid("work_handle_format_invalid")
+    try:
+        payload_raw = _b64url_decode(parts[1])
+        payload = json.loads(payload_raw.decode("utf-8"))
+        token = str(payload.get("work_token") or "").strip()
+        if not token:
+            raise WorkHandleInvalid("work_handle_token_missing")
+        expected = hmac.new(token.encode("utf-8"), payload_raw, hashlib.sha256).digest()
+        actual = _b64url_decode(parts[2])
+    except WorkHandleInvalid:
+        raise
+    except Exception as exc:
+        raise WorkHandleInvalid("work_handle_decode_failed") from exc
+    if not hmac.compare_digest(expected, actual):
+        raise WorkHandleInvalid("work_handle_signature_invalid")
+    return payload
 
 
 def _utcnow() -> datetime:
@@ -755,7 +820,7 @@ def verify_work_token_for_mutation(
 ) -> bool:
     """Verify work token for a mutating operation. Returns True if valid.
     
-    Work token recovery is only possible via TTL timeout — there is no lookup
+    Work token recovery is only possible via TTL timeout - there is no lookup
     or recovery path for lost tokens.
     """
     return store.verify_work_token(lease_id=lease_id, work_token=work_token)
@@ -779,6 +844,88 @@ def find_continuity_lease_for_mutation(
         session_id=session_id,
         work_token=work_token,
     )
+
+
+def resolve_work_handle_for_mutation(
+    *,
+    store: TaskLeaseStore,
+    work_handle: str,
+    project: str = "",
+    task_id: str = "",
+    owner_agent: str = "",
+    refresh_ttl: bool = True,
+) -> tuple[TaskLeaseRecord, str, dict]:
+    """Validate a public work_handle against authoritative SQLite lease state."""
+    payload = parse_work_handle(work_handle)
+    store.expire_stale()
+    lease_id = _clean_text(payload.get("lease_id"), 128)
+    token = str(payload.get("work_token") or "").strip()
+    if not lease_id or not token:
+        raise WorkHandleInvalid("work_handle_incomplete")
+    with store._lock:
+        row = store._conn.execute(
+            "SELECT * FROM task_leases WHERE lease_id = ?",
+            (lease_id,),
+        ).fetchone()
+    if not row:
+        raise WorkHandleInvalid("work_handle_lease_not_found")
+    lease = store._row_to_lease(row)
+    if lease.status != "active":
+        raise WorkHandleInvalid("work_handle_lease_not_active")
+    project_clean = _clean_text(project, 128)
+    task_clean = _clean_text(task_id, 128)
+    owner_clean = _clean_text(owner_agent, 128)
+    if project_clean and lease.project != project_clean:
+        raise WorkHandleInvalid("work_handle_project_mismatch")
+    if task_clean and lease.task_id != task_clean:
+        raise WorkHandleInvalid("work_handle_task_mismatch")
+    if owner_clean and lease.owner_agent != owner_clean:
+        raise WorkHandleInvalid("work_handle_owner_mismatch")
+    if str(payload.get("project") or "") != lease.project:
+        raise WorkHandleInvalid("work_handle_payload_project_mismatch")
+    if str(payload.get("task_id") or "") != lease.task_id:
+        raise WorkHandleInvalid("work_handle_payload_task_mismatch")
+    if str(payload.get("owner_agent") or "") != lease.owner_agent:
+        raise WorkHandleInvalid("work_handle_payload_owner_mismatch")
+    if str(payload.get("session_id") or "") != lease.session_id:
+        raise WorkHandleInvalid("work_handle_payload_session_mismatch")
+    if not store.verify_work_token(lease_id=lease.lease_id, work_token=token):
+        raise WorkHandleInvalid("work_handle_token_invalid")
+    if refresh_ttl:
+        lease = store.heartbeat(
+            lease_id=lease.lease_id,
+            owner_agent=lease.owner_agent,
+            session_id=lease.session_id,
+        )
+    return lease, token, payload
+
+
+def work_handle_to_legacy_context(
+    *,
+    store: TaskLeaseStore,
+    work_handle: str,
+    project: str = "",
+    task_id: str = "",
+    owner_agent: str = "",
+) -> dict:
+    lease, token, payload = resolve_work_handle_for_mutation(
+        store=store,
+        work_handle=work_handle,
+        project=project,
+        task_id=task_id,
+        owner_agent=owner_agent,
+    )
+    return {
+        "lease": lease,
+        "work_token": token,
+        "lease_id": lease.lease_id,
+        "owner_agent": lease.owner_agent,
+        "session_id": lease.session_id,
+        "project": lease.project,
+        "task_id": lease.task_id,
+        "payload": payload,
+    }
+
 
 def redact_work_token_from_result(result: dict) -> dict:
     """Remove work_token from any result dict for safe public/log output."""

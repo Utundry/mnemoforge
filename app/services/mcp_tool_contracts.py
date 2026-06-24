@@ -37,6 +37,7 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     "description": "strict skips completed checkpoints that still have blockers or next_step.",
                 },
                 "acted_by": {"type": "string", "default": "codex"},
+                "work_handle": {"type": "string", "default": "", "description": "Preferred public continuation handle from start_task_session; legacy work_token remains supported."},
                 "action_source": {"type": "string", "default": "mcp_reconcile_completed_checkpoints"},
                 "reason": {
                     "type": "string",
@@ -69,6 +70,7 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 },
                 "reason": {"type": "string", "default": "Review completed checkpoint next_step scope."},
                 "acted_by": {"type": "string", "default": "codex"},
+                "work_handle": {"type": "string", "default": "", "description": "Preferred public continuation handle from start_task_session; legacy work_token remains supported."},
                 "source": {"type": "string", "default": "mcp_checkpoint_scope_review"},
             },
         },
@@ -104,6 +106,7 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 },
                 "default_reason": {"type": "string", "default": "Batch review completed checkpoint next_step scopes."},
                 "acted_by": {"type": "string", "default": "codex"},
+                "work_handle": {"type": "string", "default": "", "description": "Preferred public continuation handle from start_task_session; legacy work_token remains supported."},
                 "source": {"type": "string", "default": "mcp_checkpoint_scope_review_batch"},
             },
         },
@@ -273,6 +276,8 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     ),
                 },
                 "acted_by": {"type": "string", "default": "user"},
+                "work_handle": {"type": "string", "default": "", "description": "Preferred public continuation handle from start_task_session; legacy work_token remains supported."},
+                "work_token": {"type": "string", "default": "", "description": "Legacy ownership proof from start_task_session for claimed-task mutations."},
                 "source": {"type": "string", "default": "mcp"},
             },
         },
@@ -343,6 +348,7 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 },
                 "agent_id": {"type": "string", "default": "codex"},
                 "acted_by": {"type": "string", "default": "codex"},
+                "work_handle": {"type": "string", "default": "", "description": "Preferred public continuation handle from start_task_session; legacy work_token remains supported."},
                 "work_token": {
                     "type": "string",
                     "default": "",
@@ -434,6 +440,8 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                     ),
                 },
                 "acted_by": {"type": "string", "default": "user"},
+                "work_handle": {"type": "string", "default": "", "description": "Preferred public continuation handle from start_task_session; legacy work_token remains supported."},
+                "work_token": {"type": "string", "default": "", "description": "Legacy ownership proof from start_task_session for claimed-task mutations."},
                 "source": {"type": "string", "default": "mcp"},
                 "to_agent": {
                     "type": "string",
@@ -481,6 +489,7 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 },
                 "reason": {"type": "string", "default": "draft_task_checkpoint"},
                 "acted_by": {"type": "string", "default": "codex"},
+                "work_handle": {"type": "string", "default": "", "description": "Preferred public continuation handle from start_task_session; legacy work_token remains supported."},
                 "use_llm": {
                     "type": "boolean",
                     "default": True,
@@ -601,6 +610,7 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "session_id": {"type": "string", "description": "Required unless danger_mode is set with danger_confirmation"},
                 "agent_fingerprint": {"type": "string", "description": "Stable CLI/model/workspace fingerprint for reclaim decisions."},
                 "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
+                "work_handle": {"type": "string", "description": "Preferred public continuation handle from start_task_session; legacy work_token remains supported."},
                 "work_token": {"type": "string", "description": "Optional ownership proof for same-fingerprint session-loss reclaim."},
                 "danger_mode": {"type": "boolean", "default": False, "description": "Allow bypassing session_id requirement with explicit confirmation"},
                 "danger_confirmation": {"type": "string", "description": "Must be 'authorize_session_bypass' when danger_mode=true to auto-generate session_id"},
@@ -622,7 +632,7 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
         ),
         "inputSchema": {
             "type": "object",
-            "required": ["project", "task_id", "work_id", "session_id"],
+            "required": ["project", "task_id"],
             "properties": {
                 "project": {"type": "string", "default": "mnemoforge"},
                 "task_id": {"type": "string"},
@@ -630,6 +640,8 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "agent_id": {"type": "string", "default": "codex"},
                 "owner_agent": {"type": "string", "description": "Compatibility alias for agent_id"},
                 "session_id": {"type": "string"},
+                "work_handle": {"type": "string", "default": "", "description": "Preferred public continuation handle from start_task_session; legacy work_token remains supported."},
+                "work_token": {"type": "string", "default": "", "description": "Legacy ownership proof from start_task_session for claimed-task mutations."},
                 "status": {
                     "type": "string",
                     "enum": ["completed", "blocked", "failed", "interrupted", "cancelled"],
@@ -663,6 +675,7 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "session_id": {"type": "string"},
                 "agent_fingerprint": {"type": "string", "description": "Stable CLI/model/workspace fingerprint for reclaim decisions."},
                 "runtime_profile_id": {"type": "string", "default": "unknown_cli"},
+                "work_handle": {"type": "string", "description": "Preferred public continuation handle from start_task_session; legacy work_token remains supported."},
                 "work_token": {"type": "string", "description": "Optional ownership proof for same-fingerprint session-loss reclaim."},
                 "lease_ttl_seconds": {"type": "integer", "minimum": 5, "maximum": 86400, "default": 900},
             },

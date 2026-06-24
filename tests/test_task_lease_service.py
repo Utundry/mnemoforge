@@ -61,6 +61,8 @@ async def test_mcp_task_lease_action_claim_uses_session_identity_defaults(monkey
     assert data["lease"]["agent_fingerprint"] == "agentfp:test"
     assert data["lease"]["runtime_profile_id"] == "strong_mcp_operator"
     assert data["work_token"]
+    assert data["work_handle"].startswith("wh1.")
+    assert lease_mod.parse_work_handle(data["work_handle"])["task_id"] == "task-1"
 
 
 def test_mcp_task_mutation_guard_accepts_valid_work_token(monkeypatch) -> None:
@@ -86,6 +88,67 @@ def test_mcp_task_mutation_guard_accepts_valid_work_token(monkeypatch) -> None:
 
     assert guard is None
 
+
+def test_mcp_task_mutation_guard_accepts_valid_work_handle(monkeypatch) -> None:
+    store = TaskLeaseStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", store)
+    try:
+        claim = store.claim(
+            project="alpha",
+            task_id="task-handle",
+            owner_agent="codex",
+            session_id="sess-handle",
+        )
+        work_handle = lease_mod.build_work_handle(lease=claim.lease, work_token=claim.work_token)
+        guard = task_mutation_requires_owned_claim(
+            project="alpha",
+            task_id="task-handle",
+            owner_agent="codex",
+            owner_session_id="",
+            tool_name="record_task_checkpoint",
+            work_handle=work_handle,
+        )
+    finally:
+        store.close()
+
+    assert guard is None
+
+
+def test_mcp_task_mutation_guard_rejects_foreign_or_tampered_work_handle(monkeypatch) -> None:
+    store = TaskLeaseStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", store)
+    try:
+        claim = store.claim(
+            project="alpha",
+            task_id="task-handle-block",
+            owner_agent="codex",
+            session_id="sess-handle",
+        )
+        work_handle = lease_mod.build_work_handle(lease=claim.lease, work_token=claim.work_token)
+        foreign = task_mutation_requires_owned_claim(
+            project="alpha",
+            task_id="task-handle-block",
+            owner_agent="other",
+            owner_session_id="",
+            tool_name="record_task_checkpoint",
+            work_handle=work_handle,
+        )
+        replacement = "A" if work_handle[-1] != "A" else "B"
+        tampered = task_mutation_requires_owned_claim(
+            project="alpha",
+            task_id="task-handle-block",
+            owner_agent="codex",
+            owner_session_id="",
+            tool_name="record_task_checkpoint",
+            work_handle=f"{work_handle[:-1]}{replacement}",
+        )
+    finally:
+        store.close()
+
+    assert foreign is not None
+    assert foreign["error"] == "work_handle_owner_mismatch"
+    assert tampered is not None
+    assert tampered["error"] == "work_handle_signature_invalid"
 
 def test_mcp_task_mutation_guard_accepts_same_owner_continuity_after_expired_claim(monkeypatch) -> None:
     store = TaskLeaseStore(Path(":memory:"))
@@ -257,6 +320,66 @@ async def test_mcp_finish_task_session_action_finishes_work_and_releases(monkeyp
     assert data["work_session"]["status"] == "completed"
     assert posted[0][0] == "/project/tasks/task-finish/changes"
 
+
+async def test_mcp_finish_task_session_accepts_work_handle_without_work_id_or_session(monkeypatch) -> None:
+    from app.services import stenographer_service as stenographer_mod
+
+    lease_store = TaskLeaseStore(Path(":memory:"))
+    stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+    monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+    claim = lease_store.claim(
+        project="alpha",
+        task_id="task-finish-handle",
+        owner_agent="codex",
+        session_id="sess-finish-handle",
+    )
+    stenographer_store.start_work_session(
+        project="alpha",
+        task_id="task-finish-handle",
+        agent_id="codex",
+        session_id="sess-finish-handle",
+        summary="Active work via handle.",
+    )
+    work_handle = lease_mod.build_work_handle(lease=claim.lease, work_token=claim.work_token)
+    posted: list[tuple[str, dict]] = []
+
+    async def fake_post(api_base: str, path: str, payload: dict) -> dict:
+        posted.append((path, payload))
+        if path.endswith("/changes"):
+            return {"id": "checkpoint-finish-handle", **payload}
+        return {"status": "ok"}
+
+    async def fake_identity_defaults(session_id: str | None) -> dict[str, str]:
+        return {}
+
+    try:
+        data = await finish_task_session_action(
+            args={
+                "project": "alpha",
+                "task_id": "task-finish-handle",
+                "agent_id": "codex",
+                "work_handle": work_handle,
+                "summary": "Finished through public handle.",
+                "changed_files": ["app/services/mcp_task_session_actions.py"],
+                "verification": ["Handle-only finish passed."],
+                "next_step": "No follow-up.",
+            },
+            api_base="http://test",
+            session_id="lost-client-session",
+            dependencies=TaskSessionActionDependencies(
+                post=fake_post,
+                get_session_identity_defaults=fake_identity_defaults,
+            ),
+        )
+    finally:
+        lease_store.close()
+        stenographer_store.close()
+
+    assert data["status"] == "finished"
+    assert data["release"]["status"] == "released"
+    assert data["work_session"]["status"] == "completed"
+    assert posted[0][0] == "/project/tasks/task-finish-handle/changes"
 
 async def test_mcp_finish_task_session_uses_same_owner_continuity_after_expired_claim(monkeypatch) -> None:
     from app.services import stenographer_service as stenographer_mod
