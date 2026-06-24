@@ -6115,6 +6115,47 @@ class TestMcpToolExecution:
         assert data["selected_route"]["scorer"]["backend_used"] == "learned_semantic"
         assert data["executed"] is False
 
+    async def test_project_work_start_compact_prefers_work_handle(self, monkeypatch):
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
+            assert name == "start_task_session"
+            return json.dumps(
+                {
+                    "status": "started",
+                    "task_id": "task-1",
+                    "work_handle": "handle-1",
+                    "work_token": "secret-token",
+                    "lease": {"lease_id": "lease-1"},
+                    "work_session": {"work_id": "work-1"},
+                    "auto_heartbeat": {"enabled": True},
+                }
+            )
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute_tool)
+
+        data = await mcp_sse._build_project_work_payload(
+            "http://test",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "session_id": "sess-codex",
+                "intent": "claim this task and start",
+                "allow_mutation": True,
+            },
+        )
+
+        compact = data["compact_result"]
+        assert compact["work_handle"] == "handle-1"
+        assert "work_token" not in compact
+        assert "lease_id" not in compact
+        assert "work_session_id" not in compact
+        assert data["agent_action"]["compact_result"] == compact
+        assert data["result"]["work_handle"] == "handle-1"
+        assert "work_token" not in data["result"]
+        assert "work_token_hash" not in data["result"].get("lease", {})
+        assert "work_handle" in compact["next_safe_action"]
+
     async def test_project_work_routes_localized_finish_task_via_learned_pattern(self, monkeypatch):
         class FakeRoutePatternStore:
             def match(self, **kwargs):

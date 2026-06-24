@@ -6,6 +6,7 @@ def test_compact_profile_removes_diagnostics_and_keeps_continuation_handles():
         "receipt": {
             "status": "accepted",
             "message": "Task started.",
+            "work_handle": "handle-1",
             "work_token": "secret-token",
             "lease": {"lease_id": "lease-1"},
             "work_session": {"work_id": "work-1"},
@@ -22,7 +23,8 @@ def test_compact_profile_removes_diagnostics_and_keeps_continuation_handles():
 
     compact = filter_mcp_response(packet, profile="compact")
 
-    assert compact["receipt"]["work_token"] == "secret-token"
+    assert compact["receipt"]["work_handle"] == "handle-1"
+    assert "work_token" not in compact["receipt"]
     assert compact["receipt"]["lease"]["lease_id"] == "lease-1"
     assert compact["receipt"]["work_session"]["work_id"] == "work-1"
     assert compact["result"]["title"] == "Continue safely."
@@ -33,6 +35,17 @@ def test_compact_profile_removes_diagnostics_and_keeps_continuation_handles():
     assert "stage" not in compact
     assert "feedback_expected" not in compact
     assert "follow_up" not in compact
+
+
+def test_full_hides_legacy_work_token_and_diagnostic_keeps_it():
+    packet = {"receipt": {"work_handle": "handle-1", "work_token": "secret-token"}}
+
+    full = filter_mcp_response(packet, profile="full")
+    diagnostic = filter_mcp_response(packet, profile="diagnostic")
+
+    assert full["receipt"]["work_handle"] == "handle-1"
+    assert "work_token" not in full["receipt"]
+    assert diagnostic["receipt"]["work_token"] == "secret-token"
 
 
 def test_diagnostic_profile_keeps_diagnostics():

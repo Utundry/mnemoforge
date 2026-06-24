@@ -2381,10 +2381,9 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
         return {
             "status": result.get("status"),
             "task_id": result.get("task_id"),
-            "work_token": result.get("work_token"),
-            "lease_id": (result.get("lease") or {}).get("lease_id"),
-            "work_session_id": (result.get("work_session") or {}).get("work_id"),
+            "work_handle": result.get("work_handle"),
             "auto_heartbeat": result.get("auto_heartbeat"),
+            "next_safe_action": "Use work_handle for checkpoints, finish, or recovery while the claim is active.",
         }
     if route.get("tool") == "mailbox_submit" and isinstance(result, dict):
         receipt = result.get("receipt") if isinstance(result.get("receipt"), dict) else {}
@@ -2593,7 +2592,7 @@ async def _build_project_rules_payload(api_base: str, args: dict[str, Any], *, s
         },
         "executed": executed,
         "submit_payload": route["payload"],
-        "result": result,
+        "result": _sanitize_project_work_result(result, args),
         "route_telemetry": route_telemetry,
         "warnings": warnings,
         "next_safe_action": "Continue from the executed rule route result." if executed else "Review submit_payload, then call agent_action.recommended_next_call exactly; do not call memory_store.",
@@ -3115,7 +3114,7 @@ async def _run_facade_route(
         "agent_action": action_card,
         "executed": executed,
         "submit_payload": route["payload"],
-        "result": result,
+        "result": _sanitize_project_work_result(result, args),
         "semantic_rules": semantic_rules,
         "route_telemetry": route_telemetry,
         "warnings": warnings,
@@ -4459,7 +4458,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         "routing_evidence": route["evidence"],
         "executed": executed,
         "submit_payload": _redact_project_work_submit_payload(route["payload"]),
-        "result": result,
+        "result": _sanitize_project_work_result(result, args),
         "semantic_rules": semantic_rules,
         "route_telemetry": route_telemetry,
         "compact_result": action_card["compact_result"],
@@ -4518,6 +4517,29 @@ def _redact_project_work_submit_payload(payload: dict[str, Any]) -> dict[str, An
     if public_payload.get("work_token"):
         public_payload["work_token"] = "[REDACTED]"
     return public_payload
+
+
+def _sanitize_project_work_result(result: Any, args: dict[str, Any]) -> Any:
+    profile = response_profile_from_args(args)
+    if _wants_route_diagnostic(args) or server_build_diagnostics_enabled():
+        profile = "diagnostic"
+    return _sanitize_project_work_value(result, include_legacy_token=profile == "diagnostic")
+
+
+def _sanitize_project_work_value(value: Any, *, include_legacy_token: bool) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text == "work_token_hash":
+                continue
+            if key_text == "work_token" and not include_legacy_token:
+                continue
+            sanitized[key_text] = _sanitize_project_work_value(item, include_legacy_token=include_legacy_token)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_project_work_value(item, include_legacy_token=include_legacy_token) for item in value]
+    return value
 
 
 def _project_work_maintenance_suggestion(*, route: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:

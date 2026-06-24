@@ -48,7 +48,8 @@
     "data_ref": "continuation",
     "work_id": "continuation",
     "work_session": "continuation",
-    "work_token": "continuation"
+    "work_handle": "continuation",
+    "work_token": "diagnostic"
   },
   "path_visibility": {
     "agent_action.compact_result": "public",
@@ -59,12 +60,14 @@
     "receipt.requested_ref": "continuation",
     "receipt.work_id": "continuation",
     "receipt.work_session": "continuation",
-    "receipt.work_token": "continuation",
+    "receipt.work_handle": "continuation",
+    "receipt.work_token": "diagnostic",
     "result.lease": "continuation",
     "result.lease_id": "continuation",
     "result.work_id": "continuation",
     "result.work_session": "continuation",
-    "result.work_token": "continuation",
+    "result.work_handle": "continuation",
+    "result.work_token": "diagnostic",
     "tools.stage": "diagnostic",
     "tools.feedback_expected": "diagnostic",
     "tools.follow_up": "diagnostic"
