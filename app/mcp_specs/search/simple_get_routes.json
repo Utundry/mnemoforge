@@ -3,6 +3,34 @@
   "purpose": "Declarative canonical topic routes for public get(query) before generic memory search or project expert fallback.",
   "routes": [
     {
+      "id": "public_mcp_forms",
+      "resource_kind": "public_form_docs",
+      "priority": 95,
+      "trigger_terms": [
+        "public mcp form",
+        "public mcp forms",
+        "workflow form",
+        "workflow forms",
+        "mailbox form",
+        "mailbox forms",
+        "form id",
+        "form ids",
+        "required fields",
+        "optional fields",
+        "accepted fields",
+        "return fields",
+        "returned fields",
+        "does start_task return",
+        "does record_progress accept",
+        "does finish_task accept",
+        "route hygiene issue",
+        "route hygiene reporting",
+        "report route hygiene",
+        "record route feedback"
+      ],
+      "scope": "public_workflow_form_read"
+    },
+    {
       "id": "boundary_action_cues",
       "resource_kind": "boundary_action_cues",
       "priority": 85,

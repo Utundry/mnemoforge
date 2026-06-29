@@ -62,6 +62,7 @@ def project_work_route(
         },
     }
 
+    action_profile = _intent_action_profile(args)
     catalog_route, route_candidates = _selected_catalog_route(text, args)
     route["route_candidates"] = route_candidates
     if llm_decision and _catalog_route_by_intent(str(llm_decision.get("intent_type") or "")):
@@ -79,6 +80,12 @@ def project_work_route(
             *[item for item in route["route_candidates"] if item.get("intent_type") != chosen["intent_type"]],
         ][:3]
         route["route_candidates"] = route_candidates
+    catalog_route, route_candidates, arbitration = _arbitrate_primary_action(
+        catalog_route,
+        route_candidates,
+        action_profile,
+    )
+    route["route_candidates"] = route_candidates
     if catalog_route:
         best_score = route_candidates[0]["score"] if route_candidates else 0.0
         route.update(
@@ -92,9 +99,15 @@ def project_work_route(
                 "matched_example": route_candidates[0].get("matched_example", "") if route_candidates else "",
             }
         )
+    if arbitration:
+        route["intent_arbitration"] = arbitration
     route = _apply_payload(route, args, text)
     route["reason"] = _finalize_route_reason(route)
     route["evidence"] = evidence
+    if arbitration:
+        route["evidence"].append(f"intent_arbitration:{arbitration['selected_primary_action']}")
+        if arbitration.get("demoted_candidate"):
+            route["evidence"].append(f"demoted_candidate:{arbitration['demoted_candidate']}")
     if route.get("matched_example"):
         route["evidence"].append(f"matched_example:{route['matched_example']}")
     return route
@@ -178,6 +191,133 @@ def _catalog_scores(text: str, args: dict[str, Any]) -> list[dict[str, Any]]:
         )
     candidates.sort(key=lambda item: (-item["score"], item["intent_type"]))
     return candidates
+
+
+def _arbitrate_primary_action(
+    catalog_route: dict[str, Any] | None,
+    candidates: list[dict[str, Any]],
+    action_profile: dict[str, Any],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], dict[str, Any] | None]:
+    primary_action = str(action_profile.get("primary_action") or "").strip()
+    selected_intent_type = str((catalog_route or {}).get("intent_type") or "").strip()
+    if not primary_action or primary_action == "create_task":
+        return catalog_route, candidates, None
+
+    target_intent_type = {
+        "start_task_session": "start_task_session",
+        "finish_task_session": "finish_task_session",
+        "capture_or_closeout": "capture_or_closeout",
+    }.get(primary_action)
+    if not target_intent_type or selected_intent_type == target_intent_type:
+        return catalog_route, candidates, None
+
+    demotable = selected_intent_type == "create_task" or any(
+        str(candidate.get("intent_type") or "") == "create_task" for candidate in candidates[:3]
+    )
+    if not demotable:
+        return catalog_route, candidates, None
+
+    target = _catalog_route_by_intent(target_intent_type)
+    if target is None:
+        return catalog_route, candidates, None
+
+    adjusted = _promote_candidate(
+        candidates,
+        intent_type=target_intent_type,
+        tool=str(target["tool"]),
+        matched_example=str(action_profile.get("matched_marker") or "primary_action"),
+    )
+    arbitration = {
+        "selected_primary_action": target_intent_type,
+        "primary_action_source": action_profile.get("source") or "intent",
+        "demoted_candidate": "create_task",
+        "demotion_reason": "create intent appeared inside lifecycle task wording instead of as the primary operator action",
+    }
+    return target, adjusted, arbitration
+
+
+def _promote_candidate(
+    candidates: list[dict[str, Any]],
+    *,
+    intent_type: str,
+    tool: str,
+    matched_example: str,
+) -> list[dict[str, Any]]:
+    updated: list[dict[str, Any]] = []
+    seen = False
+    for candidate in candidates:
+        item = dict(candidate)
+        if str(item.get("intent_type") or "") == intent_type:
+            item["score"] = max(float(item.get("score") or 0.0), 0.92)
+            item["matched_example"] = matched_example
+            item["scorer"] = item.get("scorer") or "primary_action_arbitration"
+            seen = True
+        elif str(item.get("intent_type") or "") == "create_task":
+            item["score"] = min(float(item.get("score") or 0.0), 0.21)
+            item["scorer"] = item.get("scorer") or "primary_action_arbitration"
+        updated.append(item)
+    if not seen:
+        updated.append(
+            {
+                "intent_type": intent_type,
+                "tool": tool,
+                "score": 0.92,
+                "matched_example": matched_example,
+                "scorer": "primary_action_arbitration",
+            }
+        )
+    updated.sort(key=lambda item: (-float(item.get("score") or 0.0), str(item.get("intent_type") or "")))
+    return updated[:3]
+
+
+def _intent_action_profile(args: dict[str, Any]) -> dict[str, Any]:
+    intent = str(args.get("intent") or "").strip()
+    lowered = intent.casefold()
+    tokens = _route_tokens(lowered)
+    task_id = str(args.get("task_id") or "").strip()
+
+    create_marker = _primary_create_marker(lowered)
+    if create_marker:
+        return {"primary_action": "create_task", "source": "intent", "matched_marker": create_marker}
+
+    if task_id and (tokens & {"start", "begin", "claim", "take", "implement", "implementation"}):
+        return {"primary_action": "start_task_session", "source": "intent", "matched_marker": "start task"}
+
+    if task_id and (tokens & {"finish", "complete", "completed", "end", "release", "finalize", "closeout"}):
+        return {"primary_action": "finish_task_session", "source": "intent", "matched_marker": "finish task"}
+
+    if task_id and (
+        ("record checkpoint" in lowered)
+        or ("save checkpoint" in lowered)
+        or ("record progress" in lowered)
+        or ("work result" in lowered)
+        or ("close tail" in lowered)
+        or ("wrap up" in lowered)
+    ):
+        return {"primary_action": "capture_or_closeout", "source": "intent", "matched_marker": "record checkpoint"}
+
+    return {"primary_action": "", "source": "intent", "matched_marker": ""}
+
+
+def _primary_create_marker(lowered_intent: str) -> str:
+    clean = re.sub(r"\s+", " ", str(lowered_intent or "").strip())
+    if not clean:
+        return ""
+    primary_markers = (
+        "create a task",
+        "create task",
+        "create improvement",
+        "save this as an improvement",
+        "add this to backlog",
+        "record new issue",
+        "formulate task",
+        "formulate this task",
+        "capture this as future work",
+    )
+    for marker in primary_markers:
+        if clean.startswith(marker):
+            return marker
+    return ""
 
 
 def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> dict[str, Any]:
@@ -416,6 +556,17 @@ def _resolve_claim_filter(
 
 def _finalize_route_reason(route: dict[str, Any]) -> str:
     base_reason = str(route.get("reason") or "").strip()
+    arbitration = route.get("intent_arbitration")
+    if isinstance(arbitration, dict):
+        selected = str(arbitration.get("selected_primary_action") or "").strip()
+        demoted = str(arbitration.get("demoted_candidate") or "").strip()
+        reason = str(arbitration.get("demotion_reason") or "").strip()
+        arbitration_reason = f"Primary action arbitration selected {selected}."
+        if demoted:
+            arbitration_reason = f"{arbitration_reason} Demoted {demoted}."
+        if reason:
+            arbitration_reason = f"{arbitration_reason} {reason}."
+        base_reason = f"{base_reason} {arbitration_reason}".strip()
     payload = route.get("payload")
     resolution = route.get("claim_filter_resolution")
     if not isinstance(payload, dict) or not isinstance(resolution, dict):
@@ -504,3 +655,4 @@ def _string_list_arg(value: Any) -> list[str]:
         return [str(item).strip() for item in value if str(item).strip()]
     text = str(value).strip()
     return [text] if text else []
+

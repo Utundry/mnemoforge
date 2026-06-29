@@ -159,6 +159,15 @@ class TestMcpToolExecution:
         data = json.loads(await mcp_sse._execute_tool("state", {"project": "alpha"}, "http://test"))
         assert data["server_build"]["git_commit"] == "def5678"
 
+    def test_state_tool_accepts_task_scoped_continuity_fields(self):
+        tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "state")
+        props = tool["inputSchema"]["properties"]
+        assert "task_id" in props
+        assert "work_handle" in props
+        assert "work_token" in props
+        help_props = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "help")["inputSchema"]["properties"]
+        assert "task_id" not in help_props
+
     async def test_tools_list_compact_can_request_full_schemas(self):
         response = await mcp_sse._handle(
             {
@@ -507,6 +516,7 @@ class TestMcpToolExecution:
                         "session_id": "sess-mailbox-cycle",
                         "agent_fingerprint": "agentfp:mailbox-cycle",
                         "auto_heartbeat": False,
+                        "approved_framing": "Approved full-cycle mailbox workflow test framing.",
                     },
                 },
                 "http://test",
@@ -515,6 +525,7 @@ class TestMcpToolExecution:
             assert start_data["receipt"]["status"] == "started"
             assert start_data["receipt"]["lease"]["status"] == "active"
             assert "work_token_hash" not in start_data["receipt"]["lease"]
+            assert start_data["receipt"]["work_handle"].startswith("wh1.")
             assert start_data["receipt"]["work_token"]
             assert start_data["receipt"]["next_state"] == "implementation"
             assert "finish_task" in start_data["receipt"]["next_forms"]
@@ -531,7 +542,7 @@ class TestMcpToolExecution:
                         "project": "alpha",
                         "task_id": "task-mailbox-full-cycle",
                         "owner_agent": "codex",
-                        "work_token": start_data["receipt"]["work_token"],
+                        "work_handle": start_data["receipt"]["work_handle"],
                         "summary": "Finished through mailbox.",
                         "changed_files": ["app/routers/mcp_sse.py"],
                         "verification": ["Docker target contour passed."],
@@ -586,7 +597,7 @@ class TestMcpToolExecution:
                     "http://test",
                 )
             )
-            token = started["receipt"]["work_token"]
+            work_handle = started["receipt"]["work_handle"]
             work_id = started["receipt"]["work_session"]["work_id"]
             lease_store.expire_stale(now=datetime.now(timezone.utc) + timedelta(hours=1))
             assert lease_store.get_active_claim(project="alpha", task_id="task-mailbox-continuity-finish") is None
@@ -604,7 +615,7 @@ class TestMcpToolExecution:
                             "owner_agent": "codex",
                             "session_id": "sess-mailbox-continuity",
                             "work_id": work_id,
-                            "work_token": token,
+                            "work_handle": work_handle,
                             "summary": "Finished through continuity after lease loss.",
                             "changed_files": ["app/services/mcp_task_session_actions.py"],
                             "verification": ["Docker contour passed."],
@@ -652,14 +663,16 @@ class TestMcpToolExecution:
                             "task_id": "task-mailbox-progress-finish",
                             "owner_agent": "codex",
                             "agent_fingerprint": "agentfp:progress-finish",
+                            "session_id": "sess-progress-finish",
                             "auto_heartbeat": False,
+                            "approved_framing": "Approved progress evidence finish test framing.",
                         },
                     },
                     "http://test",
                 )
             )
             assert started["receipt"]["status"] == "started"
-            token = started["receipt"]["work_token"]
+            work_handle = started["receipt"]["work_handle"]
 
             progress = json.loads(
                 await mcp_sse._execute_tool(
@@ -672,7 +685,8 @@ class TestMcpToolExecution:
                             "project": "alpha",
                             "task_id": "task-mailbox-progress-finish",
                             "owner_agent": "codex",
-                            "work_token": token,
+                            "session_id": "sess-progress-finish",
+                            "work_handle": work_handle,
                             "summary": "Recorded closeout evidence once.",
                             "changed_files": ["app/services/mcp_mailbox_actions.py"],
                             "verification": ["Docker contour passed."],
@@ -696,7 +710,8 @@ class TestMcpToolExecution:
                             "project": "alpha",
                             "task_id": "task-mailbox-progress-finish",
                             "owner_agent": "codex",
-                            "work_token": token,
+                            "session_id": "sess-progress-finish",
+                            "work_handle": work_handle,
                             "summary": "Finished without repeating evidence.",
                         },
                     },
@@ -743,7 +758,7 @@ class TestMcpToolExecution:
                     "http://test",
                 )
             )
-            token = started["receipt"]["work_token"]
+            work_handle = started["receipt"]["work_handle"]
             work_id = started["receipt"]["work_session"]["work_id"]
 
             finished = json.loads(
@@ -1403,6 +1418,9 @@ class TestMcpToolExecution:
         assert "verification" in props["state"]["enum"]
         assert props["runtime_profile_id"]["default"] == "unknown_cli"
         assert props["diagnostic"]["default"] is False
+        assert "task_id" in props
+        assert "work_handle" in props
+        assert "work_token" in props
         assert "public state packet" in tool["description"]
 
     def test_mailbox_submit_tool_is_public_guarded_entrypoint(self):
@@ -1539,6 +1557,48 @@ class TestMcpToolExecution:
         assert any(form["form_id"] == "create_improvement" for form in data["forms"])
         assert all("postconditions" not in form for form in data["forms"])
         assert "Internal diagnostics are not available" in data["warnings"][-1]
+
+    async def test_state_tool_returns_task_scoped_health_nudge_from_work_handle(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        try:
+            claim = lease_store.claim(
+                project="alpha",
+                task_id="task-health",
+                owner_agent="codex",
+                session_id="state-session",
+                agent_fingerprint="agent-alpha",
+            )
+            work_handle = lease_mod.build_work_handle(lease=claim.lease, work_token=claim.work_token)
+
+            result = await mcp_sse._execute_tool(
+                "state",
+                {
+                    "project": "alpha",
+                    "state": "implementation",
+                    "runtime_profile_id": "weak_mcp_operator",
+                    "detail": "full",
+                    "task_id": "task-health",
+                    "work_handle": work_handle,
+                },
+                "http://test",
+            )
+            data = json.loads(result)
+
+            assert data["health_nudge"]["scope"] == {
+                "kind": "task",
+                "task_id": "task-health",
+                "continuity": "active_claim",
+            }
+            assert data["cue_packet"]["health_nudge"] == data["health_nudge"]
+            serialized = json.dumps(data)
+            assert claim.work_token not in serialized
+            assert work_handle not in serialized
+        finally:
+            lease_store.close()
 
     async def test_mailbox_state_diagnostic_profile_can_return_internal_metadata(self):
         result = await mcp_sse._execute_tool(
@@ -2990,7 +3050,7 @@ class TestMcpToolExecution:
         assert data["receipt"]["diagnostic_incident"]["safe_next_action"] == data["receipt"]["next_safe_action"]
         assert "help:submit.start_task" in data["receipt"]["diagnostic_incident"]["expand_refs"]
         assert data["receipt"]["diagnostic_incident"]["recommended_next_call"]["form_id"] == "start_task"
-        assert "same task_id and agent_fingerprint" in data["receipt"]["next_safe_action"]
+        assert "work_handle" in data["receipt"]["next_safe_action"]
         assert data["receipt"]["recommended_reclaim_call"] == {
             "tool": "submit",
             "form_id": "start_task",
@@ -3002,7 +3062,7 @@ class TestMcpToolExecution:
             },
         }
 
-    async def test_simple_submit_start_task_compact_keeps_work_token_and_next_forms(self, monkeypatch):
+    async def test_simple_submit_start_task_compact_keeps_work_handle_and_next_forms(self, monkeypatch):
         from app.services import stenographer_service as stenographer_mod
         from app.services import task_lease_service as lease_mod
 
@@ -3039,9 +3099,33 @@ class TestMcpToolExecution:
 
             data = json.loads(result)
             assert data["receipt"]["status"] == "started"
-            assert data["receipt"]["work_token"]
+            assert data["receipt"]["work_handle"].startswith("wh1.")
+            assert "work_token" not in data["receipt"]
             assert data["receipt"]["next_state"] == "implementation"
             assert {"record_progress", "finish_task"} <= set(data["receipt"]["next_forms"])
+
+            progress = json.loads(
+                await mcp_sse._execute_tool(
+                    "submit",
+                    {
+                        "form_id": "record_progress",
+                        "state": "implementation",
+                        "project": "alpha",
+                        "payload": {
+                            "project": "alpha",
+                            "task_id": "task-simple-start",
+                            "owner_agent": "codex",
+                            "session_id": "sess-simple-start",
+                            "work_handle": data["receipt"]["work_handle"],
+                            "summary": "Recorded progress through public work_handle.",
+                            "stage": "in_progress",
+                        },
+                    },
+                    "http://test",
+                )
+            )
+            assert progress["receipt"]["status"] == "accepted"
+            assert progress["receipt"]["message"] == "Governed mailbox form executed."
         finally:
             lease_store.close()
             stenographer_store.close()
@@ -3136,8 +3220,9 @@ class TestMcpToolExecution:
             "task_id": "task-simple-ttl-reclaim",
             "owner_agent": "codex",
             "agent_fingerprint": "agentfp:simple-ttl-reclaim",
+            "session_id": "sess-simple-ttl-reclaim",
             "auto_heartbeat": False,
-            "lease_ttl_seconds": 5,
+            "lease_ttl_seconds": 300,
             "approved_framing": "Implement the reviewed TTL reclaim framing.",
         }
         try:
@@ -3153,9 +3238,10 @@ class TestMcpToolExecution:
                     "http://test",
                 )
             )
-            first_lease = lease_store.get_active_claim(project="alpha", task_id=payload["task_id"])
+            active_store = lease_mod.get_task_lease_store()
+            first_lease = active_store.get_active_claim(project="alpha", task_id=payload["task_id"])
             assert first_lease is not None
-            lease_store.expire_stale(now=first_lease.expires_at + timedelta(seconds=1))
+            active_store.expire_stale(now=first_lease.expires_at + timedelta(seconds=1))
 
             reclaimed = json.loads(
                 await mcp_sse._execute_tool(
@@ -3171,8 +3257,9 @@ class TestMcpToolExecution:
             )
 
             assert reclaimed["receipt"]["status"] == "reclaimed_after_ttl"
-            assert reclaimed["receipt"]["work_token"]
-            assert reclaimed["receipt"]["work_token"] != started["receipt"]["work_token"]
+            assert reclaimed["receipt"]["work_handle"].startswith("wh1.")
+            assert "work_token" not in reclaimed["receipt"]
+            assert reclaimed["receipt"]["work_handle"] != started["receipt"]["work_handle"]
             assert reclaimed["receipt"]["work_session_resumed"] is True
             assert reclaimed["receipt"]["work_session"]["work_id"] == started["receipt"]["work_session"]["work_id"]
             assert reclaimed["receipt"]["reclaim"] == {
@@ -3490,6 +3577,93 @@ class TestMcpToolExecution:
         assert result["project_identity"]["matched_alias"] == "sloplesscode"
         assert any(alias["alias"] == "sloplesscode" for alias in result["project_identity"]["known_aliases"])
 
+    async def test_simple_get_public_form_question_routes_to_form_docs_without_artifact_search(self, monkeypatch):
+        async def forbidden_get(api_base: str, path: str):
+            raise AssertionError("public form docs should not call artifact or backend search")
+
+        async def forbidden_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("public form docs should not call semantic memory search")
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("public form docs should not route through project expert")
+
+        monkeypatch.setattr(mcp_sse, "_get", forbidden_get)
+        monkeypatch.setattr(mcp_sse, "_post", forbidden_post)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+        monkeypatch.setattr(
+            "app.services.mcp_simple_read_actions.project_identity_envelope",
+            lambda *, requested_project, observed_project: {
+                "requested_project": requested_project,
+                "canonical_project": observed_project,
+                "matched_alias": requested_project,
+                "known_aliases": [],
+            },
+        )
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {
+                    "project": "sloplesscode",
+                    "state": "implementation",
+                    "query": "In the current public MCP workflow forms, does start_task return work_handle and do record_progress and finish_task accept work_handle?",
+                    "response_format": "answer",
+                },
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "accepted"
+        assert result["receipt"]["resource_kind"] == "public_form_docs"
+        assert result["receipt"]["route_source"] == "simple_get_routes"
+        form_ids = {form["form_id"] for form in result["result"]["forms"]}
+        assert {"start_task", "record_progress", "finish_task"} <= form_ids
+        by_id = {form["form_id"]: form for form in result["result"]["forms"]}
+        assert any(check["field"] == "work_handle" and check["mentioned_in_hint"] for check in by_id["start_task"]["field_checks"])
+        assert any(check["field"] == "work_handle" and check["optional"] for check in by_id["record_progress"]["field_checks"])
+        assert any(check["field"] == "work_handle" and check["optional"] for check in by_id["finish_task"]["field_checks"])
+
+    async def test_simple_get_route_hygiene_question_surfaces_feedback_forms(self, monkeypatch):
+        async def forbidden_get(api_base: str, path: str):
+            raise AssertionError("route hygiene form docs should not call artifact search")
+
+        async def forbidden_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("route hygiene form docs should not call memory search")
+
+        async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+            raise AssertionError("route hygiene form docs should not route through project expert")
+
+        monkeypatch.setattr(mcp_sse, "_get", forbidden_get)
+        monkeypatch.setattr(mcp_sse, "_post", forbidden_post)
+        monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+        monkeypatch.setattr(
+            "app.services.mcp_simple_read_actions.project_identity_envelope",
+            lambda *, requested_project, observed_project: {
+                "requested_project": requested_project,
+                "canonical_project": observed_project,
+                "matched_alias": requested_project,
+                "known_aliases": [],
+            },
+        )
+
+        result = json.loads(
+            await mcp_sse._execute_tool(
+                "get",
+                {
+                    "project": "sloplesscode",
+                    "state": "verification",
+                    "query": "How should an agent report a route hygiene issue after a concrete misroute?",
+                    "response_format": "answer",
+                },
+                "http://test",
+            )
+        )
+
+        assert result["receipt"]["status"] == "accepted"
+        assert result["receipt"]["resource_kind"] == "public_form_docs"
+        form_ids = {form["form_id"] for form in result["result"]["forms"]}
+        assert {"route_feedback", "route_hygiene"} <= form_ids
+        assert result["result"]["next_safe_action"].startswith("Use submit with form_id=route_feedback")
     async def test_simple_get_resolves_short_improvement_refs(self, monkeypatch):
         from app.services.public_ref_index import get_public_ref_index_store
 

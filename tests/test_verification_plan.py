@@ -1,3 +1,5 @@
+import json
+import sys
 from datetime import date
 
 from types import SimpleNamespace
@@ -30,6 +32,43 @@ POLICY = {
     ],
 }
 
+
+def test_build_plan_returns_noop_for_empty_changed_files():
+    plan = build_plan([], policy=POLICY, baseline={"failures": []})
+
+    assert plan.level == "none"
+    assert plan.tests == []
+    assert plan.matched_rules == []
+    assert plan.reasons == [verification_plan.NO_CHANGES_REASON]
+    assert plan.as_dict()["command"] == []
+    assert plan.as_dict()["command_text"] == ""
+
+
+def test_build_plan_returns_noop_for_explicit_empty_changed_file_items():
+    plan = build_plan(["", "  "], policy=POLICY, baseline={"failures": []})
+
+    assert plan.level == "none"
+    assert plan.changed_files == []
+    assert plan.as_dict()["command"] == []
+
+def test_build_plan_keeps_default_for_unknown_non_empty_changes():
+    plan = build_plan(["docs/unknown.md"], policy=POLICY, baseline={"failures": []})
+
+    assert plan.level == "focused"
+    assert plan.tests == ["tests/test_project_utility.py"]
+    assert plan.matched_rules == []
+    assert plan.reasons == ["default"]
+
+
+def test_main_returns_noop_when_git_reports_clean_worktree(monkeypatch, capsys):
+    monkeypatch.setattr(verification_plan, "_git_changed_files", lambda _base: [])
+    monkeypatch.setattr(sys, "argv", ["verification_plan.py", "--json"])
+
+    assert verification_plan.main() == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["selection"]["level"] == "none"
+    assert data["selection"]["tests"] == []
+    assert data["command"] == []
 
 def test_build_plan_selects_focused_tooling_tests():
     plan = build_plan(

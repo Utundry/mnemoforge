@@ -11,6 +11,9 @@
         "required": ["state"],
         "properties": {
           "project": {"type": "string", "default": "mnemoforge"},
+          "task_id": {"type": "string", "description": "Optional active task id for task-scoped state/context cues."},
+          "work_handle": {"type": "string", "description": "Optional public work handle returned by start_task/claim_task; preferred for task-bound continuity."},
+          "work_token": {"type": "string", "description": "Legacy continuation token for task-bound continuity; prefer work_handle when available."},
           "state": {
             "type": "string",
             "enum": ["planning", "implementation", "verification", "live_validation", "checkpointing", "handoff", "operator_review"],

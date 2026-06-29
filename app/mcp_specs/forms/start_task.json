@@ -60,7 +60,7 @@
       "mutation": true
     },
     "forbidden_metadata": {},
-    "required_receipt_fields": ["status", "lease", "work_token", "work_session"]
+    "required_receipt_fields": ["status", "lease", "work_handle", "work_session"]
   },
-  "public_hint": "Use this before any real implementation work only after the latest user-visible task framing has been reviewed and user_approved_start is satisfied, unless explicit_autonomous_mode is active. Provide approved_framing when possible. Approval does not survive scope drift. The returned work_token is ownership proof for checkpoints, finish, recovery, and concurrency-safe audit."
+  "public_hint": "Use this before any real implementation work only after the latest user-visible task framing has been reviewed and user_approved_start is satisfied, unless explicit_autonomous_mode is active. Provide approved_framing when possible. Approval does not survive scope drift. The returned work_handle is ownership proof for checkpoints, finish, recovery, and concurrency-safe audit; legacy work_token remains internal/diagnostic."
 }

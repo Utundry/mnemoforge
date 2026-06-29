@@ -228,6 +228,7 @@ async def finish_task_session_action(
                 project=project,
                 task_id=task_id,
                 owner_agent=owner_agent,
+                allow_inactive=True,
             )
         except WorkHandleInvalid as exc:
             return {

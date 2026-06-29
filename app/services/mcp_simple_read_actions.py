@@ -29,7 +29,12 @@ from app.services.planning_advisor_service import build_next_work_advisor, is_pl
 from app.services.public_diagnostic_service import attach_public_diagnostic_incident
 from app.services.route_pattern_store import get_route_pattern_store
 from app.services.stage_applicability_service import stage_applicability_metadata
-from app.services.mcp_workflow_specs import load_named_json_spec
+from app.services.mcp_workflow_specs import (
+    DEFAULT_SPEC_ROOT,
+    list_mailbox_form_specs,
+    list_mailbox_forms_for_state,
+    load_named_json_spec,
+)
 from app.services.mcp_user_explanation_service import user_explanation_for_artifact
 from app.services.project_identity_service import project_identity_envelope
 
@@ -1126,7 +1131,7 @@ def select_simple_get_spec_route(query: str) -> dict[str, Any]:
         if not isinstance(route, dict):
             continue
         for term in route.get("trigger_terms") or []:
-            value = str(term or "").strip().casefold()
+            value = re.sub(r"[_\-/\.]+", " ", str(term or "").strip()).casefold()
             if value and _query_contains_alias(text, value):
                 selected = dict(route)
                 selected["matched_trigger"] = value
@@ -1152,6 +1157,127 @@ def select_simple_get_spec_route(query: str) -> dict[str, Any]:
     return selected
 
 
+def build_public_form_docs_result(*, query: str, state: str, limit: int) -> dict[str, Any]:
+    all_forms = list(list_mailbox_form_specs(spec_root=DEFAULT_SPEC_ROOT))
+    forms_by_id = {str(form.id): form for form in all_forms}
+    selected_ids = _mentioned_public_form_ids(query, forms_by_id=forms_by_id)
+    if _route_hygiene_form_query(query):
+        selected_ids.extend(form_id for form_id in ("route_feedback", "route_hygiene") if form_id in forms_by_id)
+    selected_ids = _dedupe_preserve_order(selected_ids)
+    if not selected_ids:
+        try:
+            selected_ids = [str(form.id) for form in list_mailbox_forms_for_state(state, spec_root=DEFAULT_SPEC_ROOT)]
+        except Exception:
+            selected_ids = [str(form.id) for form in all_forms]
+    selected_forms = [forms_by_id[form_id] for form_id in selected_ids if form_id in forms_by_id]
+    selected_forms = selected_forms[: max(1, limit)]
+    field_names = _mentioned_public_field_names(query, forms=selected_forms)
+    form_docs = []
+    for form in selected_forms:
+        field_checks = [
+            {
+                "field": field,
+                "required": field in form.required_fields,
+                "optional": field in form.optional_fields,
+                "mentioned_in_hint": field in str(form.public_hint or ""),
+                "mentioned_in_purpose": field in str(form.purpose or ""),
+            }
+            for field in field_names
+        ]
+        form_docs.append(
+            {
+                "form_id": form.id,
+                "title": form.title,
+                "mode": form.mode,
+                "states": _form_state_names(form),
+                "required_fields": list(form.required_fields),
+                "optional_fields": list(form.optional_fields),
+                "hint": form.public_hint,
+                "field_checks": field_checks,
+            }
+        )
+    return {
+        "status": "ok",
+        "query": query,
+        "resource_kind": "public_form_docs",
+        "forms": form_docs,
+        "mentioned_fields": field_names,
+        "next_safe_action": _public_form_docs_next_action(form_docs),
+    }
+
+
+def _mentioned_public_form_ids(query: str, *, forms_by_id: dict[str, Any]) -> list[str]:
+    text = _normalized_query_text(query)
+    selected: list[str] = []
+    for form_id in forms_by_id:
+        aliases = {form_id.casefold(), form_id.replace("_", " ").casefold(), form_id.replace("_", "-").casefold()}
+        if any(alias and _query_contains_alias(text, alias) for alias in aliases):
+            selected.append(form_id)
+    return selected
+
+
+def _mentioned_public_field_names(query: str, *, forms: list[Any]) -> list[str]:
+    text = _normalized_query_text(query)
+    known_fields: set[str] = set()
+    for form in forms:
+        known_fields.update(str(field) for field in form.required_fields)
+        known_fields.update(str(field) for field in form.optional_fields)
+        schema = form.input_schema if isinstance(form.input_schema, dict) else {}
+        properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+        known_fields.update(str(field) for field in properties)
+    selected = []
+    for field in sorted(known_fields):
+        aliases = {field.casefold(), field.replace("_", " ").casefold(), field.replace("_", "-").casefold()}
+        if any(alias and _query_contains_alias(text, alias) for alias in aliases):
+            selected.append(field)
+    return selected
+
+
+def _route_hygiene_form_query(query: str) -> bool:
+    text = _normalized_query_text(query)
+    return any(
+        phrase in text
+        for phrase in (
+            "route hygiene",
+            "route feedback",
+            "misroute",
+            "misclassification",
+            "report route",
+            "record route",
+            "learned route",
+        )
+    )
+
+
+def _normalized_query_text(query: str) -> str:
+    return re.sub(r"[_\-/\.]+", " ", str(query or "")).casefold()
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _form_state_names(form: Any) -> list[str]:
+    states = []
+    for state in getattr(form, "states", []) or []:
+        states.append(str(state.value if hasattr(state, "value") else state))
+    return states
+
+
+def _public_form_docs_next_action(forms: list[dict[str, Any]]) -> str:
+    ids = {str(form.get("form_id") or "") for form in forms}
+    if "route_feedback" in ids:
+        return "Use submit with form_id=route_feedback in operator_review only after confirming a concrete misroute."
+    if forms:
+        return "Use submit with the selected form_id only after reviewing required_fields, optional_fields, state, and hint."
+    return "Call state for the current workflow packet, or ask for a specific public form_id."
 async def execute_simple_get_spec_route(
     *,
     api_base: str,
@@ -1175,6 +1301,26 @@ async def execute_simple_get_spec_route(
     }
     simple_interface = {key: value for key, value in simple_interface.items() if value not in (None, "", [], {})}
 
+    if resource_kind == "public_form_docs":
+        result = build_public_form_docs_result(query=query, state=state, limit=limit)
+        next_safe_action = result.get("next_safe_action")
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Natural read query resolved through public MCP form documentation.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "matched_trigger": matched_trigger,
+                "count": len(result.get("forms") or []),
+                "next_safe_action": next_safe_action,
+            },
+            "result": result,
+            "simple_interface": simple_interface,
+            "next_safe_action": next_safe_action,
+            "details_available": True,
+        }
     if resource_kind == "storage_trust":
         endpoint = str(route.get("endpoint") or "/admin/storage-trust").strip() or "/admin/storage-trust"
         storage_path = endpoint
@@ -1526,7 +1672,7 @@ def select_boundary_action_class(*, query: str, route: dict[str, Any], spec: dic
             continue
         score = 0
         for term in item.get("trigger_terms") or []:
-            value = str(term or "").strip().casefold()
+            value = re.sub(r"[_\-/\.]+", " ", str(term or "").strip()).casefold()
             if value and _query_contains_alias(text, value):
                 score += max(1, len(value.split()))
         if score and (best is None or score > best[0]):

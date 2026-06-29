@@ -43,5 +43,5 @@
     "forbidden_metadata": {},
     "required_receipt_fields": ["status", "artifact_key", "close_status"]
   },
-  "public_hint": "Use this when the correct outcome is not completed work. To complete a task, first claim/start it to obtain work_token, then submit finish_task."
+  "public_hint": "Use this when the correct outcome is not completed work. To complete a task, first claim/start it to obtain work_handle, then submit finish_task."
 }

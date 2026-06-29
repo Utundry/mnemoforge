@@ -144,3 +144,30 @@ def test_finish_task_session_forwards_public_recovery_identity() -> None:
     assert route["payload"]["session_id"] == "session-1"
     assert route["payload"]["work_id"] == "work-1"
     assert route["payload"]["work_token"] == "secret-token"
+
+
+def test_primary_start_action_beats_embedded_create_task_phrase() -> None:
+    route = _route(
+        "start implementation for task 4decf1b6-b638-43e5-946e-1bbc2af97c71: Prefer lifecycle finish intent over embedded create-task phrase matches",
+        "create_task",
+        task_id="4decf1b6-b638-43e5-946e-1bbc2af97c71",
+        agent_id="codex",
+    )
+
+    assert route["intent_type"] == "start_task_session"
+    assert route["tool"] == "start_task_session"
+    assert route["payload"]["task_id"] == "4decf1b6-b638-43e5-946e-1bbc2af97c71"
+    assert route["intent_arbitration"]["demoted_candidate"] == "create_task"
+    assert "intent_arbitration:start_task_session" in route["evidence"]
+
+
+def test_primary_create_task_about_finish_bug_stays_create_task() -> None:
+    route = _route(
+        "create task to fix finish task route misclassification",
+        "create_task",
+        task_id="existing-task-id",
+    )
+
+    assert route["intent_type"] == "create_task"
+    assert route["tool"] == "mailbox_submit"
+    assert "intent_arbitration" not in route

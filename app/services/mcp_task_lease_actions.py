@@ -100,7 +100,7 @@ def task_mutation_requires_owned_claim(
                 "claim_allowed": False,
                 "continuity_reclaim_available": bool(work_token_clean and session_clean),
                 "next_safe_action": (
-                    "Pass the original owner_agent, session_id, and work_token to continue or finish after TTL/session loss; "
+                    "Pass the returned work_handle to continue or finish after TTL/session loss; "
                     "otherwise submit start_task to claim available work."
                 ),
             }
@@ -151,7 +151,7 @@ def task_mutation_requires_owned_claim(
                 "tool": tool_name,
                 "lease_id": active.lease_id,
                 "claim_allowed": False,
-                "next_safe_action": "Pass work_token from start_task_session for mutating operations.",
+                "next_safe_action": "Pass work_handle from start_task_session for mutating operations.",
             }
     elif not verify_work_token_for_mutation(
         store=store,

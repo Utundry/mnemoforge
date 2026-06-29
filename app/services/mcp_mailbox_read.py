@@ -9,6 +9,7 @@ from app.services.mcp_host_compatibility import (
     get_mcp_host_compatibility_store,
     resolve_task_continuity_scope,
 )
+from app.services.task_lease_service import get_task_lease_store, work_handle_to_legacy_context
 
 
 SessionIdentityCallback = Callable[[str | None], Awaitable[dict[str, str]]]
@@ -42,10 +43,12 @@ async def build_mailbox_state_response(
         project=project,
         dependencies=dependencies,
     )
+    task_id = str(args.get("task_id") or "").strip()
+    work_token = _work_token_from_args(args, project=project, task_id=task_id)
     task_continuity = resolve_task_continuity_scope(
         project=project,
-        task_id=str(args.get("task_id") or "").strip(),
-        work_token=str(args.get("work_token") or "").strip(),
+        task_id=task_id,
+        work_token=work_token,
     )
     effective_session_id = str(task_continuity.get("session_scope") or session_id or "")
     agent_fingerprint = str(
@@ -78,6 +81,11 @@ async def build_mailbox_state_response(
     )
     if bool(args.get("diagnostic", False)):
         packet["host_compatibility"] = compatibility
+    _attach_task_scoped_health_nudge(
+        packet,
+        task_id=task_id,
+        task_continuity=task_continuity,
+    )
     return await _suppress_repeated_health_nudge(
         packet,
         session_id=effective_session_id,
@@ -113,6 +121,25 @@ async def build_mailbox_get_response(
 
 def _runtime_profile_id(args: dict[str, Any], identity_defaults: dict[str, str]) -> str:
     return str(args.get("runtime_profile_id") or identity_defaults.get("runtime_profile_id") or "unknown_cli")
+
+
+def _work_token_from_args(args: dict[str, Any], *, project: str, task_id: str) -> str:
+    work_token = str(args.get("work_token") or "").strip()
+    if work_token:
+        return work_token
+    work_handle = str(args.get("work_handle") or "").strip()
+    if not work_handle:
+        return ""
+    try:
+        context = work_handle_to_legacy_context(
+            store=get_task_lease_store(),
+            work_handle=work_handle,
+            project=project,
+            task_id=task_id,
+        )
+    except Exception:
+        return ""
+    return str(context.get("work_token") or "").strip()
 
 
 async def _suppress_repeated_health_nudge(
@@ -201,6 +228,37 @@ def _remove_health_nudge(packet: dict[str, Any]) -> None:
     cue_packet = packet.get("cue_packet")
     if isinstance(cue_packet, dict):
         cue_packet.pop("health_nudge", None)
+
+
+def _attach_task_scoped_health_nudge(
+    packet: dict[str, Any],
+    *,
+    task_id: str,
+    task_continuity: dict[str, Any],
+) -> None:
+    if not task_id:
+        return
+    nudge = packet.get("health_nudge")
+    if not isinstance(nudge, dict) or not nudge:
+        return
+    scoped = {
+        **nudge,
+        "scope": {
+            "kind": "task",
+            "task_id": task_id,
+            "continuity": "active_claim" if task_continuity else "task_reference",
+        },
+    }
+    if task_continuity:
+        scoped["next_safe_action"] = (
+            "Answer this self-check for the active task claim; expand the cue only if task context "
+            "or authority recall is insufficient."
+        )
+    packet["health_nudge"] = scoped
+    cue_packet = packet.get("cue_packet")
+    if isinstance(cue_packet, dict) and isinstance(cue_packet.get("health_nudge"), dict):
+        cue_packet["health_nudge"] = scoped
+
 
 def _health_nudge_scope_key(args: dict[str, Any], identity_defaults: dict[str, str]) -> str:
     agent_fingerprint = str(

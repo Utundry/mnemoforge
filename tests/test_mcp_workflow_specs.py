@@ -1636,8 +1636,18 @@ async def test_mailbox_state_health_nudge_stateless_scope_uses_hashed_work_token
     )
 
     assert "health_nudge" in first
+    assert first["health_nudge"]["scope"] == {
+        "kind": "task",
+        "task_id": "task-alpha",
+        "continuity": "active_claim",
+    }
+    assert first["cue_packet"]["health_nudge"] == first["health_nudge"]
+    serialized_first = json.dumps(first)
+    assert claim.work_token not in serialized_first
+    assert claim.lease.lease_id not in serialized_first
     assert "health_nudge" not in repeated
     assert "health_nudge" in different_token
+    assert different_token["health_nudge"]["scope"]["continuity"] == "task_reference"
     repeat_key = repeated["health_nudge_suppressed"]["repeat_key"]
     assert "task:" in repeat_key
     assert claim.work_token not in repeat_key

@@ -5,13 +5,14 @@
   "states": ["planning", "checkpointing", "handoff", "operator_review"],
   "mode": "transition",
   "required_fields": ["project", "task_id", "summary"],
-  "optional_fields": ["work_id", "owner_agent", "session_id", "work_token", "status", "result", "changed_files", "verification", "next_step", "next_step_scope", "release_reason"],
+  "optional_fields": ["work_id", "work_handle", "owner_agent", "session_id", "work_token", "status", "result", "changed_files", "verification", "next_step", "next_step_scope", "release_reason"],
   "input_schema": {
     "type": "object",
     "properties": {
       "project": {"type": "string", "default": "mnemoforge"},
       "task_id": {"type": "string"},
       "work_id": {"type": "string"},
+      "work_handle": {"type": "string"},
       "owner_agent": {"type": "string", "default": "codex"},
       "session_id": {"type": "string"},
       "work_token": {"type": "string"},

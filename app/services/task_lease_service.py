@@ -854,6 +854,7 @@ def resolve_work_handle_for_mutation(
     task_id: str = "",
     owner_agent: str = "",
     refresh_ttl: bool = True,
+    allow_inactive: bool = False,
 ) -> tuple[TaskLeaseRecord, str, dict]:
     """Validate a public work_handle against authoritative SQLite lease state."""
     payload = parse_work_handle(work_handle)
@@ -870,7 +871,7 @@ def resolve_work_handle_for_mutation(
     if not row:
         raise WorkHandleInvalid("work_handle_lease_not_found")
     lease = store._row_to_lease(row)
-    if lease.status != "active":
+    if lease.status != "active" and not allow_inactive:
         raise WorkHandleInvalid("work_handle_lease_not_active")
     project_clean = _clean_text(project, 128)
     task_clean = _clean_text(task_id, 128)
@@ -889,9 +890,12 @@ def resolve_work_handle_for_mutation(
         raise WorkHandleInvalid("work_handle_payload_owner_mismatch")
     if str(payload.get("session_id") or "") != lease.session_id:
         raise WorkHandleInvalid("work_handle_payload_session_mismatch")
-    if not store.verify_work_token(lease_id=lease.lease_id, work_token=token):
+    token_valid = store.verify_work_token(lease_id=lease.lease_id, work_token=token)
+    if not token_valid and allow_inactive:
+        token_valid = bool(lease.work_token_hash and lease.work_token_hash == _hash_work_token(token))
+    if not token_valid:
         raise WorkHandleInvalid("work_handle_token_invalid")
-    if refresh_ttl:
+    if refresh_ttl and lease.status == "active":
         lease = store.heartbeat(
             lease_id=lease.lease_id,
             owner_agent=lease.owner_agent,
@@ -907,6 +911,7 @@ def work_handle_to_legacy_context(
     project: str = "",
     task_id: str = "",
     owner_agent: str = "",
+    allow_inactive: bool = False,
 ) -> dict:
     lease, token, payload = resolve_work_handle_for_mutation(
         store=store,
@@ -914,6 +919,7 @@ def work_handle_to_legacy_context(
         project=project,
         task_id=task_id,
         owner_agent=owner_agent,
+        allow_inactive=allow_inactive,
     )
     return {
         "lease": lease,

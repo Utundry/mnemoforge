@@ -16,7 +16,8 @@ from scripts.project_utility import format_command
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = Path(__file__).with_name("verification_policy.json")
 BASELINE_PATH = Path(__file__).with_name("verification_baseline.json")
-LEVEL_ORDER = {"focused": 1, "affected": 2, "release": 3, "full": 4}
+LEVEL_ORDER = {"none": 0, "focused": 1, "affected": 2, "release": 3, "full": 4}
+NO_CHANGES_REASON = "No changed files were detected; verification is a no-op."
 
 
 @dataclass(slots=True)
@@ -29,17 +30,19 @@ class VerificationPlan:
     baseline: dict[str, Any]
 
     def as_dict(self) -> dict[str, Any]:
-        command = [
-            "powershell",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            "scripts\\run_pytest_docker.ps1",
-            "-NoBuild",
-            *self.tests,
-            "-q",
-        ]
+        command = []
+        if self.tests:
+            command = [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "scripts\\run_pytest_docker.ps1",
+                "-NoBuild",
+                *self.tests,
+                "-q",
+            ]
         return {
             "changed_files": self.changed_files,
             "selection": {
@@ -49,7 +52,7 @@ class VerificationPlan:
                 "reasons": self.reasons,
             },
             "command": command,
-            "command_text": format_command(command),
+            "command_text": format_command(command) if command else "",
             "baseline": self.baseline,
         }
 
@@ -134,6 +137,16 @@ def build_plan(
     matched_rules: list[str] = []
     reasons: list[str] = []
     level = "focused"
+
+    if not normalized:
+        return VerificationPlan(
+            changed_files=[],
+            tests=[],
+            level="none",
+            matched_rules=[],
+            reasons=[NO_CHANGES_REASON],
+            baseline=_baseline_summary(baseline),
+        )
 
     for rule in policy.get("rules") or []:
         matched_paths = [

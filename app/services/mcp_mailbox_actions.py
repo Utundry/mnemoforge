@@ -876,6 +876,7 @@ async def mailbox_start_task(
             else "Task session started."
         ),
         "lease": public_lease_payload(result.get("lease")),
+        "work_handle": result.get("work_handle"),
         "work_token": result.get("work_token"),
         "work_session": result.get("work_session"),
         "work_session_resumed": resumed,
@@ -886,7 +887,7 @@ async def mailbox_start_task(
         "work_guidance": work_guidance,
         "next_state": "implementation",
         "next_forms": ["record_progress", "finish_task", "release_task_claim"],
-        "next_safe_action": "Continue implementation, then submit record_progress or finish_task through mailbox.",
+        "next_safe_action": "Continue implementation, then submit record_progress or finish_task through mailbox using the returned work_handle.",
     }
     packet: dict[str, Any] = {"state": state, "project": project, "receipt": _compact(receipt), "next_safe_action": receipt["next_safe_action"]}
     if diagnostic:
@@ -1204,9 +1205,9 @@ async def mailbox_close_task(
                     "project": project,
                     "task_id": task_id,
                 },
-                "why": "Claim/start the task first to obtain work_token, then submit finish_task with completion evidence.",
+                "why": "Claim/start the task first to obtain work_handle, then submit finish_task with completion evidence.",
             },
-            "next_safe_action": "Submit start_task for this task, keep the returned work_token, then submit finish_task.",
+            "next_safe_action": "Submit start_task for this task, keep the returned work_handle, then submit finish_task.",
         }
         return {
             "state": state,
@@ -1217,7 +1218,7 @@ async def mailbox_close_task(
                 task_id=task_id,
                 recommended_next_call=receipt["recommended_next_call"],
             ),
-            "next_safe_action": "Submit start_task for this task, keep the returned work_token, then submit finish_task.",
+            "next_safe_action": "Submit start_task for this task, keep the returned work_handle, then submit finish_task.",
         }
     allowed_close_statuses = {"obsolete", "duplicate", "superseded", "cancelled", "not_planned"}
     if close_status not in allowed_close_statuses:
@@ -2306,6 +2307,7 @@ async def mailbox_record_progress(
             owner_session_id=str(payload.get("session_id") or session_id or ""),
             tool_name="mailbox_submit.record_progress",
             work_token=str(payload.get("work_token") or ""),
+            work_handle=str(payload.get("work_handle") or ""),
             danger_mode=bool(payload.get("danger_mode", False)),
             danger_confirmation=str(payload.get("danger_confirmation") or ""),
         )
