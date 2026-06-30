@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from app.services.mcp_tool_contracts import build_report_task_checkpoint_payload
 from app.services.stenographer_service import ProtocolViolation, get_stenographer_store
+from app.services.stenographer_tag_parser import record_tagged_spans_from_payload
 from app.services.task_lease_service import (
     WorkHandleInvalid,
     build_work_handle,
@@ -365,6 +366,7 @@ async def finish_task_session_action(
         checkpoint_payload,
     )
 
+    source = "finish_task_session"
     if str(args.get("status") or "completed") == "completed":
         for item in _string_list_arg(args.get("verification")):
             session_store.record_span(
@@ -374,7 +376,7 @@ async def finish_task_session_action(
                 agent_id=owner_agent,
                 session_id=lease_session_id,
                 kind="verification",
-                source="finish_task_session",
+                source=source,
                 content=item,
             )
         for item in _closeout_span_values(args, "changed_files"):
@@ -385,7 +387,7 @@ async def finish_task_session_action(
                 agent_id=owner_agent,
                 session_id=lease_session_id,
                 kind="changed_files",
-                source="finish_task_session",
+                source=source,
                 content=item,
             )
         next_step_text = str(args.get("next_step") or "").strip()
@@ -397,9 +399,19 @@ async def finish_task_session_action(
                 agent_id=owner_agent,
                 session_id=lease_session_id,
                 kind="next_step",
-                source="finish_task_session",
+                source=source,
                 content=next_step_text,
             )
+    record_tagged_spans_from_payload(
+        store=session_store,
+        payload=args,
+        project=project,
+        task_id=task_id,
+        work_id=work_id,
+        agent_id=owner_agent,
+        session_id=lease_session_id,
+        source=source,
+    )
     try:
         if work_token_valid or continuity_reclaim:
             work = session_store.end_work_session_by_work_id(
@@ -520,3 +532,4 @@ def _closeout_span_values(args: dict[str, Any], key: str) -> list[str]:
     if key == "changed_files" and key in args:
         return ["none"]
     return []
+

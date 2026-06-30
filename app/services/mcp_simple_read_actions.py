@@ -1321,6 +1321,64 @@ async def execute_simple_get_spec_route(
             "next_safe_action": next_safe_action,
             "details_available": True,
         }
+    if resource_kind == "project_readiness":
+        if not project:
+            next_safe_action = "Call get again with project set so project-memory readiness can be assessed."
+            receipt = {
+                "status": "needs_project",
+                "message": "Project-memory cold-start queries require an explicit project or session project.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "matched_trigger": matched_trigger,
+                "missing_fields": ["project"],
+                "next_safe_action": next_safe_action,
+            }
+            return {
+                "state": state,
+                "project": "",
+                "receipt": attach_public_diagnostic_incident(receipt=receipt, kind="missing_project_scope"),
+                "simple_interface": simple_interface,
+                "next_safe_action": next_safe_action,
+                "details_available": True,
+            }
+        data = await dependencies.post(api_base, "/project/readiness", {"project_id": project})
+        result = data if isinstance(data, dict) else {"project_id": project, "readiness_level": "unknown"}
+        compact_result = {
+            "project_id": result.get("project_id") or project,
+            "readiness_level": result.get("readiness_level"),
+            "readiness_score": result.get("readiness_score"),
+            "summary": result.get("summary"),
+            "memory_status": result.get("memory_status") or result.get("readiness_level"),
+            "blocking_gaps": (result.get("blocking_gaps") or [])[:5],
+            "recommended_actions": (result.get("recommended_actions") or [])[:6],
+            "project_identity": result.get("project_identity"),
+            "snapshot": result.get("snapshot"),
+        }
+        if _full_detail_requested(args):
+            compact_result = result
+        else:
+            compact_result = {key: value for key, value in compact_result.items() if value not in (None, "", [], {})}
+        next_safe_action = "Review project readiness; if memory is empty or partial, follow recommended bootstrap actions before treating the project as initialized."
+        return {
+            "state": state,
+            "project": project,
+            "receipt": {
+                "status": "accepted",
+                "message": "Cold-start/readiness query resolved through project readiness.",
+                "resource_kind": resource_kind,
+                "route_source": "simple_get_routes",
+                "route": route_id,
+                "matched_trigger": matched_trigger,
+                "project_id": project,
+                "memory_status": result.get("memory_status") or result.get("readiness_level"),
+                "next_safe_action": next_safe_action,
+            },
+            "result": compact_result,
+            "simple_interface": simple_interface,
+            "next_safe_action": next_safe_action,
+            "details_available": True,
+        }
+
     if resource_kind == "storage_trust":
         endpoint = str(route.get("endpoint") or "/admin/storage-trust").strip() or "/admin/storage-trust"
         storage_path = endpoint
@@ -2125,3 +2183,5 @@ _TASK_QUERY_TERMS = (
     "\u0437\u0430\u0434\u0430\u0447",
     "\u0437\u0430\u0434\u0430\u0447\u0438",
 )
+
+

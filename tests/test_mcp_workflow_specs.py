@@ -18,7 +18,7 @@ from app.services.mcp_mailbox_read import (
     build_mailbox_get_response,
     build_mailbox_state_response,
 )
-from app.services import mcp_simple_read_actions
+from app.services import mcp_simple_read_actions, stenographer_service
 from app.services.mcp_simple_read_actions import (
     PublicRefDependencies,
     SimpleReadDependencies,
@@ -26,7 +26,7 @@ from app.services.mcp_simple_read_actions import (
     build_simple_public_ref_response,
 )
 from app.services.public_ref_index import AmbiguousPublicRefError, get_public_ref_index_store
-from app.services.mcp_simple_surface_actions import compact_resource_result
+from app.services.mcp_simple_surface_actions import compact_resource_result, compact_task_resource
 from app.services.cognitive_health_service import build_cognitive_health_packet
 from app.services.context_cue_service import context_cues_for_query, context_cues_for_state
 from app.services.evidence_classification_service import classify_evidence_items
@@ -1960,3 +1960,64 @@ def test_mailbox_get_unknown_reference_returns_public_not_found_receipt() -> Non
 
     assert packet["receipt"]["status"] == "not_found"
     assert "_internal" not in packet
+
+
+def test_mailbox_state_surfaces_stenography_tag_protocol_for_assisted_forms() -> None:
+    packet = build_mailbox_state_packet(
+        state="implementation",
+        project="alpha",
+        task_id="task-1",
+        work_id="work-1",
+        runtime_profile_id="weak_mcp_operator",
+    )
+
+    protocol = packet["stenography_protocol"]
+    snippets = "\n".join(snippet["text"] for snippet in protocol["snippets"])
+
+    assert protocol["capture_model"] == "tagged_spans"
+    assert protocol["markers"]["start"] == "[stenographer:start kind=<kind> task_id=<task_id>]"
+    assert "[stenographer:start kind=decision task_id=task-1 work_id=work-1]" in snippets
+    assert "[stenographer:stop]" in snippets
+    assert "changed_files" in protocol["core_recovery_span_kinds"]
+    assert "verification" in protocol["supported_span_kinds"]
+    assert protocol["clerk_rules"]["draft_only"] is True
+    assert any("changed_files" in item for item in protocol["validation_checklist"])
+
+
+def test_mailbox_state_warns_when_stenography_available_but_task_has_no_spans(monkeypatch) -> None:
+    store = stenographer_service.StenographerStore(Path(":memory:"))
+    monkeypatch.setattr(stenographer_service, "_STORE", store)
+    try:
+        packet = build_mailbox_state_packet(
+            state="checkpointing",
+            project="alpha",
+            task_id="task-empty",
+            runtime_profile_id="weak_mcp_operator",
+        )
+    finally:
+        store.close()
+        monkeypatch.setattr(stenographer_service, "_STORE", None)
+
+    coverage = packet["stenography_coverage"]
+    assert coverage["status"] == "none"
+    assert coverage["span_count"] == 0
+    assert coverage["has_changed_files"] is False
+    assert "no tagged stenographer spans" in " ".join(packet["warnings"]).lower()
+    assert coverage["next_safe_action"].startswith("Before checkpoint/finish")
+
+
+def test_compact_task_resource_keeps_stenography_coverage() -> None:
+    compact = compact_task_resource(
+        {
+            "task_id": "task-1",
+            "status": "ready",
+            "task": {"title": "Recover context", "status": "active"},
+            "recommended_first_tool": "pull_task_context",
+            "stenography_coverage": {"status": "none", "span_count": 0},
+        },
+        tool_surface_role=lambda _tool: "public_entrypoint",
+        state="planning",
+    )
+
+    assert compact["stenography_coverage"] == {"status": "none", "span_count": 0}
+

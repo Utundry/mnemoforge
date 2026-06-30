@@ -172,3 +172,35 @@ async def test_weak_model_public_submit_task_lifecycle(monkeypatch) -> None:
     finally:
         lease_store.close()
         stenographer_store.close()
+
+
+@pytest.mark.asyncio
+async def test_weak_model_cold_start_query_uses_project_readiness(monkeypatch) -> None:
+    scenario = _scenario_by_id("cold_start_query_uses_project_readiness")
+
+    async def fake_post(api_base: str, path: str, payload: dict):
+        assert path == "/project/readiness"
+        assert payload == {"project_id": "alpha"}
+        return {
+            "project_id": "alpha",
+            "readiness_level": "bootstrap_needed",
+            "readiness_score": 0.2,
+            "summary": "Project memory needs initialization.",
+            "blocking_gaps": ["No project overview"],
+            "recommended_actions": ["Create a project overview context page"],
+        }
+
+    async def forbidden_ask_project(api_base: str, args: dict, *, session_id: str | None = None):
+        raise AssertionError("cold-start scenario must not call project expert")
+
+    monkeypatch.setattr(mcp_sse, "_post", fake_post)
+    monkeypatch.setattr(mcp_sse, "_build_ask_project_payload", forbidden_ask_project)
+
+    data = await _call_public_tool(scenario)
+    expect = scenario["expect"]
+
+    assert data["receipt"]["resource_kind"] == expect["resource_kind"]
+    assert data["receipt"]["route"] == expect["route"]
+    assert data["result"]["project_id"] == expect["project_id"]
+    assert data["result"]["readiness_level"] == "bootstrap_needed"
+

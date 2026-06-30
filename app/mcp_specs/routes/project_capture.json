@@ -12,7 +12,10 @@
         "make a clerk draft",
         "prepare reviewable closeout draft",
         "turn these notes into a checkpoint draft",
-        "draft capture report"
+        "draft capture report",
+        "draft checkpoint from stenographer spans",
+        "draft checkpoint from captured spans",
+        "make a clerk draft from spans"
       ],
       "reason": "Draft/capture intent maps to a reviewable clerk draft before governed memory mutation."
     },

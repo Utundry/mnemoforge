@@ -78,6 +78,8 @@ async def build_mailbox_state_response(
         detail=str(args.get("detail") or "compact"),
         governed_laws=governed_laws,
         session_id=effective_session_id,
+        task_id=task_id,
+        work_id=str(args.get("work_id") or ""),
     )
     if bool(args.get("diagnostic", False)):
         packet["host_compatibility"] = compatibility

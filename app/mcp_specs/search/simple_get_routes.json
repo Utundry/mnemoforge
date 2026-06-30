@@ -31,6 +31,29 @@
       "scope": "public_workflow_form_read"
     },
     {
+      "id": "project_memory_bootstrap",
+      "resource_kind": "project_readiness",
+      "priority": 92,
+      "trigger_terms": [
+        "cold start",
+        "cold start project",
+        "cold start project memory",
+        "project memory cold start",
+        "initialize project memory",
+        "initialize project database",
+        "bootstrap project memory",
+        "bootstrap this project",
+        "bootstrap readiness",
+        "onboard this project",
+        "холодный старт",
+        "холодный старт проекта",
+        "инициализируй память проекта",
+        "инициализация памяти проекта",
+        "инициализируй базу проекта"
+      ],
+      "scope": "project_context_read"
+    },
+    {
       "id": "boundary_action_cues",
       "resource_kind": "boundary_action_cues",
       "priority": 85,

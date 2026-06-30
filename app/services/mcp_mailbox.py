@@ -21,6 +21,11 @@ from app.services.edit_authority_service import build_edit_authority
 from app.services.autonomous_mode_service import evaluate_autonomous_mode, get_autonomous_mode_store
 from app.services.public_diagnostic_service import attach_public_diagnostic_incident
 from app.services.stage_applicability_service import stage_allows_block
+from app.services.stenography_protocol_service import (
+    build_stenography_coverage,
+    build_stenography_protocol,
+    stenography_supported_by_forms,
+)
 
 _WORKFLOW_STATE_NAMES = {
     "planning",
@@ -80,6 +85,8 @@ def build_mailbox_state_packet(
     detail: str = "compact",
     governed_laws: list[Any] | None = None,
     session_id: str = "",
+    task_id: str = "",
+    work_id: str = "",
     spec_root: Path = DEFAULT_SPEC_ROOT,
 ) -> dict[str, Any]:
     state_spec = load_state_spec(state, spec_root=spec_root)
@@ -134,6 +141,24 @@ def build_mailbox_state_packet(
         "next_safe_action": _next_safe_action(state_spec.id, forms),
         "receipt": None,
     }
+    if stenography_supported_by_forms(forms):
+        scoped_task_id = str(task_id or "").strip()
+        scoped_work_id = str(work_id or "").strip()
+        public_packet["stenography_protocol"] = build_stenography_protocol(
+            project=project,
+            task_id=scoped_task_id,
+            work_id=scoped_work_id,
+            state=state_spec.id,
+        )
+        if scoped_task_id:
+            coverage = build_stenography_coverage(
+                project=project,
+                task_id=scoped_task_id,
+                work_id=scoped_work_id,
+            )
+            public_packet["stenography_coverage"] = coverage
+            if coverage.get("status") == "none" and state_spec.id in {"implementation", "checkpointing", "handoff"}:
+                warnings.append(str(coverage.get("warning") or "Stenographer spans are missing for this task."))
     if stage_allows_block("edit_authority", state=state_spec.id):
         public_packet["edit_authority"] = build_edit_authority(state=state_spec.id)
     stored_grant = (

@@ -436,6 +436,12 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
         }
     elif route["intent_type"] == "review_task_capture":
         route["payload"] = {"project": project, "task_id": task_id, "limit": limit}
+    elif route["intent_type"] == "project_memory_bootstrap":
+        route["payload"] = {
+            "project": project,
+            "project_id": project,
+            "intent": intent,
+        }
     elif route["intent_type"] in {"approve_checkpoint_draft", "reject_checkpoint_draft"}:
         route["payload"] = {
             "draft_id": str(args.get("draft_id") or "").strip(),
@@ -655,4 +661,5 @@ def _string_list_arg(value: Any) -> list[str]:
         return [str(item).strip() for item in value if str(item).strip()]
     text = str(value).strip()
     return [text] if text else []
+
 

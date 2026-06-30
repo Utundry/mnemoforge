@@ -66,6 +66,7 @@ from app.services.operational_instincts_service import (
 )
 from app.services.mcp_tool_registry import get_tool_stage, observe_tool_use, record_tool_feedback, tool_feedback_expected
 from app.services.replay_completeness_service import build_replay_drill_decision, build_token_budget, evaluate_execution_readiness, evaluate_replay_completeness
+from app.services.stenography_protocol_service import build_stenography_coverage, build_stenography_protocol
 from app.services.route_pattern_store import get_route_pattern_store
 from app.services.unified_artifact_service import task_has_closeout_evidence
 from app.services.mcp_mailbox import mailbox_form_by_id
@@ -2352,6 +2353,7 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
             "latest_checkpoint": result.get("latest_checkpoint"),
             "next_safe_action": result.get("next_safe_action"),
             "execution_readiness": result.get("execution_readiness"),
+            "stenography_coverage": result.get("stenography_coverage"),
             "recommended_first_tool": result.get("recommended_first_tool"),
         }
     if route.get("tool") == "get_task_execution_context" and isinstance(result, dict):
@@ -2362,6 +2364,16 @@ def _compact_project_work_result(route: dict[str, Any], result: Any) -> Any:
             "recommended_rules": result.get("recommended_rules"),
             "risk_controls": result.get("risk_controls"),
             "next_transitions": result.get("next_transitions"),
+        }
+    if route.get("tool") == "get_project_readiness" and isinstance(result, dict):
+        return {
+            "project_id": result.get("project_id"),
+            "readiness_level": result.get("readiness_level"),
+            "readiness_score": result.get("readiness_score"),
+            "summary": result.get("summary"),
+            "blocking_gaps": (result.get("blocking_gaps") or [])[:5],
+            "recommended_actions": (result.get("recommended_actions") or [])[:6],
+            "next_safe_action": "Review project readiness; if memory is empty or partial, follow the recommended bootstrap actions before task work.",
         }
     if route.get("tool") == "task_capture_review" and isinstance(result, dict):
         return {
@@ -3728,6 +3740,11 @@ def _project_capture_route(
     changed_files = _string_list_arg(args.get("changed_files"))
     verification = _string_list_arg(args.get("verification"))
     raw_notes = str(args.get("raw_notes") or args.get("summary") or intent or "Capture project work.").strip()
+    draft_from_spans = (
+        not str(args.get("raw_notes") or args.get("summary") or "").strip()
+        and any(term in text for term in ("stenographer span", "stenographer spans", "captured spans", "transcript spans"))
+        and any(term in text for term in ("draft", "clerk", "checkpoint draft", "from spans"))
+    )
 
     route = {
         "tool": "clerk_draft_report",
@@ -3787,7 +3804,10 @@ def _project_capture_route(
             reason="Span recording requires span_type; falling back to a reviewable clerk draft.",
         )
 
-    if route["intent_type"] == "list_stenographer_spans" or any(term in text for term in ("list spans", "show spans", "stenographer spans", "transcript spans")):
+    if route["intent_type"] == "list_stenographer_spans" or (
+        not draft_from_spans
+        and any(term in text for term in ("list spans", "show spans", "stenographer spans", "transcript spans"))
+    ):
         route.update(
             tool="list_stenographer_spans",
             intent_type="list_stenographer_spans",
@@ -3846,6 +3866,9 @@ def _project_capture_route(
             },
         )
 
+    if route["tool"] == "clerk_draft_report" and draft_from_spans:
+        route["payload"].pop("raw_notes", None)
+
     route["payload"] = {
         key: value
         for key, value in route["payload"].items()
@@ -3903,7 +3926,10 @@ def _project_work_action_card(
         f"with confidence {route['confidence']:.2f}."
     )
     if executed:
-        one_sentence_summary += " The safe route was executed."
+        if isinstance(result, dict) and str(result.get("status") or "") == "conflict":
+            one_sentence_summary += " The route hit a guardrail; follow the returned recovery protocol."
+        else:
+            one_sentence_summary += " The safe route was executed."
     elif route.get("mutating"):
         one_sentence_summary += " The route is guarded and needs explicit mutation confirmation."
 
@@ -3914,6 +3940,9 @@ def _project_work_action_card(
         do_not_call = ["mailbox_submit", "submit"]
     elif route.get("tool") == "project_rules":
         do_not_call = ["promote_rule_candidate", "revise_law_from_rule_candidate"]
+
+    if executed and isinstance(result, dict) and str(result.get("status") or "") == "conflict":
+        recommended_next_call = result.get("recommended_next_call") if isinstance(result.get("recommended_next_call"), dict) else None
 
     action_card = {
         "action_status": action_status,
@@ -4274,6 +4303,78 @@ def _project_work_args_with_learned_payload(
     }, learned
 
 
+def _project_work_lease_conflict_recovery_packet(
+    *,
+    lease_guard: dict[str, Any],
+    route: dict[str, Any],
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Add an agent-facing FSM recovery recipe without weakening lease enforcement."""
+
+    payload = route.get("payload") if isinstance(route.get("payload"), dict) else {}
+    project = str(payload.get("project") or args.get("project") or "mnemoforge").strip() or "mnemoforge"
+    task_id = str(payload.get("task_id") or args.get("task_id") or lease_guard.get("task_id") or "").strip()
+    work_handle = str(payload.get("work_handle") or args.get("work_handle") or "").strip()
+    work_handle_arg = work_handle or "<original_work_handle>"
+    next_safe_action = (
+        "Use the public FSM recovery path: call state with task_id and the original work_handle; "
+        "if the state packet exposes run_verification, submit run_verification with actual verification evidence; "
+        "then submit finish_task with the same work_handle. Do not retry project_work with guessed agent_id/session_id values."
+    )
+    state_args: dict[str, Any] = {
+        "project": project,
+        "state": "verification",
+        "task_id": task_id,
+        "work_handle": work_handle_arg,
+    }
+    recovery_steps = [
+        {
+            "step": "inspect_public_state",
+            "tool": "state",
+            "arguments": state_args,
+            "why": "Recover the server-authoritative FSM state, available forms, and claim-continuity cues.",
+        },
+        {
+            "step": "record_or_resolve_verification",
+            "tool": "submit",
+            "form_id": "run_verification",
+            "state": "verification",
+            "when": "Only if the state packet exposes run_verification or asks for verification evidence.",
+            "payload_hint": {
+                "project": project,
+                "task_id": task_id,
+                "work_handle": work_handle_arg,
+                "changed_files": "<changed files from the completed work>",
+            },
+        },
+        {
+            "step": "finish_with_original_handle",
+            "tool": "submit",
+            "form_id": "finish_task",
+            "state": "checkpointing",
+            "payload_hint": {
+                "project": project,
+                "task_id": task_id,
+                "work_handle": work_handle_arg,
+                "summary": "<completed work summary>",
+                "changed_files": "<changed files>",
+                "verification": "<actual verification evidence>",
+                "next_step": "<concrete next step or none>",
+            },
+        },
+    ]
+    enriched = dict(lease_guard)
+    enriched["next_safe_action"] = next_safe_action
+    enriched["recommended_next_call"] = {"tool": "state", "arguments": state_args}
+    enriched["recovery_protocol"] = {
+        "name": "public_fsm_closeout_recovery",
+        "reason": "project_work hit the lease guard; recover through public FSM forms instead of retrying identity guesses.",
+        "preserves_lease_enforcement": True,
+        "requires_original_work_handle": True,
+        "steps": recovery_steps,
+    }
+    return enriched
+
 async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, session_id: str | None = None) -> dict[str, Any]:
     allow_mutation = bool(args.get("allow_mutation", False))
     route = await _project_work_route_with_backend(args)
@@ -4323,9 +4424,14 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         }
         executed = True
     elif lease_guard:
+        lease_guard = _project_work_lease_conflict_recovery_packet(
+            lease_guard=lease_guard,
+            route=route,
+            args=args,
+        )
         result = lease_guard
         executed = True
-        warnings.append("Mutation blocked by task lease ownership policy.")
+        warnings.append("Mutation blocked by task lease ownership policy; use public FSM recovery from result.recovery_protocol.")
     elif route["tool"] == "list_open_tasks":
         requested_type = str(route["payload"].get("artifact_type") or route["payload"].get("type") or "all").strip().lower()
         retrieval_limit = (
@@ -4359,6 +4465,9 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         executed = True
     elif route["tool"] == "get_task_execution_context":
         result = await _post(api_base, "/task-execution-context", build_task_execution_context_payload(route["payload"]))
+        executed = True
+    elif route["tool"] == "get_project_readiness":
+        result = await _post(api_base, "/project/readiness", build_project_readiness_payload(route["payload"]))
         executed = True
     elif route["tool"] == "task_capture_review":
         task_id = str(route["payload"].get("task_id") or "").strip()
@@ -4410,7 +4519,9 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         warnings.append("No confident project-work route was found; use tool_recommend or clarify the intent.")
 
     next_safe_action = "Review the selected route and execute the submit_payload if it matches the operator intent."
-    if executed:
+    if lease_guard and isinstance(result, dict) and str(result.get("next_safe_action") or "").strip():
+        next_safe_action = str(result["next_safe_action"])
+    elif executed:
         next_safe_action = "Continue from the executed route result."
     elif route["tool"] == "project_rules":
         next_safe_action = "Use the project_rules/governance tools listed in submit_payload.suggested_first_tools."
@@ -7149,6 +7260,7 @@ def _project_pull_task_context_response(full_payload: dict[str, Any], *, detail:
         "task_statement_quality": full_payload.get("task_statement_quality"),
         "pending_capture_review_count": full_payload.get("pending_capture_review_count", 0),
         "promoted_capture_review_count": full_payload.get("promoted_capture_review_count", 0),
+        "stenography_coverage": full_payload.get("stenography_coverage"),
         "available_layers": _layer_summary(full_payload),
     }
     compact["token_budget"] = _estimate_response_tokens(compact, budget_args)
@@ -7214,6 +7326,8 @@ async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) 
             "status": "no_open_task",
             "next_safe_action": "Create or reopen a project task before continuing.",
         }
+        payload["stenography_coverage"] = build_stenography_coverage(project=project, task_id=task_id)
+        payload["stenography_protocol"] = build_stenography_protocol(project=project, task_id=task_id, state="task_context")
         payload.setdefault("project_identity", project_identity_envelope(requested_project=project, observed_project=project))
         payload["token_budget"] = _estimate_response_tokens(payload, budget_args)
         payload["token_overhead"] = payload["token_budget"]
@@ -7239,6 +7353,8 @@ async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) 
                 "do not start work from pull_task_context."
             ),
         }
+        payload["stenography_coverage"] = build_stenography_coverage(project=project, task_id=task_id)
+        payload["stenography_protocol"] = build_stenography_protocol(project=project, task_id=task_id, state="task_context")
         payload.setdefault("project_identity", project_identity_envelope(requested_project=project, observed_project=project))
         payload["token_budget"] = _estimate_response_tokens(payload, budget_args)
         payload["token_overhead"] = payload["token_budget"]
@@ -7301,6 +7417,8 @@ async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) 
         "resume_handoffs": handoffs[:5],
         "recommended_first_tool": "record_task_checkpoint" if not latest_checkpoint else "pull_task_context",
     }
+    payload["stenography_coverage"] = build_stenography_coverage(project=project, task_id=task_id)
+    payload["stenography_protocol"] = build_stenography_protocol(project=project, task_id=task_id, state="task_context")
     payload.setdefault("project_identity", project_identity_envelope(requested_project=project, observed_project=project))
     payload["replay_bundle"] = _build_replay_bundle(
         project=project,
@@ -9753,3 +9871,6 @@ async def sse_post(sessionId: str, request: Request) -> Response:
         await _touch_session(sessionId)
 
     return Response(status_code=202)
+
+
+

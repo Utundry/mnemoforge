@@ -537,6 +537,7 @@ def compact_task_resource(result: dict[str, Any], *, tool_surface_role: ToolSurf
             "missing_evidence": readiness.get("missing_evidence") or [],
             "recommended_next_action": readiness.get("recommended_next_action"),
         } if readiness else None,
+        "stenography_coverage": result.get("stenography_coverage"),
         "recommended_first_tool": recommendation.get("tool"),
         "recommended_next_call": recommendation,
         "next_safe_action": result.get("next_safe_action"),
@@ -585,3 +586,4 @@ def _context_response_requested(args: dict[str, Any]) -> bool:
 
 def _full_detail_requested(args: dict[str, Any]) -> bool:
     return str(args.get("detail") or "compact").strip().lower() == "full" or bool(args.get("diagnostic", False))
+

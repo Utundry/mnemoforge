@@ -171,3 +171,37 @@ def test_primary_create_task_about_finish_bug_stays_create_task() -> None:
     assert route["intent_type"] == "create_task"
     assert route["tool"] == "mailbox_submit"
     assert "intent_arbitration" not in route
+
+
+def test_cold_start_routes_to_project_readiness() -> None:
+    route = project_work_route(
+        {"project": "sloplesscode", "intent": "сделай холодный старт sloplesscode"},
+        scorer_meta={
+            "backend_requested": "lexical",
+            "backend_used": "lexical",
+            "llm_attempted": False,
+            "fallback_reason": "",
+        },
+    )
+
+    assert route["intent_type"] == "project_memory_bootstrap"
+    assert route["tool"] == "get_project_readiness"
+    assert route["mutating"] is False
+    assert route["payload"]["project_id"] == "sloplesscode"
+
+
+def test_initialize_project_memory_routes_to_project_readiness() -> None:
+    route = project_work_route(
+        {"project": "alpha", "intent": "initialize project memory"},
+        scorer_meta={
+            "backend_requested": "lexical",
+            "backend_used": "lexical",
+            "llm_attempted": False,
+            "fallback_reason": "",
+        },
+    )
+
+    assert route["intent_type"] == "project_memory_bootstrap"
+    assert route["tool"] == "get_project_readiness"
+    assert route["payload"]["project"] == "alpha"
+    assert route["payload"]["project_id"] == "alpha"

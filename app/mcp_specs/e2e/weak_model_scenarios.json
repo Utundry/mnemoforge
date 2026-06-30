@@ -52,6 +52,22 @@
       }
     },
     {
+      "id": "cold_start_query_uses_project_readiness",
+      "description": "A weak model can discover project-memory cold start through public get(query) without falling into generic expert routing.",
+      "tool": "get",
+      "arguments": {
+        "project": "alpha",
+        "query": "cold start project memory",
+        "limit": 3,
+        "response_format": "auto"
+      },
+      "expect": {
+        "resource_kind": "project_readiness",
+        "route": "project_memory_bootstrap",
+        "project_id": "alpha"
+      }
+    },
+    {
       "id": "task_lifecycle_public_submit",
       "description": "A weak model can start a task, record progress, and finish through public submit forms.",
       "steps": [

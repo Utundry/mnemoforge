@@ -5,7 +5,7 @@
   "tools": [
     {
       "name": "project_work",
-      "description": "Thematic project-work routing facade. Use this as the first-contact surface for common project work requests such as next priority, continue task, create/save an improvement task, review capture drafts, close tail, save checkpoint, or route verification/restart work. It classifies intent, returns routing evidence, executes safe read-only routes, and plans guarded mutations unless allow_mutation=true.",
+      "description": "Thematic project-work routing facade. Use this as the first-contact surface for common project work requests such as next priority, continue task, create/save an improvement task, review capture drafts, cold-start/bootstrap project memory, close tail, save checkpoint, or route verification/restart work. It classifies intent, returns routing evidence, executes safe read-only routes, and plans guarded mutations unless allow_mutation=true.",
       "inputSchema": {
         "type": "object",
         "required": ["intent"],
@@ -113,3 +113,4 @@
     }
   ]
 }
+

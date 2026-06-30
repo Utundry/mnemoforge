@@ -6423,6 +6423,63 @@ class TestMcpToolExecution:
         finally:
             lease_store.close()
 
+    async def test_project_work_lease_conflict_returns_public_fsm_recovery(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        async def fail_post(api_base: str, path: str, payload: dict):
+            raise AssertionError(f"unexpected POST path: {path}")
+
+        monkeypatch.setattr(mcp_sse, "_post", fail_post)
+        try:
+            lease_store.claim(project="alpha", task_id="task-1", owner_agent="codex", session_id="owner-session")
+            result = await mcp_sse._execute_tool(
+                "project_work",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "intent": "finish task session",
+                    "summary": "Completed lifecycle work.",
+                    "verification": ["verification_contour:alpha:focused-tests passed"],
+                    "changed_files": ["app/routers/mcp_sse.py"],
+                    "next_step": "none",
+                    "allow_mutation": True,
+                    "agent_id": "codex",
+                    "session_id": "wrong-session",
+                },
+                "http://test",
+            )
+            data = json.loads(result)
+            recovery = data["result"]["recovery_protocol"]
+            assert data["status"] == "executed"
+            assert data["result"]["status"] == "conflict"
+            assert data["result"]["error"] == "lease_owner_mismatch"
+            assert data["next_safe_action"].startswith("Use the public FSM recovery path")
+            assert "guessed agent_id/session_id" in data["next_safe_action"]
+            assert data["agent_action"]["recommended_next_call"] == data["result"]["recommended_next_call"]
+            assert data["result"]["recommended_next_call"]["tool"] == "state"
+            assert data["result"]["recommended_next_call"]["arguments"] == {
+                "project": "alpha",
+                "state": "verification",
+                "task_id": "task-1",
+                "work_handle": "<original_work_handle>",
+            }
+            assert recovery["name"] == "public_fsm_closeout_recovery"
+            assert recovery["preserves_lease_enforcement"] is True
+            assert [step["step"] for step in recovery["steps"]] == [
+                "inspect_public_state",
+                "record_or_resolve_verification",
+                "finish_with_original_handle",
+            ]
+            assert recovery["steps"][1]["form_id"] == "run_verification"
+            assert recovery["steps"][2]["form_id"] == "finish_task"
+            assert "public FSM recovery" in data["warnings"][0]
+        finally:
+            lease_store.close()
     async def test_project_work_allow_mutation_executes_finish_with_owned_claim(self, monkeypatch):
         from pathlib import Path
         from app.services import task_lease_service as lease_mod
@@ -8281,6 +8338,31 @@ class TestMcpToolExecution:
         assert result["selected_route"]["scorer"]["backend_used"] == "lexical"
         assert called[0][0] == "clerk_draft_report"
         assert called[0][1]["raw_notes"] == "Implementation finished; tests pending."
+
+    async def test_project_capture_drafts_from_stenographer_spans_without_raw_notes(self, monkeypatch):
+        called: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            called.append((tool_name, args))
+            return json.dumps({"draft_id": "draft-spans", "mutates_memory": False, "clerk_mode": "stenographer_spans"})
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        result = await mcp_sse._build_project_capture_payload(
+            "http://test",
+            {
+                "project": "alpha",
+                "task_id": "task-1",
+                "work_id": "work-1",
+                "intent": "draft checkpoint from stenographer spans",
+            },
+        )
+
+        assert result["status"] == "executed"
+        assert result["selected_route"]["tool"] == "clerk_draft_report"
+        assert result["selected_route"]["intent_type"] == "draft_capture"
+        assert called[0][0] == "clerk_draft_report"
+        assert called[0][1]["work_id"] == "work-1"
+        assert "raw_notes" not in called[0][1]
 
     async def test_record_work_result_uses_provided_task_and_records_memory_checkpoint(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
@@ -13043,3 +13125,176 @@ async def test_list_open_tasks_keeps_high_priority_improvement_above_active_task
     assert result.index("High priority improvement") < result.index("Fresh active task")
     assert "type=improvement" in result
     assert "[active] Fresh active task" in result
+
+
+async def test_mailbox_record_progress_materializes_summary_stenographer_tags(monkeypatch):
+    from app.services import stenographer_service as stenographer_mod
+    from app.services import task_lease_service as lease_mod
+
+    lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+    stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+    monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+    monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+    async def fake_post(api_base: str, path: str, payload: dict):
+        if path.startswith("/project/tasks/") and path.endswith("/changes"):
+            return {"id": f"checkpoint-{payload.get('stage')}", **payload}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(mcp_sse, "_post", fake_post)
+    try:
+        started = json.loads(
+            await mcp_sse._execute_tool(
+                "submit",
+                {
+                    "form_id": "start_task",
+                    "state": "planning",
+                    "project": "alpha",
+                    "payload": {
+                        "project": "alpha",
+                        "task_id": "task-summary-tags",
+                        "owner_agent": "codex",
+                        "session_id": "sess-summary-tags",
+                        "agent_fingerprint": "agentfp:summary-tags",
+                        "auto_heartbeat": False,
+                        "approved_framing": "Approved stenographer summary tag capture test framing.",
+                    },
+                },
+                "http://test",
+            )
+        )
+        work_handle = started["receipt"]["work_handle"]
+
+        progress = json.loads(
+            await mcp_sse._execute_tool(
+                "submit",
+                {
+                    "form_id": "record_progress",
+                    "state": "implementation",
+                    "project": "alpha",
+                    "payload": {
+                        "project": "alpha",
+                        "task_id": "task-summary-tags",
+                        "owner_agent": "codex",
+                        "session_id": "sess-summary-tags",
+                        "work_handle": work_handle,
+                        "stage": "implementation",
+                        "summary": "\n".join(
+                            [
+                                "Capture explicit stenographer spans from summary text.",
+                                "[stenographer:start kind=checkpoint_hint task_id=task-summary-tags]",
+                                "Summary: summary-only tag capture is under test.",
+                                "[stenographer:stop]",
+                                "[stenographer:start kind=decision task_id=task-summary-tags]",
+                                "Decision: parse public form text tags before clerk draft recovery.",
+                                "[stenographer:stop]",
+                                "[stenographer:start kind=risk task_id=task-summary-tags]",
+                                "Risk: advertised tag protocol can drift from actual materialized spans.",
+                                "[stenographer:stop]",
+                            ]
+                        ),
+                    },
+                },
+                "http://test",
+            )
+        )
+        assert progress["receipt"]["status"] == "accepted"
+
+        spans = stenographer_store.list_spans(project="alpha", task_id="task-summary-tags", limit=20)
+        by_kind = {span.kind: span.content for span in spans}
+        assert "checkpoint_hint" in by_kind
+        assert "decision" in by_kind
+        assert "risk" in by_kind
+        assert "summary-only tag capture" in by_kind["checkpoint_hint"]
+        assert "parse public form text tags" in by_kind["decision"]
+    finally:
+        lease_store.close()
+        stenographer_store.close()
+
+
+async def test_mailbox_finish_task_accepts_closeout_evidence_from_summary_tags(monkeypatch):
+    from app.services import stenographer_service as stenographer_mod
+    from app.services import task_lease_service as lease_mod
+
+    lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+    stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+    monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+    monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+    async def fake_post(api_base: str, path: str, payload: dict):
+        if path.startswith("/project/tasks/") and path.endswith("/changes"):
+            return {"id": f"checkpoint-{payload.get('stage')}", **payload}
+        if path.startswith("/project/tasks/") and path.endswith("/reopen"):
+            return {"status": payload.get("status", "done")}
+        raise AssertionError(path)
+
+    async def fake_get(api_base: str, path: str):
+        raise AssertionError(path)
+
+    monkeypatch.setattr(mcp_sse, "_post", fake_post)
+    monkeypatch.setattr(mcp_sse, "_get", fake_get)
+    try:
+        started = json.loads(
+            await mcp_sse._execute_tool(
+                "submit",
+                {
+                    "form_id": "start_task",
+                    "state": "planning",
+                    "project": "alpha",
+                    "payload": {
+                        "project": "alpha",
+                        "task_id": "task-finish-summary-tags",
+                        "owner_agent": "codex",
+                        "session_id": "sess-finish-summary-tags",
+                        "agent_fingerprint": "agentfp:finish-summary-tags",
+                        "auto_heartbeat": False,
+                        "approved_framing": "Approved closeout from stenographer summary tags test framing.",
+                    },
+                },
+                "http://test",
+            )
+        )
+        work_handle = started["receipt"]["work_handle"]
+
+        finished = json.loads(
+            await mcp_sse._execute_tool(
+                "submit",
+                {
+                    "form_id": "finish_task",
+                    "state": "checkpointing",
+                    "project": "alpha",
+                    "payload": {
+                        "project": "alpha",
+                        "task_id": "task-finish-summary-tags",
+                        "owner_agent": "codex",
+                        "session_id": "sess-finish-summary-tags",
+                        "work_handle": work_handle,
+                        "summary": "\n".join(
+                            [
+                                "Finished using explicit stenographer closeout tags.",
+                                "[stenographer:start kind=verification task_id=task-finish-summary-tags]",
+                                "Command: public submit finish_task smoke path.",
+                                "Result: summary tags provide verification evidence.",
+                                "[stenographer:stop]",
+                                "[stenographer:start kind=changed_files task_id=task-finish-summary-tags]",
+                                "Files: none - mailbox protocol test only.",
+                                "[stenographer:stop]",
+                                "[stenographer:start kind=next_step task_id=task-finish-summary-tags]",
+                                "Next step: no follow-up.",
+                                "[stenographer:stop]",
+                            ]
+                        ),
+                    },
+                },
+                "http://test",
+            )
+        )
+
+        assert finished["receipt"]["status"] == "finished"
+        spans = stenographer_store.list_spans(project="alpha", task_id="task-finish-summary-tags", limit=20)
+        assert {span.kind for span in spans} >= {"verification", "changed_files", "next_step"}
+    finally:
+        lease_store.close()
+        stenographer_store.close()

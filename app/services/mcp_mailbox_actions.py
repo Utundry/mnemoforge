@@ -2636,6 +2636,7 @@ def _record_closeout_spans_from_progress(
     owner_session_id: str,
 ) -> None:
     from app.services.stenographer_service import get_stenographer_store
+    from app.services.stenographer_tag_parser import record_tagged_spans_from_payload
 
     store = get_stenographer_store()
     active_work = None
@@ -2655,6 +2656,7 @@ def _record_closeout_spans_from_progress(
     if active_work is None:
         return
     span_session_id = active_work.session_id or owner_session_id
+    source = "mailbox_submit.record_progress"
     for kind, values in (
         ("verification", _string_list_arg(payload.get("verification"))),
         ("changed_files", _closeout_span_values(payload, "changed_files")),
@@ -2668,9 +2670,19 @@ def _record_closeout_spans_from_progress(
                 agent_id=owner_agent,
                 session_id=span_session_id,
                 kind=kind,
-                source="mailbox_submit.record_progress",
+                source=source,
                 content=value,
             )
+    record_tagged_spans_from_payload(
+        store=store,
+        payload=payload,
+        project=project,
+        task_id=task_id,
+        work_id=active_work.work_id,
+        agent_id=owner_agent,
+        session_id=span_session_id,
+        source=source,
+    )
 
 
 def _string_list_arg(value: Any) -> list[str]:
@@ -2726,3 +2738,4 @@ def _needs_input(
             "next_safe_action": next_safe_action,
         },
     }
+
