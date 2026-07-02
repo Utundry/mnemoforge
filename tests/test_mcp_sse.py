@@ -441,8 +441,10 @@ class TestMcpToolExecution:
             assert data["receipt"]["lease"]["task_id"] == "task-mailbox-claim"
             assert data["receipt"]["lease"]["agent_fingerprint"] == "agentfp:mailbox"
             assert "work_token_hash" not in data["receipt"]["lease"]
-            assert data["receipt"]["work_token"]
+            assert data["receipt"]["work_handle"].startswith("wh1.")
+            assert "work_token" not in data["receipt"]
             assert data["next_safe_action"].startswith("Proceed with implementation")
+            assert "work_handle" in data["next_safe_action"]
         finally:
             store.close()
 
@@ -526,7 +528,7 @@ class TestMcpToolExecution:
             assert start_data["receipt"]["lease"]["status"] == "active"
             assert "work_token_hash" not in start_data["receipt"]["lease"]
             assert start_data["receipt"]["work_handle"].startswith("wh1.")
-            assert start_data["receipt"]["work_token"]
+            assert "work_token" not in start_data["receipt"]
             assert start_data["receipt"]["next_state"] == "implementation"
             assert "finish_task" in start_data["receipt"]["next_forms"]
             assert start_data["receipt"]["work_session"]["status"] == "active"
@@ -831,6 +833,7 @@ class TestMcpToolExecution:
         assert packet["receipt"]["message"] == "Requested task or route was not found."
         assert "http" not in packet["receipt"]["message"].casefold()
         assert "get_task_context" in packet["receipt"]["next_safe_action"]
+        assert packet["receipt"]["project_identity"]["requested_project"] == "alpha"
 
     async def test_mailbox_start_task_conflict_returns_same_fingerprint_recovery_receipt(self, monkeypatch):
         async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
@@ -5736,6 +5739,7 @@ class TestMcpToolExecution:
                     "status": "started",
                     "lease": {"lease_id": "lease-approved", "status": "active"},
                     "work_token": "token-approved",
+                    "work_handle": "wh1.approved",
                     "work_session": {"work_id": "work-approved", "status": "active"},
                 }
             )
@@ -5771,7 +5775,8 @@ class TestMcpToolExecution:
         )
 
         assert packet["receipt"]["status"] == "started"
-        assert packet["receipt"]["work_token"] == "token-approved"
+        assert packet["receipt"]["work_handle"] == "wh1.approved"
+        assert "work_token" not in packet["receipt"]
         assert packet["receipt"]["edit_authority"]["status"] == "approved_implementation"
 
     async def test_mailbox_start_task_allows_reclaim_for_previously_started_projection(self):
@@ -5808,6 +5813,7 @@ class TestMcpToolExecution:
                     "status": "started",
                     "lease": {"lease_id": "lease-reclaimed", "status": "active"},
                     "work_token": "token-reclaimed",
+                    "work_handle": "wh1.reclaimed",
                     "work_session": {"work_id": "work-reclaimed", "status": "active"},
                     "previous_claim_expired": True,
                     "same_fingerprint_reclaim": True,
@@ -5842,7 +5848,8 @@ class TestMcpToolExecution:
         )
 
         assert packet["receipt"]["status"] == "reclaimed_after_ttl"
-        assert packet["receipt"]["work_token"] == "token-reclaimed"
+        assert packet["receipt"]["work_handle"] == "wh1.reclaimed"
+        assert "work_token" not in packet["receipt"]
         assert packet["receipt"]["reclaim"]["reason"] == "previous_lease_expired"
 
     async def test_mailbox_start_task_uses_only_explicit_bounded_autonomous_grant(self):
@@ -6459,6 +6466,8 @@ class TestMcpToolExecution:
             assert data["result"]["status"] == "conflict"
             assert data["result"]["error"] == "lease_owner_mismatch"
             assert data["next_safe_action"].startswith("Use the public FSM recovery path")
+            assert "latest server-returned active work_handle" in data["next_safe_action"]
+            assert "do not force stale handles" in data["next_safe_action"]
             assert "guessed agent_id/session_id" in data["next_safe_action"]
             assert data["agent_action"]["recommended_next_call"] == data["result"]["recommended_next_call"]
             assert data["result"]["recommended_next_call"]["tool"] == "state"
@@ -6466,17 +6475,21 @@ class TestMcpToolExecution:
                 "project": "alpha",
                 "state": "verification",
                 "task_id": "task-1",
-                "work_handle": "<original_work_handle>",
+                "work_handle": "<known_work_handle>",
             }
             assert recovery["name"] == "public_fsm_closeout_recovery"
             assert recovery["preserves_lease_enforcement"] is True
+            assert recovery["requires_active_work_handle"] is True
+            assert "latest active work_handle" in recovery["handle_rule"]
             assert [step["step"] for step in recovery["steps"]] == [
                 "inspect_public_state",
                 "record_or_resolve_verification",
-                "finish_with_original_handle",
+                "finish_with_latest_active_handle",
             ]
             assert recovery["steps"][1]["form_id"] == "run_verification"
+            assert recovery["steps"][1]["payload_hint"]["work_handle"] == "<latest_active_work_handle_from_state_or_claim>"
             assert recovery["steps"][2]["form_id"] == "finish_task"
+            assert recovery["steps"][2]["payload_hint"]["work_handle"] == "<latest_active_work_handle_from_state_or_claim>"
             assert "public FSM recovery" in data["warnings"][0]
         finally:
             lease_store.close()
@@ -8248,6 +8261,11 @@ class TestMcpToolExecution:
         assert result["status"] == "executed"
         assert result["result"]["status"] == "conflict"
         assert result["result"]["error"] == "rule_precondition_failed:declared_verification_contour"
+        recovery = result["result"]["semantic_rules"]["verification_recovery"]
+        assert recovery["verification_contour_ref"] == "verification_contour:alpha:verification"
+        assert recovery["recommended_next_call"]["tool"] == "project_verify"
+        assert "Docker verification" in recovery["next_safe_action"]
+        assert result["result"]["next_safe_action"] == recovery["next_safe_action"]
         assert called == []
 
     async def test_project_verify_auto_backend_falls_back_to_lexical_when_llm_fails(self, monkeypatch):

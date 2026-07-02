@@ -163,7 +163,7 @@ from app.services.mcp_grouped_tool_dispatch_actions import (
     GroupedToolDispatchDependencies,
     execute_grouped_memory_or_runtime_action,
 )
-from app.services.mcp_workflow_specs import load_route_catalog_spec, load_tool_family_registry, load_tool_surface_spec
+from app.services.mcp_workflow_specs import load_named_json_spec, load_route_catalog_spec, load_tool_family_registry, load_tool_surface_spec
 from app.services.data_hygiene_service import build_maintenance_suggestion
 from app.services.mcp_handoff_actions import (
     HANDOFF_ACTIONS,
@@ -3089,7 +3089,7 @@ async def _run_facade_route(
             "status": "conflict",
             "error": semantic_rules.get("block_error") or "rule_precondition_failed",
             "semantic_rules": semantic_rules,
-            "next_safe_action": "Satisfy rule preconditions before execution.",
+            "next_safe_action": semantic_rules.get("next_safe_action") or "Satisfy rule preconditions before execution.",
         }
         executed = True
     else:
@@ -4303,6 +4303,28 @@ def _project_work_args_with_learned_payload(
     }, learned
 
 
+
+def _project_work_recovery_spec() -> dict[str, Any]:
+    spec = load_named_json_spec("workflow/project_work_recovery.json")
+    value = spec.get("public_fsm_closeout_recovery")
+    return value if isinstance(value, dict) else {}
+
+
+def _render_recovery_template(value: Any, context: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        rendered = value
+        for key, replacement in context.items():
+            rendered = rendered.replace("{" + key + "}", replacement)
+        return rendered
+    if isinstance(value, list):
+        return [_render_recovery_template(item, context) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _render_recovery_template(item, context)
+            for key, item in value.items()
+        }
+    return value
+
 def _project_work_lease_conflict_recovery_packet(
     *,
     lease_guard: dict[str, Any],
@@ -4315,62 +4337,27 @@ def _project_work_lease_conflict_recovery_packet(
     project = str(payload.get("project") or args.get("project") or "mnemoforge").strip() or "mnemoforge"
     task_id = str(payload.get("task_id") or args.get("task_id") or lease_guard.get("task_id") or "").strip()
     work_handle = str(payload.get("work_handle") or args.get("work_handle") or "").strip()
-    work_handle_arg = work_handle or "<original_work_handle>"
-    next_safe_action = (
-        "Use the public FSM recovery path: call state with task_id and the original work_handle; "
-        "if the state packet exposes run_verification, submit run_verification with actual verification evidence; "
-        "then submit finish_task with the same work_handle. Do not retry project_work with guessed agent_id/session_id values."
-    )
-    state_args: dict[str, Any] = {
+    recovery_spec = _project_work_recovery_spec()
+    known_work_handle = work_handle or str(recovery_spec.get("known_work_handle_placeholder") or "").strip()
+    latest_work_handle = str(recovery_spec.get("latest_active_work_handle_placeholder") or "").strip()
+    render_context = {
         "project": project,
-        "state": "verification",
         "task_id": task_id,
-        "work_handle": work_handle_arg,
+        "known_work_handle": known_work_handle,
+        "latest_active_work_handle": latest_work_handle,
     }
-    recovery_steps = [
-        {
-            "step": "inspect_public_state",
-            "tool": "state",
-            "arguments": state_args,
-            "why": "Recover the server-authoritative FSM state, available forms, and claim-continuity cues.",
-        },
-        {
-            "step": "record_or_resolve_verification",
-            "tool": "submit",
-            "form_id": "run_verification",
-            "state": "verification",
-            "when": "Only if the state packet exposes run_verification or asks for verification evidence.",
-            "payload_hint": {
-                "project": project,
-                "task_id": task_id,
-                "work_handle": work_handle_arg,
-                "changed_files": "<changed files from the completed work>",
-            },
-        },
-        {
-            "step": "finish_with_original_handle",
-            "tool": "submit",
-            "form_id": "finish_task",
-            "state": "checkpointing",
-            "payload_hint": {
-                "project": project,
-                "task_id": task_id,
-                "work_handle": work_handle_arg,
-                "summary": "<completed work summary>",
-                "changed_files": "<changed files>",
-                "verification": "<actual verification evidence>",
-                "next_step": "<concrete next step or none>",
-            },
-        },
-    ]
+    recommended_next_call = _render_recovery_template(recovery_spec.get("recommended_next_call") or {}, render_context)
+    recovery_steps = _render_recovery_template(recovery_spec.get("steps") or [], render_context)
+
     enriched = dict(lease_guard)
-    enriched["next_safe_action"] = next_safe_action
-    enriched["recommended_next_call"] = {"tool": "state", "arguments": state_args}
+    enriched["next_safe_action"] = str(recovery_spec.get("next_safe_action") or "").strip()
+    enriched["recommended_next_call"] = recommended_next_call
     enriched["recovery_protocol"] = {
-        "name": "public_fsm_closeout_recovery",
-        "reason": "project_work hit the lease guard; recover through public FSM forms instead of retrying identity guesses.",
-        "preserves_lease_enforcement": True,
-        "requires_original_work_handle": True,
+        "name": str(recovery_spec.get("name") or "").strip(),
+        "reason": str(recovery_spec.get("reason") or "").strip(),
+        "preserves_lease_enforcement": bool(recovery_spec.get("preserves_lease_enforcement", True)),
+        "requires_active_work_handle": bool(recovery_spec.get("requires_active_work_handle", True)),
+        "handle_rule": str(recovery_spec.get("handle_rule") or "").strip(),
         "steps": recovery_steps,
     }
     return enriched
@@ -4420,7 +4407,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
             "status": "conflict",
             "error": semantic_rules.get("block_error") or "rule_precondition_failed",
             "semantic_rules": semantic_rules,
-            "next_safe_action": "Satisfy semantic rule preconditions before mutation.",
+            "next_safe_action": semantic_rules.get("next_safe_action") or "Satisfy semantic rule preconditions before mutation.",
         }
         executed = True
     elif lease_guard:
@@ -7472,6 +7459,40 @@ def _semantic_tokens(text: str) -> set[str]:
     return {token for token in cleaned.split() if len(token) >= 3}
 
 
+def _semantic_verification_spec() -> dict[str, Any]:
+    spec = load_named_json_spec("workflow/semantic_verification.json")
+    value = spec.get("declared_contour_precondition")
+    return value if isinstance(value, dict) else {}
+
+
+def _semantic_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item or "").strip().lower() for item in value if str(item or "").strip()]
+
+
+def _semantic_recovery_packet(*, policy: dict[str, Any], project: str, task_id: str, changed_files: Any) -> dict[str, Any]:
+    recovery = policy.get("recovery") if isinstance(policy.get("recovery"), dict) else {}
+    template = str(recovery.get("verification_contour_ref_template") or "").strip()
+    verification_contour_ref = template.format(project=project, task_id=task_id) if template else ""
+    call_spec = recovery.get("recommended_next_call") if isinstance(recovery.get("recommended_next_call"), dict) else {}
+    return {
+        "verification_contour_ref": verification_contour_ref,
+        "forbidden_patterns": [str(item or "").strip() for item in recovery.get("forbidden_patterns") or [] if str(item or "").strip()],
+        "recommended_next_call": {
+            "tool": str(call_spec.get("tool") or "").strip(),
+            "arguments": {
+                "project": project,
+                "task_id": task_id,
+                "state": str(call_spec.get("state") or "verification").strip() or "verification",
+                "intent": str(call_spec.get("intent") or "").strip(),
+                "changed_files": list(changed_files or []),
+            },
+        },
+        "next_safe_action": str(recovery.get("next_safe_action") or "").strip(),
+    }
+
+
 def _semantic_rules_context_type(*, facade: str, route: dict[str, Any], args: dict[str, Any]) -> str:
     if facade == "project_verify":
         intent = str(route.get("intent_type") or "").strip()
@@ -7556,10 +7577,19 @@ def _build_semantic_rule_packet(
             str(args.get("intent") or ""),
         ]
     ).lower()
-    wants_test = any(token in command_text for token in ("pytest", "run tests", "test "))
+    verification_policy = _semantic_verification_spec()
+    trigger_terms = _semantic_string_list(verification_policy.get("trigger_terms"))
+    approved_terms = _semantic_string_list(verification_policy.get("approved_contour_terms"))
+    docker_rule_terms = _semantic_string_list(verification_policy.get("docker_rule_terms"))
+    docker_rule_required_terms = _semantic_string_list(verification_policy.get("docker_rule_required_terms"))
+    host_command_terms = _semantic_string_list(verification_policy.get("host_command_terms"))
+    wants_test = any(token in command_text for token in trigger_terms)
     docker_rule_active = any(
-        ("docker" in str(item.get("action") or "").lower() and "contour" in str(item.get("action") or "").lower())
-        or ("host pytest" in str(item.get("action") or "").lower())
+        (
+            bool(docker_rule_required_terms)
+            and all(term in str(item.get("action") or "").lower() for term in docker_rule_required_terms)
+        )
+        or any(term in str(item.get("action") or "").lower() for term in docker_rule_terms)
         for item in top
     )
     if wants_test and not docker_rule_active and facade in {"project_verify", "project_work"}:
@@ -7567,21 +7597,29 @@ def _build_semantic_rule_packet(
     blocked = bool(
         wants_test
         and docker_rule_active
-        and "pytest" in command_text
-        and "docker" not in command_text
-        and "verification_contour" not in command_text
-        and "approved contour" not in command_text
+        and any(term in command_text for term in host_command_terms)
+        and not any(term in command_text for term in approved_terms)
     )
 
     preconditions: list[dict[str, Any]] = []
     if wants_test and docker_rule_active:
         preconditions.append(
             {
-                "id": "declared_verification_contour",
+                "id": str(verification_policy.get("id") or "").strip(),
                 "required": True,
                 "satisfied": not blocked,
-                "message": "Run tests through the declared project verification contour before reporting verification success.",
+                "message": str(verification_policy.get("message") or "").strip(),
             }
+        )
+
+    task_id = str(payload.get("task_id") or args.get("task_id") or "").strip()
+    verification_recovery = None
+    if blocked:
+        verification_recovery = _semantic_recovery_packet(
+            policy=verification_policy,
+            project=project,
+            task_id=task_id,
+            changed_files=args.get("changed_files") or [],
         )
 
     return {
@@ -7603,7 +7641,10 @@ def _build_semantic_rule_packet(
         "applied_rule_count": len(top),
         "blocked": blocked,
         "preconditions": preconditions,
-        "block_error": "rule_precondition_failed:declared_verification_contour" if blocked else "",
+        "block_error": str(verification_policy.get("block_error") or "").strip() if blocked else "",
+        "verification_recovery": verification_recovery,
+        "recommended_next_call": verification_recovery.get("recommended_next_call") if verification_recovery else None,
+        "next_safe_action": verification_recovery.get("next_safe_action") if verification_recovery else "",
     }
 
 

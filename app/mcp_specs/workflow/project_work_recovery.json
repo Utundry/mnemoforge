@@ -1,0 +1,62 @@
+{
+  "public_fsm_closeout_recovery": {
+    "name": "public_fsm_closeout_recovery",
+    "reason": "project_work hit the lease guard; recover through public FSM forms instead of retrying identity guesses.",
+    "preserves_lease_enforcement": true,
+    "requires_active_work_handle": true,
+    "known_work_handle_placeholder": "<known_work_handle>",
+    "latest_active_work_handle_placeholder": "<latest_active_work_handle_from_state_or_claim>",
+    "next_safe_action": "Use the public FSM recovery path: call state with task_id and a known work_handle; if state, claim_task, start_task, or another recovery response returns a newer active work_handle, use that latest server-returned active work_handle for run_verification and finish_task. Do not retry project_work with guessed agent_id/session_id values, and do not force stale handles.",
+    "handle_rule": "Start recovery with a known work_handle for continuity. After any server response, prefer the latest active work_handle returned by state, claim_task, or start_task.",
+    "recommended_next_call": {
+      "tool": "state",
+      "arguments": {
+        "project": "{project}",
+        "state": "verification",
+        "task_id": "{task_id}",
+        "work_handle": "{known_work_handle}"
+      }
+    },
+    "steps": [
+      {
+        "step": "inspect_public_state",
+        "tool": "state",
+        "arguments": {
+          "project": "{project}",
+          "state": "verification",
+          "task_id": "{task_id}",
+          "work_handle": "{known_work_handle}"
+        },
+        "why": "Recover the server-authoritative FSM state, available forms, and claim-continuity cues."
+      },
+      {
+        "step": "record_or_resolve_verification",
+        "tool": "submit",
+        "form_id": "run_verification",
+        "state": "verification",
+        "when": "Only if the state packet exposes run_verification or asks for verification evidence.",
+        "payload_hint": {
+          "project": "{project}",
+          "task_id": "{task_id}",
+          "work_handle": "{latest_active_work_handle}",
+          "changed_files": "<changed files from the completed work>"
+        }
+      },
+      {
+        "step": "finish_with_latest_active_handle",
+        "tool": "submit",
+        "form_id": "finish_task",
+        "state": "checkpointing",
+        "payload_hint": {
+          "project": "{project}",
+          "task_id": "{task_id}",
+          "work_handle": "{latest_active_work_handle}",
+          "summary": "<completed work summary>",
+          "changed_files": "<changed files>",
+          "verification": "<actual verification evidence>",
+          "next_step": "<concrete next step or none>"
+        }
+      }
+    ]
+  }
+}

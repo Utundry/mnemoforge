@@ -1979,8 +1979,10 @@ def test_mailbox_state_surfaces_stenography_tag_protocol_for_assisted_forms() ->
     assert "[stenographer:start kind=decision task_id=task-1 work_id=work-1]" in snippets
     assert "[stenographer:stop]" in snippets
     assert "changed_files" in protocol["core_recovery_span_kinds"]
+    assert protocol["minimum_closeout_span_kinds"] == ["checkpoint_hint", "changed_files", "verification", "next_step"]
     assert "verification" in protocol["supported_span_kinds"]
     assert protocol["clerk_rules"]["draft_only"] is True
+    assert "minimum_closeout_span_kinds" in protocol["clerk_rules"]["quality_gate"]
     assert any("changed_files" in item for item in protocol["validation_checklist"])
 
 
@@ -2002,6 +2004,7 @@ def test_mailbox_state_warns_when_stenography_available_but_task_has_no_spans(mo
     assert coverage["status"] == "none"
     assert coverage["span_count"] == 0
     assert coverage["has_changed_files"] is False
+    assert coverage["missing_closeout_span_kinds"] == ["checkpoint_hint", "changed_files", "verification", "next_step"]
     assert "no tagged stenographer spans" in " ".join(packet["warnings"]).lower()
     assert coverage["next_safe_action"].startswith("Before checkpoint/finish")
 

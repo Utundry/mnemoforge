@@ -1,0 +1,96 @@
+{
+  "status": "available",
+  "capture_model": "tagged_spans",
+  "why": "Stenographer capture is tag-driven. Clerk draft quality depends on explicit tagged spans; without spans, clerk can only infer from sparse task/checkpoint text.",
+  "supported_span_kinds": [
+    "fact",
+    "decision",
+    "verification",
+    "risk",
+    "blocker",
+    "next_step",
+    "checkpoint_hint",
+    "handoff_hint",
+    "diagnostic",
+    "changed_files",
+    "rule_project_candidate",
+    "rule_canonical_candidate",
+    "rule_revision_hint",
+    "rule_merge_hint"
+  ],
+  "core_recovery_span_kinds": [
+    "checkpoint_hint",
+    "changed_files",
+    "decision",
+    "verification",
+    "risk",
+    "blocker",
+    "next_step",
+    "handoff_hint",
+    "diagnostic"
+  ],
+  "minimum_closeout_span_kinds": [
+    "checkpoint_hint",
+    "changed_files",
+    "verification",
+    "next_step"
+  ],
+  "markers": {
+    "start": "[stenographer:start kind=<kind> task_id=<task_id>]",
+    "stop": "[stenographer:stop]",
+    "rule": "Every start marker needs one matching stop marker. Keep one span focused on one evidence type."
+  },
+  "snippets": [
+    {
+      "kind": "checkpoint_hint",
+      "body": "Summary: <implementation slice completed>\nWhat changed: <short factual summary>"
+    },
+    {
+      "kind": "changed_files",
+      "body": "Files: app/path.py; tests/test_path.py"
+    },
+    {
+      "kind": "decision",
+      "body": "Decision: <chosen path>\nRationale: <why>\nAlternatives rejected: <if any>"
+    },
+    {
+      "kind": "verification",
+      "body": "Command: <command actually run>\nResult: <pass/fail/output summary>\nResidual risk: <if any>"
+    },
+    {
+      "kind": "risk",
+      "body": "Risk: <known uncertainty>\nMitigation/next check: <concrete follow-up>"
+    },
+    {
+      "kind": "handoff_hint",
+      "body": "Next step: <concrete continuation>\nDo not forget: <important constraint>"
+    }
+  ],
+  "clerk_rules": {
+    "draft_only": true,
+    "draft_tool": "clerk_draft_report",
+    "span_draft_tool": "draft_checkpoint_from_spans",
+    "approve_tool": "approve_checkpoint_draft",
+    "rule": "Clerk output is a review-only draft until an agent/operator validates and approves it.",
+    "quality_gate": "Ask clerk for a closeout draft only after minimum_closeout_span_kinds are present or explicit checkpoint fields are supplied."
+  },
+  "validation_checklist": [
+    "summary matches actual work",
+    "changed_files are grounded in real touched files",
+    "verification commands/results were actually run",
+    "decisions and rejected alternatives are not invented",
+    "risks/blockers are preserved",
+    "next_step is concrete",
+    "formal verification is distinct from live diagnostic/operator feedback"
+  ],
+  "next_safe_action": "Capture minimum closeout spans before finish_task; ask clerk for a review-only draft only after grounded spans exist.",
+  "coverage_messages": {
+    "unscoped_next_safe_action": "Provide task_id to assess stenographer span coverage for recovery.",
+    "unknown_next_safe_action": "Stenographer span coverage could not be read; continue with explicit checkpoint fields.",
+    "complete_next_safe_action": "Use clerk_draft_report or draft_checkpoint_from_spans, then validate the review-only draft before checkpointing.",
+    "incomplete_warning": "Stenographer spans exist, but closeout coverage is incomplete; clerk draft quality may be low.",
+    "incomplete_next_safe_action": "Add the missing closeout span kinds before asking clerk for a closeout draft.",
+    "none_warning": "Stenographer is available but no tagged stenographer spans were found for this task; clerk draft quality will be low.",
+    "none_next_safe_action": "Before checkpoint/finish, add short tagged spans for checkpoint_hint, changed_files, verification, and next_step."
+  }
+}

@@ -11,6 +11,7 @@ from app.services.task_lease_service import (
     TaskLeaseUnavailable,
     WorkTokenMismatch,
     find_continuity_lease_for_mutation,
+    renew_work_handle_claim,
     get_task_lease_store,
     stop_task_lease_auto_heartbeat,
     verify_work_token_for_mutation,
@@ -52,6 +53,7 @@ def task_mutation_requires_owned_claim(
                 project=project_clean,
                 task_id=task_clean,
                 owner_agent=owner_clean,
+                allow_inactive=True,
             )
         except WorkHandleInvalid as exc:
             return {
@@ -205,13 +207,31 @@ async def execute_task_lease_action(
             return data
 
         if name == "heartbeat_task_claim":
+            ttl = int(args["lease_ttl_seconds"]) if args.get("lease_ttl_seconds") else None
+            work_handle = str(args.get("work_handle") or "").strip()
+            if work_handle:
+                lease, token, _payload = renew_work_handle_claim(
+                    store=store,
+                    work_handle=work_handle,
+                    project=str(args.get("project") or ""),
+                    task_id=str(args.get("task_id") or ""),
+                    owner_agent=owner_agent,
+                    lease_ttl_seconds=ttl,
+                )
+                return {
+                    "status": "renewed",
+                    "lease": lease.model_dump(mode="json"),
+                    "work_handle": build_work_handle(lease=lease, work_token=token),
+                    "renewed_from_work_handle": True,
+                    "next_safe_action": "Continue work; the task claim expiration was extended from work_handle continuity.",
+                }
             if not lease_session_id:
                 raise ValueError("session_id is required for heartbeat_task_claim")
             lease = store.heartbeat(
                 lease_id=str(args["lease_id"]),
                 owner_agent=owner_agent,
                 session_id=lease_session_id,
-                lease_ttl_seconds=int(args["lease_ttl_seconds"]) if args.get("lease_ttl_seconds") else None,
+                lease_ttl_seconds=ttl,
             )
             return {
                 "status": "renewed",
@@ -295,4 +315,11 @@ async def execute_task_lease_action(
             "claim_allowed": False,
             "lease_id": exc.lease_id,
             "next_safe_action": "Do not reclaim this task; the work_token did not match the active same-fingerprint claim.",
+        }
+    except WorkHandleInvalid as exc:
+        return {
+            "status": "conflict",
+            "error": {"error": exc.reason},
+            "claim_allowed": False,
+            "next_safe_action": "Use the latest active work_handle returned by the server, or start_task after confirming no other owner took over.",
         }

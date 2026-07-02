@@ -683,12 +683,15 @@ _PYTHON_TOOL_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "heartbeat_task_claim": {
         "name": "heartbeat_task_claim",
-        "description": "Renew an active task claim lease so it does not expire while the owning session is still alive.",
+        "description": "Renew a task claim lease. Prefer work_handle: it can renew active continuity or safely revive an expired claim when no later claim took over.",
         "inputSchema": {
             "type": "object",
-            "required": ["lease_id", "session_id"],
+            "required": [],
             "properties": {
-                "lease_id": {"type": "string"},
+                "project": {"type": "string", "default": "mnemoforge"},
+                "task_id": {"type": "string"},
+                "work_handle": {"type": "string", "description": "Preferred public continuation handle from start_task_session or claim_task."},
+                "lease_id": {"type": "string", "description": "Legacy active-lease heartbeat path; requires session_id."},
                 "owner_agent": {"type": "string", "default": "codex"},
                 "agent_id": {"type": "string", "description": "Compatibility alias for owner_agent"},
                 "session_id": {"type": "string"},

@@ -1,0 +1,22 @@
+{
+  "declared_contour_precondition": {
+    "id": "declared_verification_contour",
+    "block_error": "rule_precondition_failed:declared_verification_contour",
+    "message": "Run tests through the declared project verification contour before reporting verification success.",
+    "trigger_terms": ["pytest", "run tests", "test "],
+    "host_command_terms": ["pytest"],
+    "approved_contour_terms": ["docker", "verification_contour", "approved contour"],
+    "docker_rule_required_terms": ["docker", "contour"],
+    "docker_rule_terms": ["host pytest"],
+    "recovery": {
+      "verification_contour_ref_template": "verification_contour:{project}:verification",
+      "forbidden_patterns": ["host pytest"],
+      "recommended_next_call": {
+        "tool": "project_verify",
+        "state": "verification",
+        "intent": "Resolve the declared verification contour before reporting test success."
+      },
+      "next_safe_action": "Resolve the declared verification contour, run the project-approved Docker verification, then retry closeout with verification_contour evidence."
+    }
+  }
+}

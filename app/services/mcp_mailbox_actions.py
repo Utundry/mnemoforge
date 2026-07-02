@@ -43,6 +43,7 @@ from app.services.public_ref_index import AmbiguousPublicRefError, is_short_publ
 from app.services.public_diagnostic_service import attach_public_diagnostic_incident
 from app.services.route_pattern_store import get_route_pattern_store
 from app.services.authority_classification_service import classify_improvement_authority
+from app.services.project_identity_service import project_identity_envelope
 
 
 PostCallback = Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -626,7 +627,7 @@ async def mailbox_claim_task(
     dependencies: MailboxActionDependencies,
     session_id: str | None,
 ) -> dict[str, Any]:
-    from app.services.task_lease_service import TaskLeaseConflict, WorkTokenMismatch, get_task_lease_store
+    from app.services.task_lease_service import TaskLeaseConflict, WorkTokenMismatch, build_work_handle, get_task_lease_store
 
     identity_defaults = await dependencies.get_session_identity_defaults(session_id)
     owner_agent = str(payload.get("owner_agent") or payload.get("agent_id") or "codex").strip() or "codex"
@@ -692,10 +693,10 @@ async def mailbox_claim_task(
         "mode": form.mode,
         "message": "Task claim is active.",
         "lease": public_lease_payload(result.get("lease")),
-        "work_token": result.get("work_token"),
+        "work_handle": build_work_handle(lease=claim.lease, work_token=claim.work_token),
         "same_fingerprint_reclaim": result.get("same_fingerprint_reclaim"),
         "previous_claim_expired": result.get("previous_claim_expired"),
-        "next_safe_action": "Proceed with implementation and keep work_token for checkpoints, finish, or recovery.",
+        "next_safe_action": "Proceed with implementation and use work_handle for checkpoints, finish, or recovery.",
     }
     packet: dict[str, Any] = {
         "state": state,
@@ -816,14 +817,21 @@ async def mailbox_start_task(
     try:
         raw = await dependencies.execute_tool("start_task_session", start_args, api_base, session_id)
     except Exception as exc:
+        identity = project_identity_envelope(requested_project=str(payload.get("project") or project), observed_project=project)
+        current_project = str(identity.get("current_project") or "").strip()
+        next_safe_action = "Request get_task_context, verify the task_id exists, or create/choose a valid task before starting work."
+        if current_project and current_project != project:
+            next_safe_action = f"{next_safe_action} Use project={current_project} for lifecycle retries."
         return {
             "state": state,
             "project": project,
+            "project_identity": identity,
             "receipt": {
                 "status": "conflict",
                 "form_id": form.id,
                 "message": public_mailbox_error_message(exc),
-                "next_safe_action": "Request get_task_context, verify the task_id exists, or create/choose a valid task before starting work.",
+                "project_identity": identity,
+                "next_safe_action": next_safe_action,
             },
         }
     try:
@@ -877,7 +885,6 @@ async def mailbox_start_task(
         ),
         "lease": public_lease_payload(result.get("lease")),
         "work_handle": result.get("work_handle"),
-        "work_token": result.get("work_token"),
         "work_session": result.get("work_session"),
         "work_session_resumed": resumed,
         "edit_authority": edit_authority,
@@ -2474,6 +2481,7 @@ def _start_task_conflict_receipt(
     active_fingerprint = str(active_lease.get("agent_fingerprint") or "").strip()
     same_fingerprint = bool(payload_fingerprint and active_fingerprint and payload_fingerprint == active_fingerprint)
     message = _start_task_conflict_message(result=result, same_fingerprint=same_fingerprint)
+    identity = project_identity_envelope(requested_project=str(payload.get("project") or project), observed_project=project)
     receipt: dict[str, Any] = {
         "status": result.get("status") or "conflict",
         "form_id": form_id,
@@ -2481,6 +2489,7 @@ def _start_task_conflict_receipt(
         "lease": active_lease,
         "same_fingerprint": same_fingerprint,
         "expires_at": active_lease.get("expires_at") or result.get("expires_at"),
+        "project_identity": identity,
         "next_safe_action": _start_task_conflict_next_action(
             result=result,
             same_fingerprint=same_fingerprint,

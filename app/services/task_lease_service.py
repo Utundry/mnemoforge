@@ -485,19 +485,70 @@ class TaskLeaseStore:
             if lease.owner_agent != owner_agent or lease.session_id != session_id:
                 raise PermissionError("lease_owner_mismatch")
             ttl = max(5, int(lease_ttl_seconds or lease.lease_ttl_seconds or DEFAULT_LEASE_TTL_SECONDS))
-            now_ts = _ts(now_dt)
-            expires_ts = _ts(now_dt + timedelta(seconds=ttl))
-            self._conn.execute(
-                """
-                UPDATE task_leases
-                   SET heartbeat_at = ?, expires_at = ?, lease_ttl_seconds = ?
-                 WHERE lease_id = ?
-                """,
-                (now_ts, expires_ts, ttl, lease_id),
-            )
-            self._conn.commit()
-            updated = self._conn.execute("SELECT * FROM task_leases WHERE lease_id = ?", (lease_id,)).fetchone()
+            updated = self._set_lease_heartbeat_locked(lease=lease, now_dt=now_dt, ttl=ttl)
+        return updated
+
+    def _latest_lease_for_task_locked(self, *, project: str, task_id: str) -> TaskLeaseRecord | None:
+        row = self._conn.execute(
+            """
+            SELECT * FROM task_leases
+             WHERE project = ? AND task_id = ?
+             ORDER BY claimed_at DESC, heartbeat_at DESC
+             LIMIT 1
+            """,
+            (project, task_id),
+        ).fetchone()
+        return self._row_to_lease(row) if row else None
+
+    def _set_lease_heartbeat_locked(self, *, lease: TaskLeaseRecord, now_dt: datetime, ttl: int) -> TaskLeaseRecord:
+        now_ts = _ts(now_dt)
+        expires_ts = _ts(now_dt + timedelta(seconds=ttl))
+        self._conn.execute(
+            """
+            UPDATE task_leases
+               SET status = 'active',
+                   heartbeat_at = ?,
+                   expires_at = ?,
+                   released_at = NULL,
+                   release_reason = '',
+                   lease_ttl_seconds = ?
+             WHERE lease_id = ?
+            """,
+            (now_ts, expires_ts, ttl, lease.lease_id),
+        )
+        self._conn.commit()
+        updated = self._conn.execute("SELECT * FROM task_leases WHERE lease_id = ?", (lease.lease_id,)).fetchone()
         return self._row_to_lease(updated)
+
+    def renew_expired(
+        self,
+        *,
+        lease_id: str,
+        owner_agent: str,
+        session_id: str = "",
+        lease_ttl_seconds: int | None = None,
+        now: datetime | None = None,
+    ) -> TaskLeaseRecord:
+        lease_id = _clean_text(lease_id, 128)
+        owner_agent = _clean_text(owner_agent, 128)
+        session_id = _clean_text(session_id, 256)
+        now_dt = now or _utcnow()
+        self.expire_stale(now=now_dt)
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM task_leases WHERE lease_id = ?", (lease_id,)).fetchone()
+            if not row:
+                raise ValueError("lease_not_found")
+            lease = self._row_to_lease(row)
+            if lease.owner_agent != owner_agent or lease.session_id != session_id:
+                raise PermissionError("lease_owner_mismatch")
+            latest = self._latest_lease_for_task_locked(project=lease.project, task_id=lease.task_id)
+            if latest and latest.lease_id != lease.lease_id:
+                raise TaskLeaseUnavailable(lease, reason="lease_superseded")
+            if lease.status not in {"active", "expired"}:
+                raise TaskLeaseUnavailable(lease, reason=f"lease_not_renewable:{lease.status}")
+            ttl = max(5, int(lease_ttl_seconds or lease.lease_ttl_seconds or DEFAULT_LEASE_TTL_SECONDS))
+            updated = self._set_lease_heartbeat_locked(lease=lease, now_dt=now_dt, ttl=ttl)
+        return updated
 
     def release(
         self,
@@ -871,8 +922,13 @@ def resolve_work_handle_for_mutation(
     if not row:
         raise WorkHandleInvalid("work_handle_lease_not_found")
     lease = store._row_to_lease(row)
-    if lease.status != "active" and not allow_inactive:
-        raise WorkHandleInvalid("work_handle_lease_not_active")
+    if lease.status != "active":
+        if not allow_inactive:
+            raise WorkHandleInvalid("work_handle_lease_not_active")
+        with store._lock:
+            latest = store._latest_lease_for_task_locked(project=lease.project, task_id=lease.task_id)
+        if latest and latest.lease_id != lease.lease_id:
+            raise WorkHandleInvalid("work_handle_superseded")
     project_clean = _clean_text(project, 128)
     task_clean = _clean_text(task_id, 128)
     owner_clean = _clean_text(owner_agent, 128)
@@ -931,6 +987,43 @@ def work_handle_to_legacy_context(
         "task_id": lease.task_id,
         "payload": payload,
     }
+
+
+def renew_work_handle_claim(
+    *,
+    store: TaskLeaseStore,
+    work_handle: str,
+    project: str = "",
+    task_id: str = "",
+    owner_agent: str = "",
+    lease_ttl_seconds: int | None = None,
+) -> tuple[TaskLeaseRecord, str, dict]:
+    lease, token, payload = resolve_work_handle_for_mutation(
+        store=store,
+        work_handle=work_handle,
+        project=project,
+        task_id=task_id,
+        owner_agent=owner_agent,
+        refresh_ttl=False,
+        allow_inactive=True,
+    )
+    if lease.status == "active":
+        lease = store.heartbeat(
+            lease_id=lease.lease_id,
+            owner_agent=lease.owner_agent,
+            session_id=lease.session_id,
+            lease_ttl_seconds=lease_ttl_seconds,
+        )
+    elif lease.status == "expired":
+        lease = store.renew_expired(
+            lease_id=lease.lease_id,
+            owner_agent=lease.owner_agent,
+            session_id=lease.session_id,
+            lease_ttl_seconds=lease_ttl_seconds,
+        )
+    else:
+        raise WorkHandleInvalid(f"work_handle_lease_not_renewable:{lease.status}")
+    return lease, token, payload
 
 
 def redact_work_token_from_result(result: dict) -> dict:

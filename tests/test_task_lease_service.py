@@ -214,6 +214,157 @@ def test_mcp_task_mutation_guard_blocks_active_other_owner_even_with_old_token(m
     assert guard["error"] == "lease_owner_mismatch"
 
 
+def test_mcp_task_mutation_guard_accepts_expired_work_handle_when_not_superseded(monkeypatch) -> None:
+    store = TaskLeaseStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", store)
+    now = _now()
+    try:
+        claim = store.claim(
+            project="alpha",
+            task_id="task-stale-handle",
+            owner_agent="codex",
+            session_id="sess-stale-handle",
+            lease_ttl_seconds=5,
+            now=now,
+        )
+        work_handle = lease_mod.build_work_handle(lease=claim.lease, work_token=claim.work_token)
+        store.expire_stale(now=now + timedelta(seconds=10))
+        guard = task_mutation_requires_owned_claim(
+            project="alpha",
+            task_id="task-stale-handle",
+            owner_agent="codex",
+            owner_session_id="",
+            tool_name="record_task_checkpoint",
+            work_handle=work_handle,
+        )
+    finally:
+        store.close()
+
+    assert guard is None
+
+
+def test_mcp_task_mutation_guard_rejects_expired_work_handle_after_takeover(monkeypatch) -> None:
+    store = TaskLeaseStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", store)
+    now = _now()
+    try:
+        first = store.claim(
+            project="alpha",
+            task_id="task-stale-handle-takeover",
+            owner_agent="codex",
+            session_id="sess-stale-handle",
+            lease_ttl_seconds=5,
+            now=now,
+        )
+        work_handle = lease_mod.build_work_handle(lease=first.lease, work_token=first.work_token)
+        store.expire_stale(now=now + timedelta(seconds=10))
+        store.claim(
+            project="alpha",
+            task_id="task-stale-handle-takeover",
+            owner_agent="other",
+            session_id="sess-other",
+            now=now + timedelta(seconds=11),
+        )
+        guard = task_mutation_requires_owned_claim(
+            project="alpha",
+            task_id="task-stale-handle-takeover",
+            owner_agent="codex",
+            owner_session_id="",
+            tool_name="record_task_checkpoint",
+            work_handle=work_handle,
+        )
+    finally:
+        store.close()
+
+    assert guard is not None
+    assert guard["error"] == "work_handle_superseded"
+
+
+async def test_mcp_heartbeat_task_claim_renews_expired_work_handle(monkeypatch) -> None:
+    store = TaskLeaseStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", store)
+    now = _now()
+
+    async def fake_identity_defaults(session_id: str | None) -> dict[str, str]:
+        return {}
+
+    try:
+        claim = store.claim(
+            project="alpha",
+            task_id="task-renew-handle",
+            owner_agent="codex",
+            session_id="sess-renew-handle",
+            lease_ttl_seconds=5,
+            now=now,
+        )
+        work_handle = lease_mod.build_work_handle(lease=claim.lease, work_token=claim.work_token)
+        store.expire_stale(now=now + timedelta(seconds=10))
+        data = await execute_task_lease_action(
+            name="heartbeat_task_claim",
+            args={
+                "project": "alpha",
+                "task_id": "task-renew-handle",
+                "owner_agent": "codex",
+                "work_handle": work_handle,
+                "lease_ttl_seconds": 60,
+            },
+            session_id="lost-client-session",
+            dependencies=TaskLeaseActionDependencies(get_session_identity_defaults=fake_identity_defaults),
+        )
+    finally:
+        store.close()
+
+    assert data["status"] == "renewed"
+    assert data["renewed_from_work_handle"] is True
+    assert data["lease"]["lease_id"] == claim.lease.lease_id
+    assert data["lease"]["status"] == "active"
+    assert data["work_handle"] == work_handle
+
+
+async def test_mcp_heartbeat_task_claim_rejects_superseded_expired_work_handle(monkeypatch) -> None:
+    store = TaskLeaseStore(Path(":memory:"))
+    monkeypatch.setattr(lease_mod, "_STORE", store)
+    now = _now()
+
+    async def fake_identity_defaults(session_id: str | None) -> dict[str, str]:
+        return {}
+
+    try:
+        first = store.claim(
+            project="alpha",
+            task_id="task-renew-handle-takeover",
+            owner_agent="codex",
+            session_id="sess-renew-handle",
+            lease_ttl_seconds=5,
+            now=now,
+        )
+        work_handle = lease_mod.build_work_handle(lease=first.lease, work_token=first.work_token)
+        store.expire_stale(now=now + timedelta(seconds=10))
+        store.claim(
+            project="alpha",
+            task_id="task-renew-handle-takeover",
+            owner_agent="other",
+            session_id="sess-other",
+            now=now + timedelta(seconds=11),
+        )
+        data = await execute_task_lease_action(
+            name="heartbeat_task_claim",
+            args={
+                "project": "alpha",
+                "task_id": "task-renew-handle-takeover",
+                "owner_agent": "codex",
+                "work_handle": work_handle,
+            },
+            session_id="lost-client-session",
+            dependencies=TaskLeaseActionDependencies(get_session_identity_defaults=fake_identity_defaults),
+        )
+    finally:
+        store.close()
+
+    assert data["status"] == "conflict"
+    assert data["error"]["error"] == "work_handle_superseded"
+
+
 async def test_mcp_start_task_session_action_starts_work_and_checkpoint(monkeypatch) -> None:
     from app.services import stenographer_service as stenographer_mod
 
