@@ -306,9 +306,12 @@ def test_mailbox_forms_include_postconditions_for_health_detection() -> None:
     planning_forms = {form.id: form for form in list_mailbox_forms_for_state("planning")}
     verification_forms = {form.id: form for form in list_mailbox_forms_for_state("verification")}
 
+    inspect_project_readiness = planning_forms["inspect_project_readiness"]
     create_improvement = planning_forms["create_improvement"]
     run_verification = verification_forms["run_verification"]
 
+    assert inspect_project_readiness.postconditions.expected_metadata["result_kind"] == "project_readiness"
+    assert inspect_project_readiness.postconditions.expected_metadata["mutation"] is False
     assert create_improvement.postconditions.expected_metadata["artifact_type"] == "improvement"
     assert "clerk_draft_report" in create_improvement.postconditions.forbidden_metadata["internal_tool"]
     assert run_verification.postconditions.expected_metadata["result_kind"] == "verification_contour"
@@ -321,7 +324,7 @@ def test_mailbox_form_policy_is_declarative_priority_and_visibility_source() -> 
     minimal_rule = next(rule for rule in policy.visibility_rules if rule.packet_profile == "minimal")
     minimal_limit = next(limit for limit in policy.packet_limits if limit.packet_profile == "minimal")
 
-    assert policy.state_priorities["planning"][:2] == ["get_task_context", "start_task"]
+    assert policy.state_priorities["planning"][:3] == ["inspect_project_readiness", "get_task_context", "start_task"]
     assert policy.state_priorities["planning"].index("claim_task") > policy.state_priorities["planning"].index("start_task")
     assert policy.state_priorities["planning"].index("create_improvement") < policy.state_priorities["planning"].index("record_progress")
     assert minimal_rule.hidden_form_ids == ["claim_task"]
@@ -622,11 +625,11 @@ def test_mailbox_state_packet_is_public_only_for_weak_profiles() -> None:
     assert not any(form["form_id"] == "claim_task" for form in packet["forms"])
     assert "claim_task" in packet["hidden_forms"]
     assert "record_progress" in packet["hidden_forms"]
-    assert packet["omitted_forms"][:2] == ["confirm_law", "record_progress"]
+    assert packet["omitted_forms"][:2] == ["create_law", "confirm_law"]
     assert packet["packet_limit"]["max_forms"] == 5
     assert len(packet["forms"]) == 5
-    assert [form["form_id"] for form in packet["forms"][:2]] == ["get_task_context", "start_task"]
-    assert "get_task_context" in packet["next_safe_action"]
+    assert [form["form_id"] for form in packet["forms"][:3]] == ["inspect_project_readiness", "get_task_context", "start_task"]
+    assert "inspect_project_readiness" in packet["next_safe_action"]
     assert "Internal diagnostics are not available" in packet["warnings"][-1]
 
 
@@ -1678,7 +1681,7 @@ def test_mailbox_state_packet_orders_forms_by_workflow_not_filename() -> None:
     )
 
     form_ids = [form["form_id"] for form in packet["forms"]]
-    assert form_ids[:2] == ["get_task_context", "start_task"]
+    assert form_ids[:3] == ["inspect_project_readiness", "get_task_context", "start_task"]
     assert "record_progress" in form_ids
     assert "finish_task" in form_ids
     assert "close_task" in form_ids
@@ -1687,6 +1690,7 @@ def test_mailbox_state_packet_orders_forms_by_workflow_not_filename() -> None:
     assert "confirm_law" in form_ids
     assert form_ids.index("claim_task") > form_ids.index("start_task")
     forms = {form["form_id"]: form for form in packet["forms"]}
+    assert "cold start" in forms["inspect_project_readiness"]["hint"]
     assert "before any real implementation work" in forms["start_task"]["hint"]
     assert "user_approved_start" in forms["start_task"]["hint"]
     assert packet["hidden_forms"] == []

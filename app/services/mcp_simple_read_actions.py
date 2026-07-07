@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass
@@ -1341,7 +1342,24 @@ async def execute_simple_get_spec_route(
                 "next_safe_action": next_safe_action,
                 "details_available": True,
             }
-        data = await dependencies.post(api_base, "/project/readiness", {"project_id": project})
+        try:
+            data = await asyncio.wait_for(
+                dependencies.post(
+                    api_base,
+                    "/project/readiness",
+                    {"project_id": project, "auto_bootstrap_from_memories": False},
+                ),
+                timeout=8.0,
+            )
+        except Exception as exc:
+            data = {
+                "project_id": project,
+                "readiness_level": "unknown",
+                "memory_status": "unknown",
+                "summary": str(exc),
+                "blocking_gaps": ["Project readiness endpoint did not return a usable response before the public MCP timeout."],
+                "recommended_actions": ["Retry inspect_project_readiness after service dependencies recover."],
+            }
         result = data if isinstance(data, dict) else {"project_id": project, "readiness_level": "unknown"}
         compact_result = {
             "project_id": result.get("project_id") or project,
@@ -1359,20 +1377,38 @@ async def execute_simple_get_spec_route(
         else:
             compact_result = {key: value for key, value in compact_result.items() if value not in (None, "", [], {})}
         next_safe_action = "Review project readiness; if memory is empty or partial, follow recommended bootstrap actions before treating the project as initialized."
+        readiness_level = str(result.get("readiness_level") or "unknown").strip() or "unknown"
+        memory_status = str(result.get("memory_status") or readiness_level).strip() or readiness_level
+        receipt = {
+            "status": "accepted",
+            "message": "Cold-start/readiness query resolved through project readiness.",
+            "resource_kind": resource_kind,
+            "route_source": "simple_get_routes",
+            "route": route_id,
+            "matched_trigger": matched_trigger,
+            "project_id": project,
+            "memory_status": memory_status,
+            "next_safe_action": next_safe_action,
+        }
+        if readiness_level in {"bootstrap_needed", "unknown"} or memory_status in {"bootstrap_needed", "unknown"}:
+            receipt = attach_public_diagnostic_incident(
+                receipt=receipt,
+                kind="project_memory_not_initialized",
+                resource_kind=resource_kind,
+                recommended_next_call={
+                    "tool": "submit",
+                    "arguments": {
+                        "project": project,
+                        "state": "planning",
+                        "form_id": "inspect_project_readiness",
+                        "payload": {"project": project, "detail": "full"},
+                    },
+                },
+            )
         return {
             "state": state,
             "project": project,
-            "receipt": {
-                "status": "accepted",
-                "message": "Cold-start/readiness query resolved through project readiness.",
-                "resource_kind": resource_kind,
-                "route_source": "simple_get_routes",
-                "route": route_id,
-                "matched_trigger": matched_trigger,
-                "project_id": project,
-                "memory_status": result.get("memory_status") or result.get("readiness_level"),
-                "next_safe_action": next_safe_action,
-            },
+            "receipt": receipt,
             "result": compact_result,
             "simple_interface": simple_interface,
             "next_safe_action": next_safe_action,

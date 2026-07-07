@@ -588,6 +588,8 @@ def _next_safe_action(state: str, forms: list[MailboxFormSpec]) -> str:
         return "Submit run_verification to get the project-approved verification contour."
     if state == "checkpointing" and any(form.id == "finish_task" for form in forms):
         return "Submit finish_task when closeout evidence is ready, or record_progress if work should continue."
+    if state == "planning" and any(form.id == "inspect_project_readiness" for form in forms):
+        return "Submit inspect_project_readiness first for cold-start diagnostics; then use get_task_context or start_task when project memory is ready."
     if state == "planning" and any(form.id == "get_task_context" for form in forms):
         return "Submit get_task_context first; after reviewed task framing satisfies user_approved_start, submit start_task."
     if any(form.id == "start_task" for form in forms):

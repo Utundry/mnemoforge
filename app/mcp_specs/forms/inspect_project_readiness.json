@@ -1,0 +1,35 @@
+{
+  "id": "inspect_project_readiness",
+  "title": "Inspect project readiness",
+  "purpose": "Read project-memory readiness and cold-start diagnostics before assuming the project is initialized.",
+  "states": ["planning", "operator_review"],
+  "mode": "read",
+  "required_fields": ["project"],
+  "optional_fields": ["detail"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project": {"type": "string", "default": "mnemoforge"},
+      "detail": {"type": "string", "enum": ["compact", "full"], "default": "compact"}
+    },
+    "required": ["project"]
+  },
+  "assistance": {
+    "clerk_available": false,
+    "can_use_stenography": false,
+    "default_mode": "none"
+  },
+  "feature_toggles": [],
+  "replacement_form_ids": ["get_task_context"],
+  "postconditions": {
+    "expected_metadata": {
+      "result_kind": "project_readiness",
+      "mutation": false
+    },
+    "forbidden_metadata": {
+      "mutation": [true]
+    },
+    "required_receipt_fields": ["status", "data_ref"]
+  },
+  "public_hint": "Use this for cold start, onboarding, or when project memory may be empty before task work."
+}

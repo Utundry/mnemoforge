@@ -3,6 +3,7 @@
   "purpose": "Declarative ordering and runtime-profile visibility policy for public mailbox forms. This keeps the external MCP surface stateful and LLM-friendly without hardcoding form logistics in Python.",
   "state_priorities": {
     "planning": [
+      "inspect_project_readiness",
       "get_task_context",
       "start_task",
       "create_improvement",
@@ -54,6 +55,7 @@
       "claim_task"
     ],
     "operator_review": [
+      "inspect_project_readiness",
       "get_task_context",
       "diagnostic_inspection",
       "developer_feedback_packet",

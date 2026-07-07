@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from dataclasses import dataclass
@@ -120,6 +121,12 @@ async def build_mailbox_submit_packet(
         "runtime_profile_id": runtime_profile_id,
         "diagnostic": diagnostic,
     }
+    if form_id == "inspect_project_readiness":
+        return await mailbox_inspect_project_readiness(
+            **common,
+            api_base=api_base,
+            dependencies=dependencies,
+        )
     if form_id == "get_task_context":
         return await mailbox_get_task_context(
             **common,
@@ -390,6 +397,97 @@ async def mailbox_review_task_reconciliation(
     packet["next_safe_action"] = packet["receipt"]["next_safe_action"]
     return packet
 
+
+async def mailbox_inspect_project_readiness(
+    *,
+    form,
+    payload: dict[str, Any],
+    state: str,
+    project: str,
+    runtime_profile_id: str,
+    diagnostic: bool,
+    api_base: str,
+    dependencies: MailboxActionDependencies,
+) -> dict[str, Any]:
+    requested_project = str(payload.get("project") or project).strip() or project
+    detail = str(payload.get("detail") or "compact").strip().lower()
+    if detail not in {"compact", "full"}:
+        detail = "compact"
+
+    try:
+        raw = await asyncio.wait_for(
+            dependencies.post(
+                api_base,
+                "/project/readiness",
+                {"project_id": requested_project, "auto_bootstrap_from_memories": False},
+            ),
+            timeout=8.0,
+        )
+    except Exception as exc:
+        raw = {
+            "project_id": requested_project,
+            "readiness_level": "unknown",
+            "memory_status": "unknown",
+            "summary": public_mailbox_error_message(exc),
+            "blocking_gaps": ["Project readiness endpoint did not return a usable response before the public MCP timeout."],
+            "recommended_actions": ["Retry inspect_project_readiness after service dependencies recover."],
+        }
+    result = raw if isinstance(raw, dict) else {"project_id": requested_project, "readiness_level": "unknown"}
+    readiness_level = str(result.get("readiness_level") or "unknown").strip() or "unknown"
+    memory_status = str(result.get("memory_status") or readiness_level).strip() or readiness_level
+    compact_result = {
+        "project_id": result.get("project_id") or requested_project,
+        "readiness_level": result.get("readiness_level"),
+        "readiness_score": result.get("readiness_score"),
+        "summary": result.get("summary"),
+        "memory_status": result.get("memory_status") or result.get("readiness_level"),
+        "blocking_gaps": (result.get("blocking_gaps") or [])[:5],
+        "recommended_actions": (result.get("recommended_actions") or [])[:6],
+        "project_identity": result.get("project_identity"),
+        "snapshot": result.get("snapshot"),
+    }
+    if detail == "full":
+        compact_result = result
+    else:
+        compact_result = {key: value for key, value in compact_result.items() if value not in (None, "", [], {})}
+
+    next_safe_action = (
+        "Review project readiness; if memory is empty or partial, follow recommended bootstrap actions before treating the project as initialized."
+    )
+    actual_metadata = {"result_kind": "project_readiness", "mutation": False, "internal_tool": "get_project_readiness"}
+    health = evaluate_mailbox_postconditions(form, actual_metadata)
+    receipt = {
+        "status": "accepted",
+        "form_id": form.id,
+        "mode": form.mode,
+        "message": "Project readiness inspected.",
+        "resource_kind": "project_readiness",
+        "project_id": requested_project,
+        "data_ref": f"project_readiness:{requested_project}",
+        "readiness_level": readiness_level,
+        "memory_status": memory_status,
+        "next_safe_action": next_safe_action,
+    }
+    if readiness_level in {"bootstrap_needed", "unknown"} or memory_status in {"bootstrap_needed", "unknown"}:
+        receipt = attach_public_diagnostic_incident(
+            receipt=receipt,
+            kind="project_memory_not_initialized",
+            resource_kind="project_readiness",
+            recommended_next_call={
+                "tool": "get",
+                "arguments": {"project": requested_project, "query": "cold start project memory", "detail": "full"},
+            },
+        )
+    packet: dict[str, Any] = {
+        "state": state,
+        "project": requested_project,
+        "receipt": _compact(receipt),
+        "result": compact_result,
+        "next_safe_action": next_safe_action,
+    }
+    if diagnostic:
+        packet["_internal"] = {"visibility": "internal", "actual_metadata": actual_metadata, "postcondition_health": health}
+    return packet
 
 async def mailbox_get_task_context(
     *,

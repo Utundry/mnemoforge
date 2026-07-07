@@ -192,10 +192,10 @@
         "initialize project database",
         "bootstrap this project",
         "project memory cold start",
-        "сделай холодный старт sloplesscode",
-        "холодный старт проекта",
-        "инициализируй память проекта",
-        "инициализируй базу проекта"
+        "sdelay holodny start sloplesscode",
+        "holodny start project",
+        "initsializiruy pamyat proekta",
+        "initsializiruy bazu proekta"
       ],
       "reason": "Cold-start/bootstrap intent maps to project readiness first so the public MCP surface can diagnose project memory state and provide the next safe initialization action."
     },

@@ -13,6 +13,18 @@
         "help:get.project_scope"
       ]
     },
+    "project_memory_not_initialized": {
+      "severity": "medium",
+      "summary": "Project memory appears uninitialized or too sparse for reliable task work.",
+      "why": "Cold-start and onboarding should be explicit. The agent needs a readiness packet, blocking gaps, and a safe initialization path instead of treating an empty read as success.",
+      "likely_source": "The selected project has no indexed components, overview, laws, or task context yet, or the agent omitted the explicit cold-start readiness step.",
+      "resource_kind": "project_readiness",
+      "expand_refs": [
+        "help:get.project_readiness",
+        "help:state.inspect_project_readiness",
+        "help:workflow.project_bootstrap"
+      ]
+    },
     "work_started_without_claim_or_missing_token": {
       "severity": "high",
       "summary": "Task-bound progress was submitted without active ownership proof.",

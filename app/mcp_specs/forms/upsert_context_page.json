@@ -94,5 +94,5 @@
       "review_mode": false
     }
   },
-  "public_hint": "Use this only after task framing approves paged context artifact writes. SQLite is source of truth; Qdrant is derived."
+  "public_hint": "Use this only after task framing approves paged context artifact writes. The context-page store is source of truth; search indexes are derived."
 }

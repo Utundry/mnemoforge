@@ -45,11 +45,11 @@
         "bootstrap this project",
         "bootstrap readiness",
         "onboard this project",
-        "холодный старт",
-        "холодный старт проекта",
-        "инициализируй память проекта",
-        "инициализация памяти проекта",
-        "инициализируй базу проекта"
+        "holodny start",
+        "holodny start project",
+        "initsializiruy pamyat proekta",
+        "initsializatsiya pamyati proekta",
+        "initsializiruy bazu proekta"
       ],
       "scope": "project_context_read"
     },

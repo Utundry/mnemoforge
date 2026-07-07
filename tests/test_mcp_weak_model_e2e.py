@@ -180,7 +180,7 @@ async def test_weak_model_cold_start_query_uses_project_readiness(monkeypatch) -
 
     async def fake_post(api_base: str, path: str, payload: dict):
         assert path == "/project/readiness"
-        assert payload == {"project_id": "alpha"}
+        assert payload == {"project_id": "alpha", "auto_bootstrap_from_memories": False}
         return {
             "project_id": "alpha",
             "readiness_level": "bootstrap_needed",
@@ -203,4 +203,6 @@ async def test_weak_model_cold_start_query_uses_project_readiness(monkeypatch) -
     assert data["receipt"]["route"] == expect["route"]
     assert data["result"]["project_id"] == expect["project_id"]
     assert data["result"]["readiness_level"] == "bootstrap_needed"
+    assert data["receipt"]["diagnostic_incident"]["kind"] == "project_memory_not_initialized"
+    assert data["receipt"]["diagnostic_incident"]["recommended_next_call"]["arguments"]["form_id"] == "inspect_project_readiness"
 

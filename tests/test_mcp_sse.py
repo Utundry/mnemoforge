@@ -3292,6 +3292,70 @@ class TestMcpToolExecution:
         assert "_internal" not in data
         assert any(form["form_id"] == "run_verification" for form in data["forms"])
 
+    async def test_mailbox_submit_inspect_project_readiness_exposes_cold_start_diagnostics(self, monkeypatch):
+        async def fake_post(api_base: str, path: str, payload: dict):
+            assert path == "/project/readiness"
+            assert payload == {"project_id": "alpha", "auto_bootstrap_from_memories": False}
+            return {
+                "project_id": "alpha",
+                "readiness_level": "bootstrap_needed",
+                "readiness_score": 0,
+                "summary": "Project memory needs initialization.",
+                "blocking_gaps": ["No project overview"],
+                "recommended_actions": ["Create a project overview context page"],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "form_id": "inspect_project_readiness",
+                "state": "planning",
+                "project": "alpha",
+                "payload": {"project": "alpha"},
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["data_ref"] == "project_readiness:alpha"
+        assert data["receipt"]["diagnostic_incident"]["kind"] == "project_memory_not_initialized"
+        assert data["result"]["readiness_level"] == "bootstrap_needed"
+
+    async def test_mailbox_submit_inspect_project_readiness_returns_diagnostic_on_timeout(self, monkeypatch):
+        from app.services import mcp_mailbox_actions
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            raise AssertionError("wait_for should bound readiness before awaiting the dependency")
+
+        async def fake_wait_for(awaitable, timeout: float):
+            awaitable.close()
+            assert timeout == 8.0
+            raise TimeoutError("readiness timed out")
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_mailbox_actions.asyncio, "wait_for", fake_wait_for)
+
+        result = await mcp_sse._execute_tool(
+            "submit",
+            {
+                "form_id": "inspect_project_readiness",
+                "state": "planning",
+                "project": "alpha",
+                "payload": {"project": "alpha"},
+            },
+            "http://test",
+        )
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["diagnostic_incident"]["kind"] == "project_memory_not_initialized"
+        assert data["result"]["readiness_level"] == "unknown"
+        assert data["result"]["blocking_gaps"] == [
+            "Project readiness endpoint did not return a usable response before the public MCP timeout."
+        ]
+
     async def test_mailbox_submit_get_task_context_executes_public_read_form(self, monkeypatch):
         async def fake_pull_context(api_base: str, args: dict):
             assert args["project"] == "alpha"
@@ -12826,7 +12890,7 @@ class TestMcpToolExecution:
         )
 
         assert seen["path"] == "/project/readiness"
-        assert seen["payload"] == {"project_id": "alpha"}
+        assert seen["payload"] == {"project_id": "alpha", "auto_bootstrap_from_memories": False}
         assert "Project readiness for alpha: limited_pilot_ready (72/100)" in result
         assert "Coverage: components=1" in result
 
@@ -12864,7 +12928,7 @@ class TestMcpToolExecution:
         )
 
         assert seen["path"] == "/project/bootstrap-checklist"
-        assert seen["payload"] == {"project_id": "alpha"}
+        assert seen["payload"] == {"project_id": "alpha", "auto_bootstrap_from_memories": False}
         assert "Bootstrap checklist for alpha: bootstrap_needed" in result
         assert "components_indexed" in result
 

@@ -1068,7 +1068,10 @@ def build_upsert_knowledge_tree_node_payload(args: dict[str, Any]) -> dict[str, 
 
 
 def build_project_readiness_payload(args: dict[str, Any]) -> dict[str, Any]:
-    return {"project_id": args["project_id"]}
+    return {
+        "project_id": args["project_id"],
+        "auto_bootstrap_from_memories": bool(args.get("auto_bootstrap_from_memories", False)),
+    }
 
 
 def build_project_bootstrap_payload(args: dict[str, Any]) -> dict[str, Any]:
