@@ -1708,7 +1708,7 @@ def test_checkpointing_state_prefers_finish_task_or_progress_forms() -> None:
     assert {"finish_task", "record_progress", "release_task_claim"} <= form_ids
     assert "commit" in forms["record_progress"]["hint"]
     assert "publish" in forms["record_progress"]["hint"]
-    assert "must already have been claimed" in forms["record_progress"]["hint"]
+    assert "auto-start a checkpoint work session" in forms["record_progress"]["hint"]
     assert "diagnostic/operator feedback" in forms["record_progress"]["hint"]
     assert "diagnostic/operator feedback" in forms["finish_task"]["hint"]
     assert "Docker" not in forms["record_progress"]["hint"]

@@ -2405,17 +2405,35 @@ async def mailbox_record_progress(
     stage = str(payload.get("stage") or "in_progress").strip().lower() or "in_progress"
     evidence_classification = classify_evidence_items(_string_list_arg(payload.get("verification")))
     if task_id:
+        owner_session_id = str(payload.get("session_id") or session_id or "")
         lease_guard = dependencies.task_mutation_guard(
             project=project,
             task_id=task_id,
             owner_agent=mailbox_actor(payload),
-            owner_session_id=str(payload.get("session_id") or session_id or ""),
+            owner_session_id=owner_session_id,
             tool_name="mailbox_submit.record_progress",
             work_token=str(payload.get("work_token") or ""),
             work_handle=str(payload.get("work_handle") or ""),
             danger_mode=bool(payload.get("danger_mode", False)),
             danger_confirmation=str(payload.get("danger_confirmation") or ""),
         )
+        auto_work_session: dict[str, Any] | None = None
+        if lease_guard and _can_auto_start_checkpoint_session(lease_guard=lease_guard, payload=payload):
+            auto_start = await _auto_start_checkpoint_session(
+                payload=payload,
+                project=project,
+                task_id=task_id,
+                api_base=api_base,
+                dependencies=dependencies,
+                session_id=session_id,
+                source="mailbox_submit.record_progress",
+            )
+            if str(auto_start.get("status") or "") == "started":
+                auto_work_session = _public_auto_work_session(auto_start)
+                owner_session_id = str(auto_start.get("owner_session_id") or owner_session_id)
+                lease_guard = None
+            elif auto_start:
+                lease_guard = auto_start
         if lease_guard:
             reclaim_call = _record_progress_reclaim_call(
                 payload=payload,
@@ -2460,12 +2478,14 @@ async def mailbox_record_progress(
             result["artifact_key"] = f"task:{project}:{task_id}"
             result["stage"] = stage
             result["evidence_classification"] = evidence_classification
+        if auto_work_session:
+            result["auto_work_session"] = auto_work_session
         _record_closeout_spans_from_progress(
             payload=payload,
             project=project,
             task_id=task_id,
             owner_agent=mailbox_actor(payload),
-            owner_session_id=str(payload.get("session_id") or session_id or ""),
+            owner_session_id=owner_session_id,
         )
         actual_metadata = {
             "result_kind": "progress_recorded",
@@ -2474,7 +2494,7 @@ async def mailbox_record_progress(
             "internal_tool": "project_task_change",
             "route_id": "mailbox.record_progress.task_checkpoint.v1",
         }
-        return build_mailbox_mutation_packet(
+        packet = build_mailbox_mutation_packet(
             form=form,
             payload=payload,
             state=state,
@@ -2484,6 +2504,14 @@ async def mailbox_record_progress(
             runtime_profile_id=runtime_profile_id,
             diagnostic=diagnostic,
         )
+        if auto_work_session:
+            packet["receipt"]["auto_work_session"] = auto_work_session
+            packet["receipt"]["work_id"] = auto_work_session.get("work_id")
+            packet["receipt"]["work_handle"] = auto_work_session.get("work_handle")
+            packet["receipt"]["message"] = "Governed mailbox form executed; an unclaimed task was auto-claimed for this checkpoint."
+            packet["receipt"]["next_safe_action"] = "Continue with the returned work_handle for later checkpoints or finish_task."
+            packet["next_safe_action"] = packet["receipt"]["next_safe_action"]
+        return packet
 
     memory_payload = {
         "content": str(payload["summary"]).strip(),
@@ -2519,6 +2547,71 @@ async def mailbox_record_progress(
 
 def mailbox_actor(payload: dict[str, Any]) -> str:
     return str(payload.get("updated_by") or payload.get("agent_id") or payload.get("owner_agent") or "codex").strip() or "codex"
+
+
+def _can_auto_start_checkpoint_session(*, lease_guard: dict[str, Any], payload: dict[str, Any]) -> bool:
+    return (
+        str(lease_guard.get("error") or "") == "active_claim_required"
+        and not str(payload.get("work_handle") or "").strip()
+        and not str(payload.get("work_token") or "").strip()
+    )
+
+
+async def _auto_start_checkpoint_session(
+    *,
+    payload: dict[str, Any],
+    project: str,
+    task_id: str,
+    api_base: str,
+    dependencies: MailboxActionDependencies,
+    session_id: str | None,
+    source: str,
+) -> dict[str, Any]:
+    owner_agent = mailbox_actor(payload)
+    auto_session_id = str(payload.get("session_id") or session_id or _generated_mailbox_session_id(payload)).strip()
+    args = {
+        "project": project,
+        "task_id": task_id,
+        "owner_agent": owner_agent,
+        "agent_id": owner_agent,
+        "session_id": auto_session_id,
+        "agent_fingerprint": str(payload.get("agent_fingerprint") or "").strip(),
+        "runtime_profile_id": str(payload.get("runtime_profile_id") or "").strip(),
+        "summary": "Auto-created work session for task checkpoint recording.",
+        "reason": "auto_checkpoint_work_session",
+        "source": f"{source}.auto_work_session",
+        "checkpoint_mode": "lightweight",
+        "auto_heartbeat": False,
+        "lease_ttl_seconds": int(payload.get("lease_ttl_seconds") or 900),
+    }
+    result_text = await dependencies.execute_tool("start_task_session", args, api_base, session_id)
+    try:
+        result = json.loads(result_text)
+    except Exception:
+        return {
+            "status": "conflict",
+            "error": "auto_work_session_failed",
+            "claim_allowed": False,
+            "next_safe_action": "Submit start_task before recording task progress.",
+        }
+    return result if isinstance(result, dict) else {}
+
+
+def _public_auto_work_session(result: dict[str, Any]) -> dict[str, Any]:
+    work_session = result.get("work_session") if isinstance(result.get("work_session"), dict) else {}
+    return _compact(
+        {
+            "auto_started": True,
+            "project": result.get("project"),
+            "task_id": result.get("task_id"),
+            "work_id": work_session.get("work_id"),
+            "work_handle": result.get("work_handle"),
+            "owner_agent": result.get("owner_agent"),
+            "owner_session_id": result.get("owner_session_id"),
+            "lease": public_lease_payload(result.get("lease") if isinstance(result.get("lease"), dict) else None),
+            "next_safe_action": "Reuse this work_handle for later checkpoint or finish operations.",
+        }
+    )
 
 
 def _generated_mailbox_session_id(payload: dict[str, Any]) -> str:

@@ -5,7 +5,7 @@
   "states": ["planning", "implementation", "checkpointing", "handoff"],
   "mode": "write",
   "required_fields": ["project", "summary"],
-  "optional_fields": ["task_id", "work_handle", "work_token", "owner_agent", "session_id", "agent_fingerprint", "runtime_profile_id", "changed_files", "verification", "next_step", "stage", "danger_mode", "danger_confirmation"],
+  "optional_fields": ["task_id", "work_handle", "work_token", "owner_agent", "session_id", "agent_fingerprint", "runtime_profile_id", "changed_files", "verification", "next_step", "stage", "danger_mode", "danger_confirmation", "lease_ttl_seconds"],
   "input_schema": {
     "type": "object",
     "properties": {
@@ -27,7 +27,8 @@
         "type": "string",
         "enum": ["planning", "in_progress", "blocked", "interrupted", "handoff", "completed"],
         "default": "in_progress"
-      }
+      },
+      "lease_ttl_seconds": {"type": "integer", "default": 900}
     },
     "required": ["project", "summary"]
   },
@@ -46,5 +47,5 @@
     "forbidden_metadata": {},
     "required_receipt_fields": ["status", "stage"]
   },
-  "public_hint": "Use this after a meaningful implementation, formal code verification, live diagnostic usage, commit, publish, or handoff slice. If task_id is provided, implementation must already have been claimed with start_task and this form must reuse the returned work_handle. Resolve project-specific verification contour from governed project data, and label live working-database checks as diagnostic/operator feedback, not formal code verification."
+  "public_hint": "Use this after a meaningful implementation, formal code verification, live diagnostic usage, commit, publish, or handoff slice. If task_id is provided for an unclaimed task, the server may auto-start a checkpoint work session and return work_handle/work_id; if another active claim exists, reuse the returned work_handle from start_task or coordinate handoff before recording task progress. Resolve project-specific verification contour from governed project data, and label live working-database checks as diagnostic/operator feedback, not formal code verification."
 }

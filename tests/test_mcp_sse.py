@@ -3028,42 +3028,89 @@ class TestMcpToolExecution:
         assert data["receipt"]["evidence_classification"]["kind"] == "live_diagnostic"
         assert data["receipt"]["evidence_classification"]["live_diagnostic"] is True
 
-    async def test_mailbox_submit_record_progress_with_task_requires_owned_claim(self):
-        result = await mcp_sse._execute_tool(
-            "mailbox_submit",
-            {
-                "project": "alpha",
-                "state": "implementation",
-                "form_id": "record_progress",
-                "payload": {
+    async def test_mailbox_submit_record_progress_with_unclaimed_task_auto_starts_work_session(self, monkeypatch):
+        from app.services import stenographer_service as stenographer_mod
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {"id": f"change-{len(posted)}", **payload}
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            result = await mcp_sse._execute_tool(
+                "mailbox_submit",
+                {
                     "project": "alpha",
-                    "task_id": "task-1",
-                    "summary": "Task progress needs lease proof.",
+                    "state": "implementation",
+                    "form_id": "record_progress",
+                    "payload": {
+                        "project": "alpha",
+                        "task_id": "task-1",
+                        "summary": "Task progress can persist on an unclaimed task.",
+                    },
                 },
-            },
-            "http://test",
-        )
+                "http://test",
+            )
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
+        data = json.loads(result)
+        assert data["receipt"]["status"] == "accepted"
+        assert data["receipt"]["auto_work_session"]["auto_started"] is True
+        assert data["receipt"]["work_id"]
+        assert data["receipt"]["work_handle"].startswith("wh1.")
+        assert [item[0] for item in posted] == [
+            "/project/tasks/task-1/changes",
+            "/project/tasks/task-1/changes",
+        ]
+        assert posted[0][1]["source"] == "mailbox_submit.record_progress.auto_work_session"
+        assert posted[1][1]["source"] == "mailbox_submit.record_progress"
+
+    async def test_mailbox_submit_record_progress_with_claimed_task_requires_owned_claim(self, monkeypatch):
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        lease_store.claim(project="alpha", task_id="task-1", owner_agent="other", session_id="other-session")
+
+        async def fail_post(api_base: str, path: str, payload: dict):
+            raise AssertionError(f"unexpected POST path: {path}")
+
+        monkeypatch.setattr(mcp_sse, "_post", fail_post)
+        try:
+            result = await mcp_sse._execute_tool(
+                "mailbox_submit",
+                {
+                    "project": "alpha",
+                    "state": "implementation",
+                    "form_id": "record_progress",
+                    "payload": {
+                        "project": "alpha",
+                        "task_id": "task-1",
+                        "summary": "Task progress needs lease proof.",
+                        "session_id": "wrong-session",
+                    },
+                },
+                "http://test",
+            )
+        finally:
+            lease_store.close()
 
         data = json.loads(result)
         assert data["receipt"]["status"] == "conflict"
         assert "active owned claim" in data["receipt"]["message"]
         assert data["receipt"]["diagnostic_incident"]["kind"] == "work_started_without_claim_or_missing_token"
-        assert data["receipt"]["diagnostic_incident"]["severity"] == "high"
-        assert data["receipt"]["diagnostic_incident"]["likely_source"]
-        assert data["receipt"]["diagnostic_incident"]["safe_next_action"] == data["receipt"]["next_safe_action"]
-        assert "help:submit.start_task" in data["receipt"]["diagnostic_incident"]["expand_refs"]
-        assert data["receipt"]["diagnostic_incident"]["recommended_next_call"]["form_id"] == "start_task"
-        assert "work_handle" in data["receipt"]["next_safe_action"]
-        assert data["receipt"]["recommended_reclaim_call"] == {
-            "tool": "submit",
-            "form_id": "start_task",
-            "state": "planning",
-            "project": "alpha",
-            "payload": {
-                "project": "alpha",
-                "task_id": "task-1",
-            },
-        }
+        assert data["receipt"]["recommended_reclaim_call"] == {}
+        assert "coordinate handoff" in data["receipt"]["next_safe_action"]
 
     async def test_simple_submit_start_task_compact_keeps_work_handle_and_next_forms(self, monkeypatch):
         from app.services import stenographer_service as stenographer_mod
@@ -6461,18 +6508,27 @@ class TestMcpToolExecution:
         assert data["submit_payload"]["summary"] == "Closed handoff evidence gap."
         assert "allow_mutation=true" in data["warnings"][0]
 
-    async def test_project_work_allow_mutation_still_requires_owned_claim(self, monkeypatch):
+    async def test_project_work_allow_mutation_auto_starts_unclaimed_record_result(self, monkeypatch):
         from pathlib import Path
+        from app.services import stenographer_service as stenographer_mod
         from app.services import task_lease_service as lease_mod
 
         lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
         monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
         monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        posted: list[tuple[str, dict]] = []
 
-        async def fail_post(api_base: str, path: str, payload: dict):
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            if path == "/memories":
+                return {"id": "memory-1"}
+            if path == "/project/tasks/task-1/changes":
+                return {"id": f"change-{len(posted)}", "task_id": "task-1"}
             raise AssertionError(f"unexpected POST path: {path}")
 
-        monkeypatch.setattr(mcp_sse, "_post", fail_post)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
         try:
             result = await mcp_sse._execute_tool(
                 "project_work",
@@ -6487,12 +6543,21 @@ class TestMcpToolExecution:
                 },
                 "http://test",
             )
-            data = json.loads(result)
-            assert data["status"] == "executed"
-            assert data["result"]["status"] == "conflict"
-            assert data["result"]["error"] == "active_claim_required"
         finally:
             lease_store.close()
+            stenographer_store.close()
+
+        data = json.loads(result)
+        assert data["status"] == "executed"
+        assert data["result"]["status"] == "recorded"
+        assert data["result"]["auto_work_session"]["auto_started"] is True
+        assert data["result"]["auto_work_session"]["work_handle"].startswith("wh1.")
+        assert "auto-claimed" in data["warnings"][0]
+        assert [item[0] for item in posted] == [
+            "/project/tasks/task-1/changes",
+            "/memories",
+            "/project/tasks/task-1/changes",
+        ]
 
     async def test_project_work_lease_conflict_returns_public_fsm_recovery(self, monkeypatch):
         from pathlib import Path
@@ -8485,6 +8550,56 @@ class TestMcpToolExecution:
         assert posted[1][0] == "/project/tasks/task-1/changes"
         assert "task_checkpoint" in posted[1][1]["tags"]
         assert data["checkpoint"]["stage_evidence"] == "checkpoint:change-1"
+
+    async def test_record_work_result_auto_starts_unclaimed_task_checkpoint_session(self, monkeypatch):
+        from pathlib import Path
+        from app.services import stenographer_service as stenographer_mod
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        stenographer_store = stenographer_mod.StenographerStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(stenographer_mod, "_STORE", stenographer_store)
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            if path == "/memories":
+                return {"id": "memory-1"}
+            if path == "/project/tasks/task-1/changes":
+                return {"id": f"change-{len(posted)}", "task_id": "task-1"}
+            raise AssertionError(f"unexpected POST path: {path}")
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        try:
+            result = await mcp_sse._execute_tool(
+                "record_work_result",
+                {
+                    "project": "alpha",
+                    "task_id": "task-1",
+                    "summary": "Recorded result without a prior explicit claim.",
+                    "changed_files": ["app/routers/mcp_sse.py"],
+                    "verification": ["focused tests passed"],
+                    "acted_by": "codex",
+                },
+                "http://test",
+            )
+        finally:
+            lease_store.close()
+            stenographer_store.close()
+
+        data = json.loads(result)
+        assert data["status"] == "recorded"
+        assert data["auto_work_session"]["auto_started"] is True
+        assert data["auto_work_session"]["work_id"]
+        assert data["auto_work_session"]["work_handle"].startswith("wh1.")
+        assert data["route"] == ["memory", "task_checkpoint"]
+        assert [item[0] for item in posted] == [
+            "/project/tasks/task-1/changes",
+            "/memories",
+            "/project/tasks/task-1/changes",
+        ]
+        assert posted[0][1]["source"] == "record_work_result.auto_work_session"
 
     async def test_record_work_result_auto_matches_newest_open_task(self, monkeypatch):
         requested: list[str] = []

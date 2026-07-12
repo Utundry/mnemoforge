@@ -4370,6 +4370,8 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
     result: Any = None
     semantic_rules = _build_semantic_rule_packet(facade="project_work", route=route, args=args)
     lease_guard: dict[str, Any] | None = None
+    auto_work_session: dict[str, Any] | None = None
+    dispatch_allowed = True
     if (
         allow_mutation
         and not semantic_rules.get("blocked")
@@ -4398,6 +4400,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         )
 
     if route["mutating"] and not allow_mutation:
+        dispatch_allowed = False
         warnings.append(
             "Selected route is mutating; project_work returned a route plan. Set allow_mutation=true only after reviewing the payload and guardrails."
         )
@@ -4411,15 +4414,39 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         }
         executed = True
     elif lease_guard:
-        lease_guard = _project_work_lease_conflict_recovery_packet(
-            lease_guard=lease_guard,
-            route=route,
-            args=args,
-        )
-        result = lease_guard
-        executed = True
-        warnings.append("Mutation blocked by task lease ownership policy; use public FSM recovery from result.recovery_protocol.")
-    elif route["tool"] == "list_open_tasks":
+        if route["tool"] == "record_work_result" and _can_auto_start_checkpoint_session(lease_guard=lease_guard, args=args):
+            auto_start = await _auto_start_checkpoint_work_session(
+                api_base=api_base,
+                project=str((route.get("payload") or {}).get("project") or args.get("project") or "mnemoforge"),
+                task_id=str((route.get("payload") or {}).get("task_id") or args.get("task_id") or ""),
+                args=args,
+                session_id=session_id,
+                source="project_work.record_work_result",
+            )
+            if str(auto_start.get("status") or "") == "started":
+                auto_work_session = _public_auto_work_session_payload(auto_start)
+                route_payload = dict(route.get("payload") or {})
+                route_payload.update(
+                    {
+                        "work_handle": auto_start.get("work_handle"),
+                        "session_id": auto_start.get("owner_session_id"),
+                        "owner_agent": auto_start.get("owner_agent"),
+                        "_auto_work_session": auto_work_session,
+                    }
+                )
+                route = {**route, "payload": route_payload}
+                lease_guard = None
+                warnings.append("Unclaimed task was auto-claimed so checkpoint/result recording can persist.")
+        if lease_guard:
+            lease_guard = _project_work_lease_conflict_recovery_packet(
+                lease_guard=lease_guard,
+                route=route,
+                args=args,
+            )
+            result = lease_guard
+            executed = True
+            warnings.append("Mutation blocked by task lease ownership policy; use public FSM recovery from result.recovery_protocol.")
+    if dispatch_allowed and not executed and route["tool"] == "list_open_tasks":
         requested_type = str(route["payload"].get("artifact_type") or route["payload"].get("type") or "all").strip().lower()
         retrieval_limit = (
             max(int(route["payload"].get("limit", 50)), 100)
@@ -4433,30 +4460,30 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         result = _annotate_open_tasks_with_claims(result, route["payload"])
         result = _annotate_open_tasks_with_assignment_safety(result, route["payload"])
         executed = True
-    elif route["tool"] == "pull_task_context":
+    elif dispatch_allowed and not executed and route["tool"] == "pull_task_context":
         result = await _build_pull_task_context_payload(api_base, route["payload"])
         executed = True
-    elif route["tool"] == "start_task_session":
+    elif dispatch_allowed and not executed and route["tool"] == "start_task_session":
         result_text = await _execute_tool("start_task_session", route["payload"], api_base, session_id=session_id)
         try:
             result = json.loads(result_text)
         except Exception:
             result = result_text
         executed = True
-    elif route["tool"] == "finish_task_session":
+    elif dispatch_allowed and not executed and route["tool"] == "finish_task_session":
         result_text = await _execute_tool("finish_task_session", route["payload"], api_base, session_id=session_id)
         try:
             result = json.loads(result_text)
         except Exception:
             result = result_text
         executed = True
-    elif route["tool"] == "get_task_execution_context":
+    elif dispatch_allowed and not executed and route["tool"] == "get_task_execution_context":
         result = await _post(api_base, "/task-execution-context", build_task_execution_context_payload(route["payload"]))
         executed = True
-    elif route["tool"] == "get_project_readiness":
+    elif dispatch_allowed and not executed and route["tool"] == "get_project_readiness":
         result = await _post(api_base, "/project/readiness", build_project_readiness_payload(route["payload"]))
         executed = True
-    elif route["tool"] == "task_capture_review":
+    elif dispatch_allowed and not executed and route["tool"] == "task_capture_review":
         task_id = str(route["payload"].get("task_id") or "").strip()
         if not task_id:
             warnings.append("Task capture review requires task_id; call pull_task_context or provide task_id before reviewing drafts.")
@@ -4468,7 +4495,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
                 f"/project/tasks/{quote(task_id, safe='')}/capture-candidates?project={project}&limit={limit}",
             )
             executed = True
-    elif route["tool"] in {"approve_checkpoint_draft", "reject_checkpoint_draft"}:
+    elif dispatch_allowed and not executed and route["tool"] in {"approve_checkpoint_draft", "reject_checkpoint_draft"}:
         if not str(route["payload"].get("draft_id") or "").strip():
             warnings.append("Checkpoint draft approval/rejection requires draft_id.")
         else:
@@ -4478,14 +4505,14 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
             except Exception:
                 result = result_text
             executed = True
-    elif route["tool"] == "record_work_result":
+    elif dispatch_allowed and not executed and route["tool"] == "record_work_result":
         result_text = await _execute_tool("record_work_result", route["payload"], api_base, session_id=session_id)
         try:
             result = json.loads(result_text)
         except Exception:
             result = result_text
         executed = True
-    elif route["tool"] == "mailbox_submit":
+    elif dispatch_allowed and not executed and route["tool"] == "mailbox_submit":
         submit_args = dict(route["payload"])
         submit_payload = dict(submit_args.get("payload")) if isinstance(submit_args.get("payload"), dict) else {}
         result = await _build_mailbox_submit_packet(
@@ -4495,14 +4522,14 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
             session_id=session_id,
         )
         executed = True
-    elif route["tool"] == "project_rules":
+    elif dispatch_allowed and not executed and route["tool"] == "project_rules":
         result_text = await _execute_tool("project_rules", route["payload"], api_base)
         try:
             result = json.loads(result_text)
         except Exception:
             result = result_text
         executed = True
-    else:
+    elif dispatch_allowed and not executed:
         warnings.append("No confident project-work route was found; use tool_recommend or clarify the intent.")
 
     next_safe_action = "Review the selected route and execute the submit_payload if it matches the operator intent."
@@ -7454,6 +7481,73 @@ def _task_mutation_requires_owned_claim(
     )
 
 
+def _can_auto_start_checkpoint_session(*, lease_guard: dict[str, Any], args: dict[str, Any]) -> bool:
+    return (
+        str(lease_guard.get("error") or "") == "active_claim_required"
+        and not str(args.get("work_handle") or "").strip()
+        and not str(args.get("work_token") or "").strip()
+    )
+
+
+async def _auto_start_checkpoint_work_session(
+    *,
+    api_base: str,
+    project: str,
+    task_id: str,
+    args: dict[str, Any],
+    session_id: str | None,
+    source: str,
+) -> dict[str, Any]:
+    owner_agent = str(args.get("owner_agent") or args.get("agent_id") or args.get("acted_by") or "codex").strip() or "codex"
+    auto_session_id = str(args.get("session_id") or session_id or f"auto-checkpoint-{uuid.uuid4().hex[:12]}").strip()
+    start_args = {
+        "project": project or "mnemoforge",
+        "task_id": task_id,
+        "owner_agent": owner_agent,
+        "agent_id": owner_agent,
+        "session_id": auto_session_id,
+        "agent_fingerprint": str(args.get("agent_fingerprint") or "").strip(),
+        "runtime_profile_id": str(args.get("runtime_profile_id") or "").strip(),
+        "summary": "Auto-created work session for task checkpoint recording.",
+        "reason": "auto_checkpoint_work_session",
+        "source": f"{source}.auto_work_session",
+        "checkpoint_mode": "lightweight",
+        "auto_heartbeat": False,
+        "lease_ttl_seconds": int(args.get("lease_ttl_seconds") or 900),
+    }
+    return await start_task_session_action(
+        args=start_args,
+        api_base=api_base,
+        session_id=session_id,
+        dependencies=TaskSessionActionDependencies(
+            post=_post,
+            get_session_identity_defaults=_get_session_identity_defaults,
+        ),
+    )
+
+
+def _public_auto_work_session_payload(result: dict[str, Any]) -> dict[str, Any]:
+    work_session = result.get("work_session") if isinstance(result.get("work_session"), dict) else {}
+    lease = result.get("lease") if isinstance(result.get("lease"), dict) else {}
+    public_lease = dict(lease)
+    public_lease.pop("work_token_hash", None)
+    return {
+        key: value
+        for key, value in {
+            "auto_started": True,
+            "project": result.get("project"),
+            "task_id": result.get("task_id"),
+            "work_id": work_session.get("work_id"),
+            "work_handle": result.get("work_handle"),
+            "owner_agent": result.get("owner_agent"),
+            "owner_session_id": result.get("owner_session_id"),
+            "lease": public_lease or None,
+            "next_safe_action": "Reuse this work_handle for later checkpoint or finish operations.",
+        }.items()
+        if value not in (None, "", [], {})
+    }
+
+
 def _semantic_tokens(text: str) -> set[str]:
     cleaned = re.sub(r"[^a-z0-9_]+", " ", str(text or "").lower())
     return {token for token in cleaned.split() if len(token) >= 3}
@@ -8733,6 +8827,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
     elif name == "record_work_result":
         target = await _resolve_work_result_target(api_base, args)
         project = target["project"]
+        auto_work_session = args.get("_auto_work_session") if isinstance(args.get("_auto_work_session"), dict) else None
         if target.get("task_id"):
             lease_guard = _task_mutation_requires_owned_claim(
                 project=project,
@@ -8745,6 +8840,27 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                 danger_mode=bool(args.get("danger_mode", False)),
                 danger_confirmation=str(args.get("danger_confirmation") or ""),
             )
+            if lease_guard and _can_auto_start_checkpoint_session(lease_guard=lease_guard, args=args):
+                auto_start = await _auto_start_checkpoint_work_session(
+                    api_base=api_base,
+                    project=project,
+                    task_id=str(target["task_id"]),
+                    args=args,
+                    session_id=session_id,
+                    source="record_work_result",
+                )
+                if str(auto_start.get("status") or "") == "started":
+                    auto_work_session = _public_auto_work_session_payload(auto_start)
+                    args = {
+                        **args,
+                        "work_handle": auto_start.get("work_handle"),
+                        "session_id": auto_start.get("owner_session_id"),
+                        "owner_agent": auto_start.get("owner_agent"),
+                        "_auto_work_session": auto_work_session,
+                    }
+                    lease_guard = None
+                elif auto_start:
+                    lease_guard = auto_start
             if lease_guard:
                 lease_guard = _annotate_structured_tool_payload(name, lease_guard)
                 return json.dumps(lease_guard, indent=2, ensure_ascii=False)
@@ -8871,6 +8987,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                         "source_span_ids": clerk_draft.get("source_span_ids"),
                     },
                     "checkpoint": None,
+                    "auto_work_session": auto_work_session,
                     "created_issue": created_issue,
                     "resolved_artifact": None,
                     "warnings": warnings,
@@ -8932,6 +9049,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             "target": target,
             "memory": {"id": memory_result.get("id")},
             "checkpoint": checkpoint_result,
+            "auto_work_session": auto_work_session,
             "created_issue": created_issue,
             "resolved_artifact": resolve_result,
             "warnings": warnings,
