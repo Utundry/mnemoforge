@@ -6552,6 +6552,14 @@ class TestMcpToolExecution:
         assert data["result"]["status"] == "recorded"
         assert data["result"]["auto_work_session"]["auto_started"] is True
         assert data["result"]["auto_work_session"]["work_handle"].startswith("wh1.")
+        assert data["receipt"]["status"] == "recorded"
+        assert data["receipt"]["route_tool"] == "record_work_result"
+        assert data["receipt"]["task_id"] == "task-1"
+        assert data["receipt"]["work_id"]
+        assert data["receipt"]["work_handle"].startswith("wh1.")
+        assert data["receipt"]["auto_work_session"]["auto_started"] is True
+        assert data["agent_action"]["receipt"]["work_handle"] == data["receipt"]["work_handle"]
+        assert "work_handle" in data["receipt"]["next_safe_action"]
         assert "auto-claimed" in data["warnings"][0]
         assert [item[0] for item in posted] == [
             "/project/tasks/task-1/changes",
@@ -6667,6 +6675,12 @@ class TestMcpToolExecution:
             assert data["action_status"] == "executed"
             assert data["selected_route"]["tool"] == "finish_task_session"
             assert data["result"]["status"] == "finished", data["result"]
+            assert data["receipt"] == {
+                "status": "finished",
+                "route_tool": "finish_task_session",
+                "task_id": "task-1",
+            }
+            assert data["agent_action"]["receipt"] == data["receipt"]
             assert data["submit_payload"]["work_token"] == "[REDACTED]"
             assert calls[0][1]["work_token"] == work_token
             assert calls

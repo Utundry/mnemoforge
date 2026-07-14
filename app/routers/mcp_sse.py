@@ -102,6 +102,7 @@ from app.services.mcp_simple_surface_actions import (
     build_simple_submit_response,
 )
 from app.services.mcp_response_filter import filter_mcp_response, response_profile_from_args
+from app.services.mcp_lifecycle_receipts import build_lifecycle_receipt, public_auto_work_session_payload
 from app.services.mcp_project_work_routing import (
     PROJECT_WORK_ROUTE_CATALOG as _PROJECT_WORK_ROUTE_CATALOG,
     project_work_needs_llm_disambiguation as _project_work_needs_llm_disambiguation,
@@ -4424,7 +4425,7 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
                 source="project_work.record_work_result",
             )
             if str(auto_start.get("status") or "") == "started":
-                auto_work_session = _public_auto_work_session_payload(auto_start)
+                auto_work_session = public_auto_work_session_payload(auto_start)
                 route_payload = dict(route.get("payload") or {})
                 route_payload.update(
                     {
@@ -4556,6 +4557,9 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
     )
     await _session_observe(session_id, "project_work:route", {"route_telemetry": route_telemetry})
     maintenance_suggestion = _project_work_maintenance_suggestion(route=route, args=args)
+    lifecycle_receipt = build_lifecycle_receipt(route_tool=str(route.get("tool") or ""), result=result, warnings=warnings)
+    if lifecycle_receipt:
+        action_card["receipt"] = lifecycle_receipt
 
     payload_project = route["payload"].get("project") or route["payload"].get("project_id") or args.get("project") or "mnemoforge"
     payload = {
@@ -4591,6 +4595,8 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         "next_safe_action": next_safe_action,
         "weak_model_guardrail": weak_model_guardrail,
     }
+    if lifecycle_receipt:
+        payload["receipt"] = lifecycle_receipt
     if isinstance(route.get("claim_filter_resolution"), dict):
         payload["selected_route"]["claim_filter_resolution"] = route["claim_filter_resolution"]
     route_incident = _route_diagnostic_incident_for_payload(facade="project_work", route=route, args=args)
@@ -7526,27 +7532,6 @@ async def _auto_start_checkpoint_work_session(
     )
 
 
-def _public_auto_work_session_payload(result: dict[str, Any]) -> dict[str, Any]:
-    work_session = result.get("work_session") if isinstance(result.get("work_session"), dict) else {}
-    lease = result.get("lease") if isinstance(result.get("lease"), dict) else {}
-    public_lease = dict(lease)
-    public_lease.pop("work_token_hash", None)
-    return {
-        key: value
-        for key, value in {
-            "auto_started": True,
-            "project": result.get("project"),
-            "task_id": result.get("task_id"),
-            "work_id": work_session.get("work_id"),
-            "work_handle": result.get("work_handle"),
-            "owner_agent": result.get("owner_agent"),
-            "owner_session_id": result.get("owner_session_id"),
-            "lease": public_lease or None,
-            "next_safe_action": "Reuse this work_handle for later checkpoint or finish operations.",
-        }.items()
-        if value not in (None, "", [], {})
-    }
-
 
 def _semantic_tokens(text: str) -> set[str]:
     cleaned = re.sub(r"[^a-z0-9_]+", " ", str(text or "").lower())
@@ -8850,7 +8835,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
                     source="record_work_result",
                 )
                 if str(auto_start.get("status") or "") == "started":
-                    auto_work_session = _public_auto_work_session_payload(auto_start)
+                    auto_work_session = public_auto_work_session_payload(auto_start)
                     args = {
                         **args,
                         "work_handle": auto_start.get("work_handle"),

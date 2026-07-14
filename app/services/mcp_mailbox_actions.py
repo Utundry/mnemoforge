@@ -25,6 +25,7 @@ from app.services.mcp_mailbox import (
     mailbox_form_state_names,
 )
 from app.services.mcp_tool_contracts import build_report_task_checkpoint_payload
+from app.services.mcp_lifecycle_receipts import public_auto_work_session_payload
 from app.services.mcp_workflow_specs import load_named_json_spec, load_route_catalog_spec
 from app.services.mcp_simple_read_actions import (
     PublicRefDependencies,
@@ -2429,7 +2430,7 @@ async def mailbox_record_progress(
                 source="mailbox_submit.record_progress",
             )
             if str(auto_start.get("status") or "") == "started":
-                auto_work_session = _public_auto_work_session(auto_start)
+                auto_work_session = public_auto_work_session_payload(auto_start)
                 owner_session_id = str(auto_start.get("owner_session_id") or owner_session_id)
                 lease_guard = None
             elif auto_start:
@@ -2595,23 +2596,6 @@ async def _auto_start_checkpoint_session(
             "next_safe_action": "Submit start_task before recording task progress.",
         }
     return result if isinstance(result, dict) else {}
-
-
-def _public_auto_work_session(result: dict[str, Any]) -> dict[str, Any]:
-    work_session = result.get("work_session") if isinstance(result.get("work_session"), dict) else {}
-    return _compact(
-        {
-            "auto_started": True,
-            "project": result.get("project"),
-            "task_id": result.get("task_id"),
-            "work_id": work_session.get("work_id"),
-            "work_handle": result.get("work_handle"),
-            "owner_agent": result.get("owner_agent"),
-            "owner_session_id": result.get("owner_session_id"),
-            "lease": public_lease_payload(result.get("lease") if isinstance(result.get("lease"), dict) else None),
-            "next_safe_action": "Reuse this work_handle for later checkpoint or finish operations.",
-        }
-    )
 
 
 def _generated_mailbox_session_id(payload: dict[str, Any]) -> str:
