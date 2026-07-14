@@ -1,13 +1,13 @@
 {
   "public_fsm_closeout_recovery": {
     "name": "public_fsm_closeout_recovery",
-    "reason": "project_work hit the lease guard; recover through public FSM forms instead of retrying identity guesses.",
+    "reason": "project_work hit the lease guard; the guard protects an active task workspace, so recover through public FSM forms instead of retrying identity guesses.",
     "preserves_lease_enforcement": true,
     "requires_active_work_handle": true,
     "known_work_handle_placeholder": "<known_work_handle>",
     "latest_active_work_handle_placeholder": "<latest_active_work_handle_from_state_or_claim>",
-    "next_safe_action": "Use the public FSM recovery path: call state with task_id and a known work_handle; if state, claim_task, start_task, or another recovery response returns a newer active work_handle, use that latest server-returned active work_handle for run_verification and finish_task. Do not retry project_work with guessed agent_id/session_id values, and do not force stale handles.",
-    "handle_rule": "Start recovery with a known work_handle for continuity. After any server response, prefer the latest active work_handle returned by state, claim_task, or start_task.",
+    "next_safe_action": "Use the public FSM recovery path: call state with task_id and a known work_handle; if state, claim_task, start_task, or another recovery response returns a newer active work_handle, use that latest server-returned active work_handle for run_verification and finish_task. Treat the claim as workspace protection for the active worker: do not retry project_work with guessed agent_id/session_id values, and do not force stale handles.",
+    "handle_rule": "Start recovery with a known work_handle for continuity. After any server response, prefer the latest active work_handle returned by state, claim_task, or start_task; if the task belongs to another active claim, coordinate handoff or wait for TTL/release.",
     "recommended_next_call": {
       "tool": "state",
       "arguments": {
@@ -27,7 +27,7 @@
           "task_id": "{task_id}",
           "work_handle": "{known_work_handle}"
         },
-        "why": "Recover the server-authoritative FSM state, available forms, and claim-continuity cues."
+        "why": "Recover the server-authoritative FSM state, available forms, and claim-continuity cues without bypassing the active workspace lock."
       },
       {
         "step": "record_or_resolve_verification",

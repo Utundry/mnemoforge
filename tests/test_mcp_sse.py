@@ -6597,6 +6597,7 @@ class TestMcpToolExecution:
             assert data["next_safe_action"].startswith("Use the public FSM recovery path")
             assert "latest server-returned active work_handle" in data["next_safe_action"]
             assert "do not force stale handles" in data["next_safe_action"]
+            assert "workspace protection" in data["next_safe_action"]
             assert "guessed agent_id/session_id" in data["next_safe_action"]
             assert data["agent_action"]["recommended_next_call"] == data["result"]["recommended_next_call"]
             assert data["result"]["recommended_next_call"]["tool"] == "state"

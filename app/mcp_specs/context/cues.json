@@ -54,6 +54,16 @@
       "full_text": "After a meaningful implementation, verification, commit, publish, or handoff slice, record a durable progress checkpoint through the public MCP surface. Use record_progress when a task is not claimed or finish_task when closing a claimed task. Chat-only summaries and git commits are not sufficient project memory because the next agent must be able to resume from governed MCP state."
     },
     {
+      "id": "law:claim_as_workspace_protection",
+      "severity": "P0",
+      "scope": ["implementation", "checkpointing", "handoff", "workflow", "task_lifecycle"],
+      "title": "Claim protects active work",
+      "summary": "Claim before implementation so other agents do not interfere and the system can checkpoint, recover, and finish your work.",
+      "expand_ref": "cue:law:claim_as_workspace_protection",
+      "trigger_terms": ["claim", "start task", "workspace protection", "work_handle", "checkpoint", "finish", "lease conflict", "handoff", "concurrent agents"],
+      "full_text": "Claim is not permission to work; it is a coordination lock that protects your active task workspace from concurrent agents. Start or claim the task before implementation, keep the returned work_handle, record progress after meaningful slices, and finish with closeout evidence. If a lease conflict appears, assume it is protecting someone else's active work: recover with the valid work_handle, coordinate handoff, wait for TTL/release, or choose another task."
+    },
+    {
       "id": "tool:semantic_adaptation",
       "severity": "P1",
       "scope": ["routing", "language", "learning"],

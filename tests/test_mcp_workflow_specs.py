@@ -939,6 +939,7 @@ def test_context_cues_surface_generic_adherence_without_project_runtime_details(
     claim = next(cue for cue in cues if cue["cue"] == "adherence:claim_before_mutation")
     assert claim["authority_layer"] == "canonical_principle"
     assert claim["source"] == "adherence_spec"
+    assert "protect" in claim["summary"].lower()
     assert "full_text" not in claim
     assert "Docker" not in str(claim)
 
@@ -1691,7 +1692,8 @@ def test_mailbox_state_packet_orders_forms_by_workflow_not_filename() -> None:
     assert form_ids.index("claim_task") > form_ids.index("start_task")
     forms = {form["form_id"]: form for form in packet["forms"]}
     assert "cold start" in forms["inspect_project_readiness"]["hint"]
-    assert "before any real implementation work" in forms["start_task"]["hint"]
+    assert "before real implementation work" in forms["start_task"]["hint"]
+    assert "protects your working context" in forms["start_task"]["hint"]
     assert "user_approved_start" in forms["start_task"]["hint"]
     assert packet["hidden_forms"] == []
 
@@ -1709,6 +1711,7 @@ def test_checkpointing_state_prefers_finish_task_or_progress_forms() -> None:
     assert "commit" in forms["record_progress"]["hint"]
     assert "publish" in forms["record_progress"]["hint"]
     assert "auto-start a checkpoint work session" in forms["record_progress"]["hint"]
+    assert "protecting another agent's workspace" in forms["record_progress"]["hint"]
     assert "diagnostic/operator feedback" in forms["record_progress"]["hint"]
     assert "diagnostic/operator feedback" in forms["finish_task"]["hint"]
     assert "Docker" not in forms["record_progress"]["hint"]

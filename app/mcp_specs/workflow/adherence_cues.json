@@ -21,11 +21,11 @@
       "authority_layer": "canonical_principle",
       "source": "adherence_spec",
       "scope": ["implementation", "checkpointing", "handoff", "task_lifecycle"],
-      "title": "Claim work before mutating task state",
-      "summary": "Mutating task work needs an owned task claim and continuation token before progress or finish actions.",
+      "title": "Claim work to protect your workspace",
+      "summary": "Claiming before implementation protects the active worker from concurrent agents and preserves continuity for progress, recovery, and finish actions.",
       "expand_ref": "cue:adherence:claim_before_mutation",
-      "trigger_terms": ["claim", "start task", "mutate", "mutation", "record progress", "finish task", "task state", "ownership", "token"],
-      "full_text": "Before mutating task state, claim or start the task through the governed public workflow and keep the returned continuation token. The token is ownership proof for progress, finish, recovery, and auditable concurrency."
+      "trigger_terms": ["claim", "start task", "workspace protection", "mutate", "mutation", "record progress", "finish task", "task state", "ownership", "work_handle", "concurrency"],
+      "full_text": "Before mutating task state or doing implementation work, claim or start the task through the governed public workflow and keep the returned work_handle. The claim is not permission to work and not bureaucracy; it is a coordination lock that protects your workspace from concurrent agents while giving the server enough continuity to checkpoint, recover, and finish correctly. If another active claim exists, do not bypass it: coordinate handoff, wait for TTL/release, or use the public recovery path with a valid work_handle."
     },
     {
       "id": "adherence:product_surface_practical_validation",

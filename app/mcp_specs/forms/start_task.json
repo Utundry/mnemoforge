@@ -1,7 +1,7 @@
 {
   "id": "start_task",
   "title": "Start task session",
-  "purpose": "Claim a task lease, start a work session, and record an initial lightweight checkpoint through one public mailbox form.",
+  "purpose": "Claim a task lease as a protective workspace lock, start a work session, and record an initial lightweight checkpoint through one public mailbox form.",
   "states": ["planning", "implementation"],
   "mode": "transition",
   "required_fields": ["project", "task_id"],
@@ -62,5 +62,5 @@
     "forbidden_metadata": {},
     "required_receipt_fields": ["status", "lease", "work_handle", "work_session"]
   },
-  "public_hint": "Use this before any real implementation work only after the latest user-visible task framing has been reviewed and user_approved_start is satisfied, unless explicit_autonomous_mode is active. Provide approved_framing when possible. Approval does not survive scope drift. The returned work_handle is ownership proof for checkpoints, finish, recovery, and concurrency-safe audit; legacy work_token remains internal/diagnostic."
+  "public_hint": "Use this before real implementation work, after the latest user-visible task framing has been reviewed and user_approved_start is satisfied, unless explicit_autonomous_mode is active. The claim is not permission friction: it protects your working context from concurrent agents and gives the server continuity for checkpoints, recovery, and finish_task. Provide approved_framing when possible. Approval does not survive scope drift. Keep the returned work_handle and reuse it for record_progress, finish_task, and recovery; legacy work_token remains internal/diagnostic."
 }

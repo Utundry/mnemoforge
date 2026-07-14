@@ -1,7 +1,7 @@
 {
   "id": "claim_task",
   "title": "Claim or reclaim task",
-  "purpose": "Claim a task lease or safely reclaim the same task after session loss using agent_fingerprint and work_token.",
+  "purpose": "Claim a task lease as a protective workspace lock, or safely reclaim the same task after session loss using continuity evidence.",
   "states": ["planning", "implementation", "handoff"],
   "mode": "transition",
   "required_fields": ["project", "task_id"],
@@ -35,5 +35,5 @@
     "forbidden_metadata": {},
     "required_receipt_fields": ["status", "lease"]
   },
-  "public_hint": "Use this before editing a task; keep the returned work_token for future checkpoint, finish, or same-fingerprint reclaim."
+  "public_hint": "Use this before editing or mutating a task when start_task is not the right public form. A claim protects your work from concurrent agents; it does not grant editing authority by itself. Keep the returned work_handle for checkpoint, finish, and same-fingerprint recovery; legacy work_token is only for compatibility/diagnostic recovery."
 }

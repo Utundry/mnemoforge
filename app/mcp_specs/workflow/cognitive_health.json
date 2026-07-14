@@ -35,9 +35,9 @@
       "severity": "P0",
       "nudge_priority": 90,
       "stage_scope": ["implementation", "checkpointing", "handoff"],
-      "question": "Do I have an owned task claim and continuation token before mutating task state?",
+      "question": "Have I claimed the task and kept the work_handle before implementation or task-state mutation?",
       "expected_cues": ["adherence:claim_before_mutation"],
-      "risk_if_failed": "Agent may record progress, finish, or mutate task state without ownership proof."
+      "risk_if_failed": "Agent may lose checkpoint/finish continuity or interfere with another agent's protected workspace."
     },
     {
       "id": "verification_boundary_awareness",

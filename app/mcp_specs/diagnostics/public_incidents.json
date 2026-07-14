@@ -27,9 +27,9 @@
     },
     "work_started_without_claim_or_missing_token": {
       "severity": "high",
-      "summary": "Task-bound progress was submitted without active ownership proof.",
-      "why": "Implementation work should begin only after start_task returns work_token, so the system can provide stage guidance, enforce ownership, and keep an auditable work trail.",
-      "likely_source": "No active owned claim was found, or the work_token/session identity did not match the active claim.",
+      "summary": "Task-bound progress needs an owned workspace claim or continuation handle.",
+      "why": "Claiming before work protects the active agent from concurrent interference and gives the system enough continuity to checkpoint, recover, and finish correctly.",
+      "likely_source": "No active owned claim was found, the supplied work_handle/work_token did not match, or another active claim is protecting a different agent's workspace.",
       "resource_kind": "task_progress",
       "expand_refs": [
         "help:submit.start_task",
@@ -100,9 +100,9 @@
     },
     "completion_requires_owned_claim": {
       "severity": "high",
-      "summary": "Completed task closure requires an owned task claim and completion evidence.",
-      "why": "Marking work completed is stronger than archiving obsolete work. The system requires ownership proof before accepting completed status.",
-      "likely_source": "The agent tried to close a task as completed through a cleanup form instead of claiming the task and submitting finish_task with work_token.",
+      "summary": "Completed task closure requires the active workspace claim and completion evidence.",
+      "why": "finish_task releases the protective task claim after writing durable closeout evidence; without an owned work_handle the system cannot know which active worker is completing the task.",
+      "likely_source": "The agent tried to complete work without first starting/claiming the task or without reusing the returned work_handle.",
       "resource_kind": "task_completion",
       "expand_refs": [
         "help:submit.start_task",
