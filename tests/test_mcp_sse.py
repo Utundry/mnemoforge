@@ -956,7 +956,9 @@ class TestMcpToolExecution:
                             "lease_id": "lease-1",
                             "task_id": args["task_id"],
                             "status": "released",
+                            "work_token": "secret-token",
                             "work_token_hash": "secret",
+                            "work_token_preview": "secret-preview",
                         },
                     },
                     "work_session": {"work_id": "work-1"},
@@ -997,7 +999,9 @@ class TestMcpToolExecution:
         assert packet["receipt"]["status"] == "finished"
         assert packet["receipt"]["release"]["status"] == "released"
         assert packet["receipt"]["evidence_classification"]["kind"] == "code_verification"
+        assert "work_token" not in packet["receipt"]["release"]["lease"]
         assert "work_token_hash" not in packet["receipt"]["release"]["lease"]
+        assert "work_token_preview" not in packet["receipt"]["release"]["lease"]
         assert "_internal" not in packet
 
     async def test_initialize_explicit_full_overrides_small_window_inference(self):

@@ -25,7 +25,7 @@ from app.services.mcp_mailbox import (
     mailbox_form_state_names,
 )
 from app.services.mcp_tool_contracts import build_report_task_checkpoint_payload
-from app.services.mcp_lifecycle_receipts import public_auto_work_session_payload
+from app.services.mcp_lifecycle_receipts import public_auto_work_session_payload, public_lease_payload
 from app.services.mcp_workflow_specs import load_named_json_spec, load_route_catalog_spec
 from app.services.mcp_simple_read_actions import (
     PublicRefDependencies,
@@ -696,11 +696,6 @@ def _rule_ref_from_item(item: dict[str, Any]) -> str:
     project = str(item.get("project") or "").strip()
     return f"law:{project}:{law_id}" if project else f"law:{law_id}"
 
-
-def public_lease_payload(lease: dict[str, Any] | None) -> dict[str, Any]:
-    public = dict(lease or {})
-    public.pop("work_token_hash", None)
-    return public
 
 
 def public_mailbox_error_message(exc: Exception) -> str:
