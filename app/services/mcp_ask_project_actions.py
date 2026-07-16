@@ -54,6 +54,8 @@ def select_ask_project_lexical_route(
         "guardrail": "",
     }
 
+    lifecycle_anomaly_lookup = lifecycle_anomaly_repair_query(text)
+
     open_work_lookup = any(
         term in text
         for term in (
@@ -76,7 +78,14 @@ def select_ask_project_lexical_route(
         )
     )
 
-    if extract_task_id_like(question):
+    if lifecycle_anomaly_lookup:
+        route.update(
+            facade="project_work",
+            reason="Question asks for completed-but-open lifecycle anomaly repair candidates; route to project_work read-only repair finder.",
+            confidence=0.9,
+        )
+        route["structural_match"] = True
+    elif extract_task_id_like(question):
         route.update(
             facade="project_context",
             reason="Question contains a full or partial task id; route to project_context task lookup.",
@@ -154,6 +163,19 @@ def select_ask_project_lexical_route(
     if route["facade"] == "project_context":
         route["payload"].pop("allow_mutation", None)
     return route
+
+
+def lifecycle_anomaly_repair_query(text: str) -> bool:
+    if "completed but open" in text or "completed-but-open" in text:
+        return True
+    if "done but still open" in text or "implemented but not closed" in text:
+        return True
+    if "closeable completed tail" in text:
+        return True
+    if "выполненные" in text and "открытые" in text:
+        return True
+    lifecycle_terms = ("lifecycle anomal", "repair candidates", "closeable tail")
+    return any(term in text for term in lifecycle_terms) and any(term in text for term in ("completed", "done", "implemented"))
 
 
 def lexical_text(question: str) -> str:

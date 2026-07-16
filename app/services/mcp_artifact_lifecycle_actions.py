@@ -10,6 +10,7 @@ from app.services.mcp_tool_contracts import (
     build_defer_learning_candidate_payload,
     build_list_artifacts_query,
     build_list_learning_candidates_query,
+    build_list_closeable_completed_tail_payload,
     build_merge_canonicals_payload,
     build_reconcile_completed_checkpoints_payload,
     build_reject_learning_candidate_payload,
@@ -121,6 +122,12 @@ async def execute_artifact_lifecycle_action(
     if name == "reconcile_completed_checkpoints":
         payload = build_reconcile_completed_checkpoints_payload(args)
         data = await dependencies.post(api_base, "/artifacts/reconcile-completed-checkpoints", payload)
+        data = dependencies.annotate_payload(name, data)
+        return json.dumps(data, indent=2, ensure_ascii=False)
+
+    if name == "list_closeable_completed_tail":
+        payload = build_list_closeable_completed_tail_payload(args)
+        data = await dependencies.post(api_base, "/artifacts/lifecycle-anomalies/completed-but-open", payload)
         data = dependencies.annotate_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
 

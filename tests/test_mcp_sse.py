@@ -1165,6 +1165,11 @@ class TestMcpToolExecution:
         tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "reconcile_completed_checkpoints")
         props = tool["inputSchema"]["properties"]
         assert props["close"]["default"] is False
+        anomaly_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "list_closeable_completed_tail")
+        anomaly_props = anomaly_tool["inputSchema"]["properties"]
+        assert "close" not in anomaly_props
+        assert anomaly_props["close_policy"]["default"] == "strict"
+        assert anomaly_props["limit"]["maximum"] == 500
         assert props["close_policy"]["default"] == "strict"
         assert "project" in props
         review_tool = next(tool for tool in mcp_sse.TOOLS if tool["name"] == "review_completed_checkpoint_scope")
@@ -8086,6 +8091,29 @@ class TestMcpToolExecution:
         assert route["intent_type"] == "adherence_context"
         assert route["structural_match"] is True
 
+    async def test_ask_project_completed_but_open_anomalies_route_to_project_work(self, monkeypatch):
+        original_execute = mcp_sse._execute_tool
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute(tool_name: str, args: dict, api_base: str, session_id=None):
+            calls.append((tool_name, args))
+            return "SloplessCode answer\nAnswer: project_work executed route list_closeable_completed_tail."
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute)
+        text = await original_execute(
+            "ask_project",
+            {
+                "project": "alpha",
+                "question": "List completed but open lifecycle anomalies. Return compact read-only repair candidates only; do not close anything.",
+            },
+            "http://test",
+        )
+
+        assert "list_closeable_completed_tail" in text
+        assert calls[0][0] == "project_work"
+        assert calls[0][1]["allow_mutation"] is False
+        assert calls[0][1]["intent"].startswith("List completed but open lifecycle anomalies")
+
     async def test_ask_project_routes_next_priority_to_project_work(self, monkeypatch):
         original_execute = mcp_sse._execute_tool
         calls: list[tuple[str, dict]] = []
@@ -9827,6 +9855,50 @@ class TestMcpToolExecution:
         assert '"stage": "testing"' in result
         assert '"feedback_expected": true' in result
 
+    async def test_list_closeable_completed_tail_tool_posts_read_only_anomaly_request(self, monkeypatch):
+        posted: list[tuple[str, dict]] = []
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            posted.append((path, payload))
+            return {
+                "project": payload["project"],
+                "anomaly_type": "completed_but_open",
+                "scanned_tasks": 1,
+                "candidate_count": 1,
+                "safe_auto_repair_count": 1,
+                "review_required_count": 0,
+                "candidates": [
+                    {
+                        "task_id": "tail-1",
+                        "task_artifact_key": "task:alpha:tail-1",
+                        "safe_auto_repair": True,
+                        "recommended_repair": "close_as_completed",
+                        "evidence_refs": ["task:alpha:tail-1", "checkpoint:change-1"],
+                    }
+                ],
+                "safe_candidates": ["task:alpha:tail-1"],
+                "needs_operator_review": [],
+            }
+
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        result = await mcp_sse._execute_tool(
+            "list_closeable_completed_tail",
+            {"project": "alpha", "limit": 5},
+            "http://test",
+        )
+
+        assert posted == [
+            (
+                "/artifacts/lifecycle-anomalies/completed-but-open",
+                {"project": "alpha", "close": False, "close_policy": "strict", "limit": 5},
+            )
+        ]
+        assert '"safe_auto_repair_count": 1' in result
+        assert '"stage": "testing"' in result
+        assert '"feedback_expected": true' in result
+
     async def test_review_completed_checkpoint_scope_tool_posts_scope_review(self, monkeypatch):
         posted: list[tuple[str, dict]] = []
 
@@ -11138,6 +11210,86 @@ class TestMcpToolExecution:
             assert '"status": "complete"' in result
         finally:
             lease_store.close()
+
+    async def test_pull_task_context_includes_active_sqlite_context_pages(self, monkeypatch):
+        from app.services import task_lease_service as lease_mod
+        from app.services.context_page_store import get_context_page_store
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        task_id = "task-pages-context"
+        parent_ref = f"task:alpha:{task_id}"
+        store = get_context_page_store()
+        entry = store.create_page(
+            parent_ref=parent_ref,
+            project="alpha",
+            page_kind="entry",
+            page_index=1,
+            title="Framing",
+            summary="SQLite framing summary",
+            content="Authoritative task framing content",
+            created_by="tester",
+        )
+        archived = store.create_page(
+            parent_ref=parent_ref,
+            project="alpha",
+            page_kind="evidence",
+            page_index=2,
+            summary="Archived evidence",
+            content="Archived context must not appear",
+            created_by="tester",
+        )
+        store.archive_page(page_id=archived["page_id"], updated_by="tester")
+
+        async def fake_get(api_base: str, path: str):
+            if path == f"/project/tasks/{task_id}/statement?project=alpha":
+                return {
+                    "task": {"task_id": task_id, "title": "Paged context task", "status": "planning"},
+                    "quality": {"capture_quality": "partial", "missing_artifacts": [], "grounded_by": ["task_description"]},
+                    "capture_review": {"pending_count": 0, "promoted_count": 0},
+                    "next_actions": [{"priority": "high", "action": "Use context page framing.", "source_kind": "context_page"}],
+                }
+            if path == f"/project/tasks/{task_id}/changes?project=alpha&limit=100":
+                return []
+            raise AssertionError(path)
+
+        async def fake_post(api_base: str, path: str, payload: dict):
+            assert path == "/models/handoff/list"
+            return {"handoffs": []}
+
+        monkeypatch.setattr(mcp_sse, "_get", fake_get)
+        monkeypatch.setattr(mcp_sse, "_post", fake_post)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+
+        try:
+            full_result = await mcp_sse._execute_tool(
+                "pull_task_context",
+                {"project": "alpha", "task_id": task_id, "agent_id": "codex", "detail": "full"},
+                "http://test",
+            )
+            full_data = json.loads(full_result)
+            compact_result = await mcp_sse._execute_tool(
+                "pull_task_context",
+                {"project": "alpha", "task_id": task_id, "agent_id": "codex"},
+                "http://test",
+            )
+            compact_data = json.loads(compact_result)
+        finally:
+            lease_store.close()
+
+        assert full_data["context_pages"]["source_of_truth"] == "sqlite"
+        assert full_data["context_pages"]["count"] == 1
+        assert full_data["context_pages"]["pages"][0]["page_ref"] == entry["page_ref"]
+        assert full_data["context_pages"]["pages"][0]["content"] == "Authoritative task framing content"
+        assert archived["page_ref"] not in full_data["replay_bundle"]["project_context_refs"]["context_pages"]
+        assert full_data["replay_bundle"]["project_context_refs"]["context_pages"] == [entry["page_ref"]]
+        assert full_data["available_layers"]["context_pages"] == {
+            "available": True,
+            "count": 1,
+            "request": {"detail": "full"},
+        }
+        assert compact_data["context_pages"]["pages"][0]["page_ref"] == entry["page_ref"]
+        assert "content" not in compact_data["context_pages"]["pages"][0]
 
     async def test_checkpoint_replay_completeness_roundtrip_through_mcp_state(self, client, monkeypatch):
         from app.routers import models as models_router

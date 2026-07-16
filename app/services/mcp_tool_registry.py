@@ -56,6 +56,7 @@ _TOOL_STAGES: dict[str, str] = {
     "operational_tray": "testing",
     "upsert_knowledge_tree_node": "testing",
     "get_task_execution_context": "testing",
+    "list_closeable_completed_tail": "testing",
     "reconcile_completed_checkpoints": "testing",
     "review_completed_checkpoint_scope": "testing",
     "review_completed_checkpoint_scopes": "testing",

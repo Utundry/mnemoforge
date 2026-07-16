@@ -15,6 +15,7 @@ from app.services.mcp_task_lease_actions import (
 from app.services.mcp_task_session_actions import (
     TaskSessionActionDependencies,
     finish_task_session_action,
+    normalize_finish_task_status,
     start_task_session_action,
 )
 from app.services.mcp_work_session_actions import (
@@ -34,6 +35,15 @@ from app.services.task_lease_service import TaskLeaseConflict, TaskLeaseStore, T
 
 def _now() -> datetime:
     return datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc)
+
+
+def test_finish_task_status_aliases_are_loaded_from_form_spec() -> None:
+    assert normalize_finish_task_status("done") == "completed"
+    assert normalize_finish_task_status("success") == "completed"
+    assert normalize_finish_task_status("stuck") == "blocked"
+    assert normalize_finish_task_status("errored") == "failed"
+    assert normalize_finish_task_status("paused") == "interrupted"
+    assert normalize_finish_task_status("aborted") == "cancelled"
 
 
 async def test_mcp_task_lease_action_claim_uses_session_identity_defaults(monkeypatch) -> None:
@@ -449,6 +459,7 @@ async def test_mcp_finish_task_session_action_finishes_work_and_releases(monkeyp
                 "agent_id": "codex",
                 "session_id": "sess-finish",
                 "work_id": work.work_id,
+                "status": "done",
                 "work_token": claim.work_token,
                 "summary": "Finished from service.",
                 "changed_files": ["app/services/mcp_task_session_actions.py"],

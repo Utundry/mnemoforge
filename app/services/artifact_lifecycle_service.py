@@ -8,6 +8,8 @@ from app.models.artifact_lifecycle import (
     ArtifactLifecycleScopeReviewBatchRequest,
     ArtifactLifecycleScopeReviewDecision,
     CompletedCheckpointArtifactCandidate,
+    LifecycleAnomalyRepairCandidate,
+    LifecycleAnomalyRepairResponse,
 )
 from app.models.unified_artifact import UnifiedArtifactResolveRequest
 from app.services.project_tasks_store import get_project_tasks_store
@@ -273,6 +275,84 @@ def _attach_scope_review_batch_suggestion(response: ArtifactLifecycleReconcileRe
         default_reason="Review completed checkpoint next_step scopes suggested by reconciliation.",
         acted_by="codex",
         source="reconcile_completed_checkpoints_suggestion",
+    )
+
+def _completed_but_open_repair_candidate(
+    candidate: CompletedCheckpointArtifactCandidate,
+) -> LifecycleAnomalyRepairCandidate:
+    evidence_refs = [candidate.task_artifact_key]
+    if candidate.checkpoint_change_id:
+        evidence_refs.append(f"checkpoint:{candidate.checkpoint_change_id}")
+    if candidate.linked_artifact_key:
+        evidence_refs.append(candidate.linked_artifact_key)
+
+    safe = bool(candidate.closure_eligible and not candidate.close_blockers)
+    if safe:
+        recommended_repair = "close_as_completed"
+        recommended_close_status = "completed"
+        reason = "A completed/done task checkpoint exists and strict close blockers are absent."
+    elif candidate.recommendation == "continue_same_artifact":
+        recommended_repair = "continue_same_artifact"
+        recommended_close_status = ""
+        reason = "The completion checkpoint still points to remaining work on the same artifact."
+    elif candidate.recommendation == "review_next_step_scope_before_closing":
+        recommended_repair = "review_next_step_scope"
+        recommended_close_status = ""
+        reason = "The completion checkpoint has a next_step whose scope was not explicitly reviewed."
+    elif candidate.recommendation == "operator_review_before_closing":
+        recommended_repair = "operator_review"
+        recommended_close_status = ""
+        reason = "The completion checkpoint explicitly requires operator review before closing."
+    else:
+        recommended_repair = "review_before_close"
+        recommended_close_status = ""
+        reason = "Completion evidence exists, but strict auto-repair evidence is insufficient."
+
+    return LifecycleAnomalyRepairCandidate(
+        project=candidate.project,
+        task_id=candidate.task_id,
+        task_artifact_key=candidate.task_artifact_key,
+        current_status=candidate.task_status,
+        safe_auto_repair=safe,
+        recommended_repair=recommended_repair,
+        recommended_close_status=recommended_close_status,
+        reason=reason,
+        evidence_refs=evidence_refs,
+        checkpoint_change_id=candidate.checkpoint_change_id,
+        checkpoint_summary=candidate.summary,
+        next_step=candidate.next_step,
+        next_step_scope=candidate.next_step_scope,
+        next_step_scope_source=candidate.next_step_scope_source,
+        close_blockers=list(candidate.close_blockers),
+        linked_artifact_key=candidate.linked_artifact_key,
+        linked_status=candidate.linked_status,
+    )
+
+
+async def list_completed_but_open_anomalies(
+    *,
+    project: str,
+    close_policy: str = "strict",
+    limit: int = 100,
+) -> LifecycleAnomalyRepairResponse:
+    reconciliation = await reconcile_completed_checkpoint_artifacts(
+        project=project,
+        close=False,
+        close_policy=close_policy,
+        limit=limit,
+    )
+    candidates = [_completed_but_open_repair_candidate(candidate) for candidate in reconciliation.candidates]
+    safe_candidates = [candidate.task_artifact_key for candidate in candidates if candidate.safe_auto_repair]
+    needs_operator_review = [candidate.task_artifact_key for candidate in candidates if not candidate.safe_auto_repair]
+    return LifecycleAnomalyRepairResponse(
+        project=reconciliation.project,
+        scanned_tasks=reconciliation.scanned_tasks,
+        candidate_count=len(candidates),
+        safe_auto_repair_count=len(safe_candidates),
+        review_required_count=len(needs_operator_review),
+        candidates=candidates,
+        safe_candidates=safe_candidates,
+        needs_operator_review=needs_operator_review,
     )
 
 

@@ -331,6 +331,80 @@ async def test_reconcile_completed_checkpoints_reports_without_closing_by_defaul
 
 
 @pytest.mark.asyncio
+async def test_completed_but_open_anomaly_list_is_read_only_and_compact(client_with_unified_artifacts) -> None:
+    client, _fake_queue = client_with_unified_artifacts
+
+    for task_id, checkpoint_lines in (
+        (
+            "anomaly-safe-close",
+            [
+                "[task_checkpoint]",
+                "Checkpoint stage: completed",
+                "Checkpoint status: done",
+                "Summary: Fully verified.",
+            ],
+        ),
+        ("ordinary-open-task", []),
+        (
+            "anomaly-needs-review",
+            [
+                "[task_checkpoint]",
+                "Checkpoint stage: completed",
+                "Checkpoint status: done",
+                "Summary: Done, but follow-up needs review.",
+                "Next step: Inspect the follow-up scope.",
+            ],
+        ),
+    ):
+        create = await client.post(
+            "/api/v1/project/tasks",
+            json={
+                "task_id": task_id,
+                "project": "proj-router",
+                "title": f"Task {task_id}",
+                "description": "Lifecycle anomaly fixture.",
+                "agent_id": "architect",
+                "status": "active",
+            },
+        )
+        assert create.status_code == 201, create.text
+        if checkpoint_lines:
+            change = await client.post(
+                f"/api/v1/project/tasks/{task_id}/changes",
+                json={
+                    "project": "proj-router",
+                    "change_type": "note",
+                    "content": "\n".join(checkpoint_lines),
+                    "why": "Final checkpoint recorded.",
+                    "agent_id": "architect",
+                    "tags": ["task_checkpoint", "task_stage:completed", "task_status:done"],
+                },
+            )
+            assert change.status_code == 201, change.text
+
+    report = await client.post(
+        "/api/v1/artifacts/lifecycle-anomalies/completed-but-open",
+        json={"project": "proj-router"},
+    )
+    assert report.status_code == 200, report.text
+    body = report.json()
+    by_task = {item["task_id"]: item for item in body["candidates"]}
+    assert set(by_task) == {"anomaly-safe-close", "anomaly-needs-review"}
+    assert by_task["anomaly-safe-close"]["safe_auto_repair"] is True
+    assert by_task["anomaly-safe-close"]["recommended_repair"] == "close_as_completed"
+    assert by_task["anomaly-safe-close"]["recommended_close_status"] == "completed"
+    assert by_task["anomaly-needs-review"]["safe_auto_repair"] is False
+    assert by_task["anomaly-needs-review"]["recommended_repair"] == "review_next_step_scope"
+    assert body["safe_candidates"] == ["task:proj-router:anomaly-safe-close"]
+    assert body["needs_operator_review"] == ["task:proj-router:anomaly-needs-review"]
+    assert body["safe_auto_repair_count"] == 1
+    assert body["review_required_count"] == 1
+
+    fetched = await client.get("/api/v1/artifacts/task:proj-router:anomaly-safe-close")
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["status"] == "active"
+
+
 async def test_reconcile_completed_checkpoints_closes_only_strictly_eligible_tasks(client_with_unified_artifacts) -> None:
     client, _fake_queue = client_with_unified_artifacts
 

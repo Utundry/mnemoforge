@@ -20,6 +20,7 @@ from app.models.artifact_lifecycle import (
     ArtifactLifecycleReconcileResponse,
     ArtifactLifecycleScopeReviewBatchRequest,
     ArtifactLifecycleScopeReviewBatchResponse,
+    LifecycleAnomalyRepairResponse,
     ArtifactLifecycleScopeReviewRequest,
     ArtifactLifecycleScopeReviewResponse,
 )
@@ -27,6 +28,7 @@ from app.models.project_task import ProjectTaskChangeCreate
 from app.services.artifact_lifecycle_service import (
     build_checkpoint_scope_review_content,
     reconcile_completed_checkpoint_artifacts,
+    list_completed_but_open_anomalies,
 )
 from app.services.embedding_gateway import embed_query
 from app.services.project_identity_service import project_lookup_ids, resolve_project_id
@@ -271,6 +273,26 @@ async def reconcile_completed_checkpoints(body: ArtifactLifecycleReconcileReques
             detail=f"Failed to reconcile completed checkpoint artifacts: {str(e)}",
         )
 
+@router.post("/lifecycle-anomalies/completed-but-open", response_model=LifecycleAnomalyRepairResponse)
+async def list_completed_but_open_lifecycle_anomalies(body: ArtifactLifecycleReconcileRequest):
+    """Report completed-but-open lifecycle anomalies without closing artifacts."""
+    if body.close:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Completed-but-open anomaly listing is read-only; use close_task/resolve_artifact after reviewing safe candidates.",
+        )
+    try:
+        return await list_completed_but_open_anomalies(
+            project=body.project,
+            close_policy=body.close_policy,
+            limit=body.limit,
+        )
+    except Exception as e:
+        logger.error("Error listing completed-but-open lifecycle anomalies: %s", e)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list completed-but-open lifecycle anomalies: {str(e)}",
+        )
 
 @router.post("/completed-checkpoint-scope-review", response_model=ArtifactLifecycleScopeReviewResponse)
 async def record_completed_checkpoint_scope_review(

@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
 from app.services.mcp_tool_contracts import build_report_task_checkpoint_payload
+from app.services.mcp_workflow_specs import load_named_json_spec
 from app.services.stenographer_service import ProtocolViolation, get_stenographer_store
 from app.services.stenographer_tag_parser import record_tagged_spans_from_payload
 from app.services.task_lease_service import (
@@ -33,6 +34,38 @@ class TaskSessionActionDependencies:
     post: PostCallback
     get_session_identity_defaults: SessionIdentityCallback
     get: GetCallback | None = None
+
+
+def _finish_task_status_aliases() -> dict[str, str]:
+    try:
+        spec = load_named_json_spec("forms/finish_task.json")
+    except Exception:
+        spec = {}
+    properties = ((spec.get("input_schema") or {}).get("properties") or {}) if isinstance(spec, dict) else {}
+    status_schema = properties.get("status") if isinstance(properties, dict) else {}
+    aliases = status_schema.get("aliases") if isinstance(status_schema, dict) else {}
+    enum_values = status_schema.get("enum") if isinstance(status_schema, dict) else []
+    normalized = {
+        str(value).strip().casefold(): str(value).strip()
+        for value in enum_values
+        if str(value).strip()
+    }
+    if isinstance(aliases, dict):
+        normalized.update(
+            {
+                str(alias).strip().casefold(): str(canonical).strip()
+                for alias, canonical in aliases.items()
+                if str(alias).strip() and str(canonical).strip()
+            }
+        )
+    return normalized
+
+
+def normalize_finish_task_status(value: Any) -> str:
+    raw = str(value or "completed").strip()
+    if not raw:
+        return "completed"
+    return _finish_task_status_aliases().get(raw.casefold(), raw)
 
 
 async def start_task_session_action(
@@ -216,6 +249,7 @@ async def finish_task_session_action(
 ) -> dict[str, Any]:
     project = str(args.get("project") or "mnemoforge").strip() or "mnemoforge"
     task_id = str(args["task_id"]).strip()
+    finish_status = normalize_finish_task_status(args.get("status"))
     owner_agent = str(args.get("owner_agent") or args.get("agent_id") or "codex").strip() or "codex"
     lease_session_id = str(args.get("session_id") or session_id or "").strip()
     work_token = str(args.get("work_token") or "").strip()
@@ -367,7 +401,7 @@ async def finish_task_session_action(
     )
 
     source = "finish_task_session"
-    if str(args.get("status") or "completed") == "completed":
+    if finish_status == "completed":
         for item in _string_list_arg(args.get("verification")):
             session_store.record_span(
                 project=project,
@@ -416,7 +450,7 @@ async def finish_task_session_action(
         if work_token_valid or continuity_reclaim:
             work = session_store.end_work_session_by_work_id(
                 work_id=work_id,
-                status=str(args.get("status") or "completed"),
+                status=finish_status,
                 result=str(args.get("result") or ""),
             )
         else:
@@ -425,7 +459,7 @@ async def finish_task_session_action(
                 task_id=task_id,
                 agent_id=owner_agent,
                 session_id=lease_session_id,
-                status=str(args.get("status") or "completed"),
+                status=finish_status,
                 result=str(args.get("result") or ""),
             )
     except ProtocolViolation as exc:

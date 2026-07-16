@@ -205,3 +205,19 @@ def test_initialize_project_memory_routes_to_project_readiness() -> None:
     assert route["tool"] == "get_project_readiness"
     assert route["payload"]["project"] == "alpha"
     assert route["payload"]["project_id"] == "alpha"
+
+def test_completed_but_open_anomaly_routes_to_read_only_repair_finder() -> None:
+    route = project_work_route(
+        {"project": "alpha", "intent": "find completed but open lifecycle anomalies", "limit": 5},
+        scorer_meta={
+            "backend_requested": "lexical",
+            "backend_used": "lexical",
+            "llm_attempted": False,
+            "fallback_reason": "",
+        },
+    )
+
+    assert route["intent_type"] == "lifecycle_anomaly_repair"
+    assert route["tool"] == "list_closeable_completed_tail"
+    assert route["mutating"] is False
+    assert route["payload"] == {"project": "alpha", "close_policy": "strict", "limit": 5}

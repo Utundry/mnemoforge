@@ -512,15 +512,25 @@ def compact_task_resource(result: dict[str, Any], *, tool_surface_role: ToolSurf
     task = result.get("task") if isinstance(result.get("task"), dict) else {}
     latest = result.get("latest_checkpoint") if isinstance(result.get("latest_checkpoint"), dict) else {}
     readiness = result.get("execution_readiness") if isinstance(result.get("execution_readiness"), dict) else {}
+    replay = result.get("replay_completeness") if isinstance(result.get("replay_completeness"), dict) else {}
+    drill = result.get("replay_drill") if isinstance(result.get("replay_drill"), dict) else {}
+    task_id = result.get("task_id") or task.get("task_id")
+    project = str(result.get("project") or "mnemoforge").strip() or "mnemoforge"
     is_done = str(result.get("status") or "").strip().lower() == "done" or str(task.get("status") or "").strip().lower() == "done"
     recommendation = public_recommendation_for_tool(
         result.get("recommended_first_tool"),
         result,
         tool_surface_role=tool_surface_role,
     )
-    return {
+    compact = {
+        "agent_envelope": {
+            "profile": "compact_task_context",
+            "details_available": True,
+            "detail_next_call": _task_detail_next_call(project=project, task_id=str(task_id or "")),
+            "omitted_detail_refs": _omitted_task_context_refs(result),
+        },
         "user_explanation": user_explanation_for_task(result, state=state),
-        "task_id": result.get("task_id") or task.get("task_id"),
+        "task_id": task_id,
         "status": result.get("status"),
         "title": task.get("title") or result.get("title"),
         "task_status": task.get("status"),
@@ -537,13 +547,131 @@ def compact_task_resource(result: dict[str, Any], *, tool_surface_role: ToolSurf
             "missing_evidence": readiness.get("missing_evidence") or [],
             "recommended_next_action": readiness.get("recommended_next_action"),
         } if readiness else None,
+        "replay_completeness": {
+            "status": replay.get("status"),
+            "missing_fields": replay.get("missing_fields") or [],
+            "can_continue_without_user": replay.get("can_continue_without_user"),
+        } if replay else None,
+        "recovery_context": {
+            "status": drill.get("status"),
+            "first_tool": drill.get("first_tool"),
+            "first_action": drill.get("first_action"),
+        } if drill else None,
+        "continuity": _task_continuity_summary(result),
+        "safety_summary": _task_safety_summary(result),
+        "token_footprint": _task_token_footprint(result),
         "stenography_coverage": result.get("stenography_coverage"),
         "recommended_first_tool": recommendation.get("tool"),
         "recommended_next_call": recommendation,
         "next_safe_action": result.get("next_safe_action"),
     }
+    return {key: value for key, value in compact.items() if value not in (None, "", [], {})}
 
 
+def _task_detail_next_call(*, project: str, task_id: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {"project": project, "detail": "full"}
+    if task_id:
+        payload["task_id"] = task_id
+    return {
+        "tool": "submit",
+        "form_id": "get_task_context",
+        "payload": payload,
+        "why": "Request full task context only when compact fields or expand refs are insufficient.",
+    }
+
+
+def _omitted_task_context_refs(result: dict[str, Any]) -> list[str]:
+    refs: list[str] = []
+    for key in (
+        "replay_bundle",
+        "stenography_protocol",
+        "project_identity",
+        "available_layers",
+        "resume_handoffs",
+        "next_actions",
+        "context_cues",
+        "context_pages",
+    ):
+        value = result.get(key)
+        if value not in (None, "", [], {}):
+            refs.append(f"result.{key}")
+    return refs
+
+
+def _task_token_footprint(result: dict[str, Any]) -> dict[str, Any]:
+    budget = result.get("token_budget") if isinstance(result.get("token_budget"), dict) else {}
+    if not budget:
+        return {}
+    return {
+        key: budget.get(key)
+        for key in (
+            "estimated_tokens",
+            "budget_tokens",
+            "within_budget",
+            "overflow_tokens",
+            "overflow_reason",
+        )
+        if budget.get(key) not in (None, "", [], {})
+    }
+
+
+def _compact_mapping(value: Any, fields: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {key: value.get(key) for key in fields if value.get(key) not in (None, "", [], {})}
+
+
+def _task_continuity_summary(result: dict[str, Any]) -> dict[str, Any]:
+    summary = _compact_mapping(
+        result,
+        (
+            "work_handle",
+            "work_id",
+            "claim_status",
+            "claim_allowed",
+            "same_fingerprint_reclaim",
+            "work_session_resumed",
+        ),
+    )
+    lease = _compact_mapping(
+        result.get("lease") or result.get("continuity_lease") or result.get("occupied_by"),
+        ("lease_id", "status", "owner_agent", "owner_session_id", "session_id", "expires_at"),
+    )
+    if lease:
+        summary["lease"] = lease
+    work_session = _compact_mapping(result.get("work_session"), ("work_id", "status", "stage"))
+    if work_session:
+        summary["work_session"] = work_session
+    reclaim = _compact_mapping(result.get("continuity_reclaim"), ("status", "lease_id", "reason"))
+    if reclaim:
+        summary["continuity_reclaim"] = reclaim
+    recommended_reclaim = _compact_mapping(result.get("recommended_reclaim_call"), ("tool", "form_id", "why"))
+    if recommended_reclaim:
+        summary["recommended_reclaim_call"] = recommended_reclaim
+    return summary
+
+
+def _task_safety_summary(result: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    edit_authority = _compact_mapping(
+        result.get("edit_authority"),
+        ("status", "severity", "editing_allowed", "authority_source", "reason", "next_safe_action"),
+    )
+    if edit_authority:
+        summary["edit_authority"] = edit_authority
+    weak_guardrail = _compact_mapping(
+        result.get("weak_model_guardrail"),
+        ("mutation_executed", "confirmation_required", "do_not_claim_created", "plain_instruction"),
+    )
+    if weak_guardrail:
+        summary["weak_model_guardrail"] = weak_guardrail
+    recovery_protocol = _compact_mapping(
+        result.get("recovery_protocol"),
+        ("status", "next_tool", "requires_active_work_handle", "known_work_handle", "latest_active_work_handle"),
+    )
+    if recovery_protocol:
+        summary["recovery_protocol"] = recovery_protocol
+    return summary
 def public_recommendation_for_tool(
     tool_name: Any,
     result: dict[str, Any],
@@ -586,4 +714,3 @@ def _context_response_requested(args: dict[str, Any]) -> bool:
 
 def _full_detail_requested(args: dict[str, Any]) -> bool:
     return str(args.get("detail") or "compact").strip().lower() == "full" or bool(args.get("diagnostic", False))
-

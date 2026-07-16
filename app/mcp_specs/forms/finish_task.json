@@ -16,7 +16,7 @@
       "owner_agent": {"type": "string", "default": "codex"},
       "session_id": {"type": "string"},
       "work_token": {"type": "string"},
-      "status": {"type": "string", "enum": ["completed", "blocked", "failed", "interrupted", "cancelled"], "default": "completed"},
+      "status": {"type": "string", "enum": ["completed", "blocked", "failed", "interrupted", "cancelled"], "default": "completed", "aliases": {"done": "completed", "complete": "completed", "finished": "completed", "finish": "completed", "success": "completed", "succeeded": "completed", "successful": "completed", "ok": "completed", "stuck": "blocked", "blocked_by_issue": "blocked", "error": "failed", "errored": "failed", "failure": "failed", "broken": "failed", "stopped": "interrupted", "paused": "interrupted", "pause": "interrupted", "aborted": "cancelled", "canceled": "cancelled", "cancelled": "cancelled"}},
       "summary": {"type": "string"},
       "result": {"type": "string"},
       "changed_files": {"type": "array", "items": {"type": "string"}},

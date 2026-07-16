@@ -164,6 +164,7 @@ def test_default_workflow_specs_validate() -> None:
     assert summary["artifact_navigation_tool_contracts"] == [
         "get_artifact",
         "list_artifacts",
+        "list_closeable_completed_tail",
         "list_open_tasks",
         "resolve_artifact",
         "reopen_artifact",
@@ -600,6 +601,7 @@ def test_artifact_navigation_tool_contracts_are_declarative() -> None:
 
     assert contracts["get_artifact"].inputSchema["required"] == ["artifact_key"]
     assert contracts["list_artifacts"].inputSchema["properties"]["limit"]["maximum"] == 100
+    assert contracts["list_closeable_completed_tail"].inputSchema["properties"]["limit"]["maximum"] == 500
     assert contracts["list_open_tasks"].inputSchema["properties"]["claim_filter"]["default"] == "available"
     assert contracts["list_open_tasks"].inputSchema["properties"]["assignment_filter"]["enum"] == [
         "all",
@@ -2031,3 +2033,81 @@ def test_compact_task_resource_keeps_stenography_coverage() -> None:
 
     assert compact["stenography_coverage"] == {"status": "none", "span_count": 0}
 
+
+
+def test_compact_task_resource_returns_agent_envelope_and_recovery_summary() -> None:
+    raw = {
+        "project": "alpha",
+        "task_id": "task-1",
+        "status": "ready",
+        "task": {"title": "Huge task", "status": "planning"},
+        "recommended_first_tool": "record_task_checkpoint",
+        "next_safe_action": "Record verification before finishing.",
+        "work_handle": "wh1.example",
+        "lease": {"lease_id": "lease-1", "status": "active", "owner_agent": "codex", "work_token": "secret"},
+        "edit_authority": {
+            "status": "approved_implementation",
+            "severity": "P0",
+            "editing_allowed": True,
+            "authority_source": "explicit_autonomous_mode",
+            "verbose_policy": "x" * 1000,
+        },
+        "execution_readiness": {
+            "status": "incomplete",
+            "missing_evidence": ["verification_evidence"],
+            "recommended_next_action": "Record verification evidence.",
+        },
+        "replay_completeness": {
+            "status": "incomplete",
+            "missing_fields": ["latest_checkpoint.summary"],
+            "can_continue_without_user": False,
+        },
+        "replay_drill": {
+            "status": "blocked",
+            "first_tool": "record_task_checkpoint",
+            "first_action": "Record missing replay completeness fields before continuing.",
+            "tool_arguments": {"project": "alpha", "task_id": "task-1", "content": "x" * 1000},
+        },
+        "token_budget": {
+            "estimated_tokens": 2479,
+            "budget_tokens": 1600,
+            "within_budget": False,
+            "overflow_tokens": 879,
+            "overflow_reason": "Compact response preserves required replay and execution context.",
+        },
+        "replay_bundle": {"task_history": [{"content": "x" * 1000}]},
+        "stenography_protocol": {"snippets": [{"text": "x" * 1000}]},
+        "project_identity": {"known_aliases": [{"alias": "mnemoforge"}]},
+        "available_layers": {"task_history": {"available": True}},
+        "next_actions": [{"action": "x" * 500}],
+        "context_pages": {"pages": [{"content": "x" * 1000}]},
+    }
+
+    compact = compact_task_resource(
+        raw,
+        tool_surface_role=lambda _tool: "public_entrypoint",
+        state="planning",
+    )
+
+    envelope = compact["agent_envelope"]
+    assert envelope["profile"] == "compact_task_context"
+    assert envelope["detail_next_call"]["tool"] == "submit"
+    assert envelope["detail_next_call"]["form_id"] == "get_task_context"
+    assert envelope["detail_next_call"]["payload"] == {"project": "alpha", "detail": "full", "task_id": "task-1"}
+    assert "result.replay_bundle" in envelope["omitted_detail_refs"]
+    assert "result.stenography_protocol" in envelope["omitted_detail_refs"]
+    assert compact["replay_completeness"]["status"] == "incomplete"
+    assert compact["execution_readiness"]["missing_evidence"] == ["verification_evidence"]
+    assert compact["recovery_context"]["first_tool"] == "record_task_checkpoint"
+    assert compact["continuity"]["work_handle"] == "wh1.example"
+    assert compact["continuity"]["lease"]["lease_id"] == "lease-1"
+    assert "work_token" not in compact["continuity"]["lease"]
+    assert compact["safety_summary"]["edit_authority"]["severity"] == "P0"
+    assert compact["safety_summary"]["edit_authority"]["editing_allowed"] is True
+    assert "verbose_policy" not in compact["safety_summary"]["edit_authority"]
+    assert compact["token_footprint"]["estimated_tokens"] == 2479
+    assert compact["token_footprint"]["within_budget"] is False
+    assert compact["recommended_next_call"]["form_id"] == "record_progress"
+    assert "replay_bundle" not in compact
+    assert "stenography_protocol" not in compact
+    assert len(json.dumps(compact, sort_keys=True)) < len(json.dumps(raw, sort_keys=True))

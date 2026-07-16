@@ -24,6 +24,7 @@ from app.services.mcp_mailbox import (
     mailbox_form_disabled_features,
     mailbox_form_state_names,
 )
+from app.services.mcp_task_session_actions import normalize_finish_task_status
 from app.services.mcp_tool_contracts import build_report_task_checkpoint_payload
 from app.services.mcp_lifecycle_receipts import public_auto_work_session_payload, public_lease_payload
 from app.services.mcp_workflow_specs import load_named_json_spec, load_route_catalog_spec
@@ -1290,8 +1291,7 @@ async def mailbox_close_task(
                 },
             }
     close_status = str(payload.get("close_status") or "obsolete").strip().lower() or "obsolete"
-    close_status_aliases = {"done": "completed", "complete": "completed", "finished": "completed"}
-    close_status = close_status_aliases.get(close_status, close_status)
+    close_status = normalize_finish_task_status(close_status)
     if close_status == "completed":
         receipt = {
             "status": "needs_claim",

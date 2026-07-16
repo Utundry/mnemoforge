@@ -181,6 +181,8 @@ def _catalog_scores(text: str, args: dict[str, Any]) -> list[dict[str, Any]]:
             best_score += 0.2
         if route["intent_type"] == "create_task":
             best_score = best_score + 0.5 if has_create_task_intent else 0.0
+        if route["intent_type"] == "lifecycle_anomaly_repair" and _looks_like_lifecycle_anomaly_repair(lowered, intent_tokens):
+            best_score += 0.45
         candidates.append(
             {
                 "intent_type": route["intent_type"],
@@ -442,6 +444,12 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
             "project_id": project,
             "intent": intent,
         }
+    elif route["intent_type"] == "lifecycle_anomaly_repair":
+        route["payload"] = {
+            "project": project,
+            "close_policy": str(args.get("close_policy") or "strict").strip() or "strict",
+            "limit": limit,
+        }
     elif route["intent_type"] in {"approve_checkpoint_draft", "reject_checkpoint_draft"}:
         route["payload"] = {
             "draft_id": str(args.get("draft_id") or "").strip(),
@@ -633,6 +641,28 @@ def _has_create_task_intent(text: str, tokens: set[str]) -> bool:
     return bool(tokens & {"create", "save", "record", "add", "formulate", "capture"}) and bool(
         tokens & {"task", "issue", "improvement", "backlog", "future", "work"}
     )
+
+
+def _looks_like_lifecycle_anomaly_repair(text: str, tokens: set[str]) -> bool:
+    if "completed-but-open" in text or "completed but open" in text:
+        return True
+    if "done but still open" in text or "implemented but not closed" in text:
+        return True
+    if "выполненные" in text and "открытые" in text:
+        return True
+    if "закрыть" in text and "выполненные" in text and "открытые" in text:
+        return True
+    lifecycle_terms = {
+        "anomaly",
+        "anomalies",
+        "lifecycle",
+        "repair",
+        "closeable",
+        "tail",
+        "reconciliation",
+        "reconcile",
+    }
+    return bool(tokens & {"completed", "done", "implemented"}) and bool(tokens & {"open", "closed"}) and bool(tokens & lifecycle_terms)
 
 
 def _title_from_text(text: str, *, fallback: str) -> str:

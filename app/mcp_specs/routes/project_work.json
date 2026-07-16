@@ -40,6 +40,23 @@
       "reason": "Explicit list-all intent maps to the unified open-task surface."
     },
     {
+      "intent_type": "lifecycle_anomaly_repair",
+      "tool": "list_closeable_completed_tail",
+      "family": "project_knowledge",
+      "mutating": false,
+      "examples": [
+        "list completed but open tasks",
+        "find completed-but-open lifecycle anomalies",
+        "list closeable completed tail",
+        "find closeable completed task tail",
+        "tasks done but still open",
+        "implemented but not closed tasks",
+        "выполненные но открытые задачи",
+        "закрыть выполненные но открытые задачи как тест"
+      ],
+      "reason": "Lifecycle anomaly repair intent maps to the read-only completed-but-open anomaly finder before any close mutation."
+    },
+    {
       "intent_type": "pull_task_context",
       "tool": "pull_task_context",
       "family": "project_knowledge",
@@ -187,6 +204,8 @@
       "examples": [
         "cold start project memory",
         "cold start sloplesscode",
+        "холодный старт sloplesscode",
+        "сделай холодный старт sloplesscode",
         "initialize project memory",
         "bootstrap project memory",
         "initialize project database",

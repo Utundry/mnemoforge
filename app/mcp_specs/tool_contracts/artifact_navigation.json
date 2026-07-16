@@ -42,6 +42,23 @@
       }
     },
     {
+      "name": "list_closeable_completed_tail",
+      "description": "Read-only maintenance route for completed-but-open lifecycle anomalies. Returns compact repair candidates with explicit evidence and safe_auto_repair flags; it never closes tasks.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "default": "mnemoforge"},
+          "close_policy": {
+            "type": "string",
+            "enum": ["strict", "checkpoint_done"],
+            "default": "strict",
+            "description": "strict requires explicit completion evidence without blockers before safe_auto_repair is true"
+          },
+          "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100}
+        }
+      }
+    },
+    {
       "name": "list_open_tasks",
       "description": "List open project work items through the unified artifact surface. This is the preferred MCP surface for open-work inspection.",
       "inputSchema": {

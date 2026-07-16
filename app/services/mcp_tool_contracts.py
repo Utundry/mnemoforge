@@ -1193,6 +1193,13 @@ def build_reconcile_completed_checkpoints_payload(args: dict[str, Any]) -> dict[
         "limit": int(args.get("limit") or 100),
     }
 
+def build_list_closeable_completed_tail_payload(args: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "project": str(args.get("project") or "mnemoforge").strip() or "mnemoforge",
+        "close": False,
+        "close_policy": str(args.get("close_policy") or "strict").strip() or "strict",
+        "limit": int(args.get("limit") or 100),
+    }
 
 def build_review_completed_checkpoint_scope_payload(args: dict[str, Any]) -> dict[str, Any]:
     return {

@@ -69,6 +69,7 @@ from app.services.replay_completeness_service import build_replay_drill_decision
 from app.services.stenography_protocol_service import build_stenography_coverage, build_stenography_protocol
 from app.services.route_pattern_store import get_route_pattern_store
 from app.services.unified_artifact_service import task_has_closeout_evidence
+from app.services.context_page_store import compact_page, get_context_page_store
 from app.services.mcp_mailbox import mailbox_form_by_id
 from app.services.mcp_mailbox_actions import (
     MailboxActionDependencies,
@@ -110,7 +111,7 @@ from app.services.mcp_project_work_routing import (
 )
 from app.services.planning_advisor_service import collaborative_control_packet
 from app.services.task_reconciliation_service import COVERED_DECISIONS, get_task_reconciliation_store
-from app.services.project_identity_service import project_identity_envelope
+from app.services.project_identity_service import project_identity_envelope, resolve_project_id
 from app.services.public_diagnostic_service import build_public_diagnostic_incident
 from app.services.mcp_project_rules_routing import (
     PROJECT_RULES_ROUTE_CATALOG as _PROJECT_RULES_ROUTE_CATALOG,
@@ -1467,6 +1468,8 @@ def _tool_example_payload(tool_name: str, *, intent: str, project_id: str = "") 
         return {"artifact_key": "task:mnemoforge:<local_id>", "project": project_id or "mnemoforge", "status": "active", "reason": "normalize_mcp_intent", "acted_by": "user", "source": "mcp"}
     if name == "reconcile_completed_checkpoints":
         return {"project": project_id or "mnemoforge", "close": False, "close_policy": "strict", "limit": 100}
+    if name == "list_closeable_completed_tail":
+        return {"project": project_id or "mnemoforge", "close_policy": "strict", "limit": 100}
     if name == "review_completed_checkpoint_scope":
         return {
             "project": project_id or "mnemoforge",
@@ -1560,6 +1563,11 @@ def _normalize_mcp_intent_lexical(intent: str, *, project_id: str = "", top_n: i
         resolved_family = "project_knowledge"
         confidence = 0.79
         rationale = "Context-building intent maps to enrich_task_with_context."
+    elif any(term in lowered for term in ("completed but open", "completed-but-open", "done but still open", "implemented but not closed", "closeable completed tail", "lifecycle anomalies")):
+        resolved_tool = "list_closeable_completed_tail"
+        resolved_family = "project_knowledge"
+        confidence = 0.83
+        rationale = "Completed-but-open lifecycle anomaly intent maps to the read-only repair candidate finder."
     elif any(term in lowered for term in ("reconcile", "stale tail", "completed checkpoint", "checkpoint tails")):
         resolved_tool = "reconcile_completed_checkpoints"
         resolved_family = "project_knowledge"
@@ -4461,6 +4469,15 @@ async def _build_project_work_payload(api_base: str, args: dict[str, Any], *, se
         result = _annotate_open_tasks_with_claims(result, route["payload"])
         result = _annotate_open_tasks_with_assignment_safety(result, route["payload"])
         executed = True
+    elif dispatch_allowed and not executed and route["tool"] == "list_closeable_completed_tail":
+        result_text = await _execute_tool("list_closeable_completed_tail", route["payload"], api_base, session_id=session_id)
+        try:
+            result = json.loads(result_text)
+        except Exception:
+            result = result_text
+        if isinstance(result, dict) and isinstance(result.get("result"), dict):
+            result = result["result"]
+        executed = True
     elif dispatch_allowed and not executed and route["tool"] == "pull_task_context":
         result = await _build_pull_task_context_payload(api_base, route["payload"])
         executed = True
@@ -6423,6 +6440,7 @@ TOOLS = [
     tool_definition("operational_tray"),
     tool_definition("upsert_knowledge_tree_node"),
     tool_definition("get_task_execution_context"),
+    tool_definition("list_closeable_completed_tail"),
     tool_definition("reconcile_completed_checkpoints"),
     tool_definition("review_completed_checkpoint_scope"),
     tool_definition("review_completed_checkpoint_scopes"),
@@ -7016,6 +7034,7 @@ sync_tool_definitions(
     "operational_tray",
     "upsert_knowledge_tree_node",
     "get_task_execution_context",
+    "list_closeable_completed_tail",
     "reconcile_completed_checkpoints",
     "review_completed_checkpoint_scope",
     "review_completed_checkpoint_scopes",
@@ -7161,6 +7180,51 @@ async def _fetch_linked_improvement_bundle(api_base: str, project: str, linked_i
     }
 
 
+def _task_context_page_parent_refs(*, project: str, task_id: str) -> list[str]:
+    refs: list[str] = []
+    for candidate_project in (project, resolve_project_id(project)):
+        normalized_project = str(candidate_project or "").strip()
+        if not normalized_project:
+            continue
+        parent_ref = f"task:{normalized_project}:{task_id}"
+        if parent_ref not in refs:
+            refs.append(parent_ref)
+    return refs
+
+
+def _task_context_pages(*, project: str, task_id: str, include_content: bool = True, limit: int = 20) -> dict[str, Any]:
+    pages: list[dict[str, Any]] = []
+    seen_page_ids: set[str] = set()
+    parent_refs = _task_context_page_parent_refs(project=project, task_id=task_id)
+    store = get_context_page_store()
+    for parent_ref in parent_refs:
+        for page in store.list_pages(parent_ref=parent_ref, include_history=False, limit=limit):
+            page_id = str(page.get("page_id") or "").strip()
+            if not page_id or page_id in seen_page_ids:
+                continue
+            seen_page_ids.add(page_id)
+            pages.append(page)
+    if not pages:
+        return {}
+    return {
+        "source_of_truth": "sqlite",
+        "index_role": "qdrant_derived_active_pages_only",
+        "parent_refs": parent_refs,
+        "count": len(pages),
+        "pages": [compact_page(page, include_content=include_content) for page in pages],
+    }
+
+
+def _compact_task_context_pages(context_pages: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(context_pages, dict) or not context_pages.get("pages"):
+        return {}
+    compact = dict(context_pages)
+    compact["pages"] = [
+        compact_page(page, include_content=False) if isinstance(page, dict) else page
+        for page in (context_pages.get("pages") or [])
+    ]
+    return compact
+
 def _checkpoint_stage_for_state(state: str) -> str:
     normalized = str(state or "").strip().lower()
     if normalized in {"planning", "checkpointing"}:
@@ -7190,8 +7254,23 @@ def _build_replay_bundle(
     changes: list[dict[str, Any]],
     handoffs: list[dict[str, Any]],
     linked_improvement: dict[str, Any] | None,
+    context_pages: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     quality = statement.get("quality") or {}
+    context_page_refs = [
+        str(page.get("page_ref") or "").strip()
+        for page in ((context_pages or {}).get("pages") or [])
+        if isinstance(page, dict) and str(page.get("page_ref") or "").strip()
+    ]
+    project_context_refs = {
+        "project_id": project,
+        "task_id": task_id,
+        "grounded_by": quality.get("grounded_by") or [],
+        "readiness_tool": "get_project_readiness",
+        "enrichment_tool": "enrich_task_with_context",
+    }
+    if context_page_refs:
+        project_context_refs["context_pages"] = context_page_refs
     return {
         "task_history": _compact_task_history(changes),
         "linked_improvement": linked_improvement,
@@ -7205,15 +7284,8 @@ def _build_replay_bundle(
             }
             for item in handoffs[:5]
         ],
-        "project_context_refs": {
-            "project_id": project,
-            "task_id": task_id,
-            "grounded_by": quality.get("grounded_by") or [],
-            "readiness_tool": "get_project_readiness",
-            "enrichment_tool": "enrich_task_with_context",
-        },
+        "project_context_refs": project_context_refs,
     }
-
 
 def _estimate_response_tokens(payload: dict[str, Any], budget_args: dict[str, Any] | None = None) -> dict[str, Any]:
     response_chars = len(json.dumps(payload, ensure_ascii=False))
@@ -7239,6 +7311,11 @@ def _layer_summary(full_payload: dict[str, Any]) -> dict[str, Any]:
         },
         "project_context_refs": {
             "available": bool(bundle.get("project_context_refs")),
+            "request": {"detail": "full"},
+        },
+        "context_pages": {
+            "available": bool(full_payload.get("context_pages")),
+            "count": int((full_payload.get("context_pages") or {}).get("count") or 0),
             "request": {"detail": "full"},
         },
         "resume_handoffs": {
@@ -7283,6 +7360,9 @@ def _project_pull_task_context_response(full_payload: dict[str, Any], *, detail:
         "stenography_coverage": full_payload.get("stenography_coverage"),
         "available_layers": _layer_summary(full_payload),
     }
+    compact_context_pages = _compact_task_context_pages(full_payload.get("context_pages") or {})
+    if compact_context_pages:
+        compact["context_pages"] = compact_context_pages
     compact["token_budget"] = _estimate_response_tokens(compact, budget_args)
     compact["token_overhead"] = compact["token_budget"]
     return compact
@@ -7419,6 +7499,7 @@ async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) 
     capture_review = statement.get("capture_review") or {}
     task = statement.get("task") or selected_task or {}
     linked_improvement = await _fetch_linked_improvement_bundle(api_base, project, str(task.get("linked_improvement_id") or ""))
+    context_pages = _task_context_pages(project=project, task_id=task_id, include_content=True)
     payload = {
         "project": project,
         "task_id": task_id,
@@ -7437,6 +7518,8 @@ async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) 
         "resume_handoffs": handoffs[:5],
         "recommended_first_tool": "record_task_checkpoint" if not latest_checkpoint else "pull_task_context",
     }
+    if context_pages:
+        payload["context_pages"] = context_pages
     payload["stenography_coverage"] = build_stenography_coverage(project=project, task_id=task_id)
     payload["stenography_protocol"] = build_stenography_protocol(project=project, task_id=task_id, state="task_context")
     payload.setdefault("project_identity", project_identity_envelope(requested_project=project, observed_project=project))
@@ -7447,6 +7530,7 @@ async def _build_pull_task_context_payload(api_base: str, args: dict[str, Any]) 
         changes=changes or [],
         handoffs=handoffs,
         linked_improvement=linked_improvement,
+        context_pages=context_pages,
     )
     payload["replay_completeness"] = evaluate_replay_completeness(payload)
     payload["execution_readiness"] = evaluate_execution_readiness(payload)
@@ -8728,7 +8812,7 @@ async def _execute_tool(name: str, args: dict, api_base: str, session_id: str | 
             )
         data = _annotate_structured_tool_payload(name, data)
         return json.dumps(data, indent=2, ensure_ascii=False)
-    elif name in {"reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes"}:
+    elif name in {"list_closeable_completed_tail", "reconcile_completed_checkpoints", "review_completed_checkpoint_scope", "review_completed_checkpoint_scopes"}:
         return await execute_artifact_lifecycle_action(
             name=name,
             args=args,

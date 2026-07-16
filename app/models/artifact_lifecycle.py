@@ -37,6 +37,39 @@ class ArtifactLifecycleReconcileRequest(BaseModel):
     reason: str = Field("Completed task checkpoint indicates artifact lifecycle is stale.", max_length=500)
     limit: int = Field(100, ge=1, le=500)
 
+class LifecycleAnomalyRepairCandidate(BaseModel):
+    anomaly_type: Literal["completed_but_open"] = "completed_but_open"
+    project: str
+    task_id: str
+    task_artifact_key: str
+    current_status: str
+    safe_auto_repair: bool = False
+    recommended_repair: str
+    recommended_close_status: str = ""
+    reason: str
+    evidence_refs: list[str] = Field(default_factory=list)
+    checkpoint_change_id: str = ""
+    checkpoint_summary: str = ""
+    next_step: str = ""
+    next_step_scope: str = "unknown"
+    next_step_scope_source: str = "absent"
+    close_blockers: list[str] = Field(default_factory=list)
+    linked_artifact_key: str | None = None
+    linked_status: str | None = None
+
+
+class LifecycleAnomalyRepairResponse(BaseModel):
+    project: str
+    anomaly_type: Literal["completed_but_open"] = "completed_but_open"
+    scanned_tasks: int = 0
+    candidate_count: int = 0
+    safe_auto_repair_count: int = 0
+    review_required_count: int = 0
+    candidates: list[LifecycleAnomalyRepairCandidate] = Field(default_factory=list)
+    safe_candidates: list[str] = Field(default_factory=list)
+    needs_operator_review: list[str] = Field(default_factory=list)
+    source_route: str = "reconcile_completed_checkpoint_artifacts"
+
 
 class ArtifactLifecycleScopeReviewRequest(BaseModel):
     project: str = Field("mnemoforge", min_length=1, max_length=128)
