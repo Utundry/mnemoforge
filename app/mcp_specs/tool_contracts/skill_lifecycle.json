@@ -1,0 +1,231 @@
+{
+  "version": 1,
+  "id": "skill_lifecycle",
+  "purpose": "Declarative MCP tool contracts for skill lifecycle.",
+  "tools": [
+    {
+      "name": "crystallize_solution",
+      "description": "Convert a successful cloud LLM solution into a reusable skill (auto-publish). Call this after solving a task with cloud LLM when the solution is reusable. qwen3:1.7b will assess reusability, GLM will generate SKILL.md, and it publishes to marketplace automatically. Future identical tasks will be routed to the skill tier (instant/free). Use draft_skill instead if you want to review the SKILL.md before publishing.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "task",
+          "solution"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "The task description that was solved"
+          },
+          "solution": {
+            "type": "string",
+            "description": "The solution / procedure that worked"
+          },
+          "platform": {
+            "type": "string",
+            "default": "claude",
+            "enum": [
+              "claude",
+              "codex",
+              "cursor",
+              "universal"
+            ]
+          },
+          "force": {
+            "type": "boolean",
+            "default": false,
+            "description": "Crystallize even if reusability score is low"
+          }
+        }
+      }
+    },
+    {
+      "name": "draft_skill",
+      "description": "Three-stage pipeline: local LLM assesses \u2192 GLM drafts SKILL.md \u2192 YOU review (no auto-publish). Use this when you want to moderate the skill content before publishing. Returns draft SKILL.md and reusability score. After reviewing, call skill_publish with the (possibly edited) content, or discard if not useful.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "task",
+          "solution"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "The task description that was solved"
+          },
+          "solution": {
+            "type": "string",
+            "description": "The solution / procedure that worked"
+          },
+          "platform": {
+            "type": "string",
+            "default": "claude",
+            "enum": [
+              "claude",
+              "codex",
+              "cursor",
+              "universal"
+            ]
+          },
+          "force": {
+            "type": "boolean",
+            "default": false,
+            "description": "Generate draft even if reusability score is low"
+          }
+        }
+      }
+    },
+    {
+      "name": "skill_search",
+      "description": "Search the skill marketplace for relevant skills. Provide a context description to get LLM-filtered results relevant to your current task. Skills are filtered by domain (e.g. linuxcnc skills won't appear for web dev tasks).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "type": "string",
+            "description": "Current task/project context for smart filtering (e.g. 'building PyQt5 UI for CNC machine')"
+          },
+          "domains": {
+            "type": "string",
+            "description": "Comma-separated domain tags to filter by (e.g. 'web,deploy')"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "claude",
+              "codex",
+              "cursor",
+              "universal"
+            ],
+            "description": "Filter by platform"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 10
+          },
+          "min_relevance": {
+            "type": "number",
+            "default": 0.3
+          }
+        }
+      }
+    },
+    {
+      "name": "skill_publish",
+      "description": "Publish a skill to the shared marketplace. Domain tags are auto-extracted by LLM from the content.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "name",
+          "content"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Skill slug name"
+          },
+          "content": {
+            "type": "string",
+            "description": "Full SKILL.md content"
+          },
+          "platform": {
+            "type": "string",
+            "default": "claude"
+          },
+          "agent_id": {
+            "type": "string",
+            "default": "shared"
+          },
+          "domain_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Override auto-detected tags"
+          }
+        }
+      }
+    },
+    {
+      "name": "skill_install",
+      "description": "Get skill content by ID for local installation.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "skill_id"
+        ],
+        "properties": {
+          "skill_id": {
+            "type": "string",
+            "description": "UUID of the skill"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_onboarding",
+      "description": "Get a personalized onboarding package based on accumulated experience from previous agents. Call this at the start of a session to receive relevant skills, behavioral patterns, domain gaps, and recent context \u2014 so you can hit the ground running without knowing the system. The system learns from each agent's session and passes that knowledge to you.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "agent_id"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "Your agent identifier (e.g. 'claude-code', 'codex')"
+          },
+          "task_description": {
+            "type": "string",
+            "description": "What you are working on \u2014 used to select relevant skills"
+          }
+        }
+      }
+    },
+    {
+      "name": "record_outcome",
+      "description": "Record what was helpful (or not) in your session. The system uses this to improve onboarding for future agents. Call at the end of a session or after completing a task.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "agent_id",
+          "success"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "pack_id": {
+            "type": "string",
+            "description": "Pack ID from get_onboarding (if any)"
+          },
+          "skills_helpful": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Skill IDs that helped"
+          },
+          "skills_unused": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Skill IDs that were irrelevant"
+          },
+          "missing_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Knowledge areas that were missing"
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Did the session accomplish its goal?"
+          }
+        }
+      }
+    }
+  ]
+}

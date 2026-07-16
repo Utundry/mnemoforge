@@ -1,0 +1,861 @@
+{
+  "version": 1,
+  "id": "handoff_packets",
+  "purpose": "Declarative MCP tool contracts for handoff packets.",
+  "tools": [
+    {
+      "name": "handoff_task",
+      "description": "Package current task context in SloplessCode for pickup by another CLI tool. Use when: (1) current model hit its limit, (2) you want to manually switch to another CLI. Stores context with status=pending. Returns memory_id and pickup instruction for the target CLI.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "from_agent",
+          "to_agent",
+          "task_description"
+        ],
+        "properties": {
+          "from_agent": {
+            "type": "string",
+            "description": "This CLI: claude-code | codex | cline | gemini-cli"
+          },
+          "to_agent": {
+            "type": "string",
+            "description": "Target CLI: claude-code | codex | cline | gemini-cli"
+          },
+          "project_id": {
+            "type": "string",
+            "description": "Optional project scope for playbook-aware handoffs"
+          },
+          "phase": {
+            "type": "string",
+            "description": "Current task lifecycle phase, e.g. task_framing"
+          },
+          "priority": {
+            "type": "string",
+            "description": "Human-readable priority like high, medium, low"
+          },
+          "owner_agent": {
+            "type": "string",
+            "description": "Optional agent that owns the write scope for this packet"
+          },
+          "write_scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional bounded areas this packet may modify",
+            "default": []
+          },
+          "why_now": {
+            "type": "string",
+            "description": "Why this handoff matters now"
+          },
+          "definition_of_done": {
+            "type": "string",
+            "description": "What counts as sufficient completion for this iteration"
+          },
+          "expected_output_shape": {
+            "type": "string",
+            "description": "Expected shape of the receiving agent's output"
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "max_quality",
+              "balanced",
+              "economy",
+              "strict_economy"
+            ],
+            "description": "Execution policy mode that biases cost/quality routing for this packet",
+            "default": "balanced"
+          },
+          "background_job_type": {
+            "type": "string",
+            "description": "Optional existing background job type for safe queued execution"
+          },
+          "background_payload": {
+            "type": "object",
+            "description": "Optional payload for background job dispatch",
+            "default": {}
+          },
+          "include_project_context": {
+            "type": "boolean",
+            "description": "When project_id is set, attach a compact enrich-task context snapshot",
+            "default": true
+          },
+          "context_max_components": {
+            "type": "integer",
+            "description": "Max components to include in the attached project context snapshot",
+            "default": 3
+          },
+          "task_description": {
+            "type": "string",
+            "description": "Full task description to hand off"
+          },
+          "partial_result": {
+            "type": "string",
+            "description": "Any partial work done so far"
+          },
+          "key_facts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Up to 10 key facts the next agent needs"
+          },
+          "task_id": {
+            "type": "string",
+            "description": "Task identifier (auto-generated if omitted)"
+          },
+          "handoff_label": {
+            "type": "string",
+            "description": "Human-readable label like 'benchmark28' or 'tailcutoff371'"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "limit_hit"
+            ],
+            "default": "manual"
+          },
+          "from_model_id": {
+            "type": "string",
+            "description": "Optional cloud model/component that hit a limit, e.g. 'claude-sonnet'"
+          }
+        }
+      }
+    },
+    {
+      "name": "pickup_handoff",
+      "description": "Retrieve pending task handoffs addressed to this CLI agent. Call this at the start of a new session or when you expect a handoff from another CLI. Marks retrieved handoffs as picked_up to prevent double-processing.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "agent_id"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "This CLI's identity: claude-code | codex | cline | gemini-cli"
+          },
+          "handoff_label": {
+            "type": "string",
+            "description": "Optional human-readable label to narrow pickup to one task"
+          },
+          "owner_agent": {
+            "type": "string",
+            "description": "Optional agent that owns the write scope for this packet"
+          },
+          "write_scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional bounded areas this packet may modify",
+            "default": []
+          },
+          "limit": {
+            "type": "integer",
+            "default": 3,
+            "description": "Max handoffs to retrieve"
+          }
+        }
+      }
+    },
+    {
+      "name": "list_pending_handoff_labels",
+      "description": "List human-readable labels for pending handoffs addressed to this CLI agent. Use this before pickup when you want to see which named handoffs are waiting.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "agent_id"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "This CLI's identity: claude-code | codex | cline | gemini-cli"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20,
+            "description": "Max labels to return"
+          }
+        }
+      }
+    },
+    {
+      "name": "list_handoffs",
+      "description": "List task packets/handoffs for this CLI agent filtered by lifecycle status. Use this to inspect active, paused, picked_up, closed, or archived packets, not only pending pickup.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "agent_id"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "This CLI's identity: claude-code | codex | cline | gemini-cli"
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Statuses like ['active','paused'] or ['all']",
+            "default": []
+          },
+          "handoff_label": {
+            "type": "string",
+            "description": "Optional human-readable label to narrow listing"
+          },
+          "owner_agent": {
+            "type": "string",
+            "description": "Optional agent that owns the write scope for this packet"
+          },
+          "write_scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional bounded areas this packet may modify",
+            "default": []
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20,
+            "description": "Max packets to return"
+          }
+        }
+      }
+    },
+    {
+      "name": "handoff_workspace_summary",
+      "description": "Return a compact overview of the current handoff workspace for an agent. Includes total packets, breakdowns by status/owner/phase, and compact recent packet lines.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "agent_id"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "This CLI's identity: claude-code | codex | cline | gemini-cli"
+          },
+          "statuses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Lifecycle statuses to include",
+            "default": []
+          },
+          "handoff_label": {
+            "type": "string",
+            "description": "Optional human-readable label to narrow summary"
+          },
+          "owner_agent": {
+            "type": "string",
+            "description": "Optional current owner to narrow summary"
+          },
+          "write_scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional required write-scope entries to narrow summary",
+            "default": []
+          },
+          "packet_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "default": 5,
+            "description": "How many recent compact packets to include"
+          }
+        }
+      }
+    },
+    {
+      "name": "decompose_task_packet",
+      "description": "Build a deterministic recommendation for splitting a larger task into bounded task packets. Returns packet stubs with suggested labels, phases, write scopes, and iteration contracts.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "task_description"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Optional project scope for project-aware playbook guidance"
+          },
+          "task_description": {
+            "type": "string",
+            "description": "The larger task to split into bounded packets"
+          },
+          "handoff_label_prefix": {
+            "type": "string",
+            "description": "Optional label prefix for the suggested packet stubs"
+          },
+          "phase": {
+            "type": "string",
+            "description": "Preferred task lifecycle phase for the suggested packets"
+          },
+          "priority": {
+            "type": "string",
+            "description": "Priority to copy into the suggested packet stubs"
+          },
+          "owner_agent": {
+            "type": "string",
+            "description": "Optional default owner to assign to the suggested packets"
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "max_quality",
+              "balanced",
+              "economy",
+              "strict_economy"
+            ],
+            "description": "Policy mode that biases decomposition toward quality or economy",
+            "default": "balanced"
+          },
+          "write_scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Candidate bounded write scopes or work areas",
+            "default": []
+          },
+          "max_packets": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "default": 4,
+            "description": "Maximum number of packet stubs to recommend"
+          }
+        }
+      }
+    },
+    {
+      "name": "create_task_packets",
+      "description": "Materialize recommended packet stubs into real task packets. Use after decomposition when you want to create multiple bounded task packets at once.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "from_agent",
+          "to_agent",
+          "task_description",
+          "packets"
+        ],
+        "properties": {
+          "from_agent": {
+            "type": "string",
+            "description": "Source CLI: claude-code | codex | cline | gemini-cli"
+          },
+          "to_agent": {
+            "type": "string",
+            "description": "Target CLI: claude-code | codex | cline | gemini-cli"
+          },
+          "project_id": {
+            "type": "string",
+            "description": "Optional project scope for project-aware packet creation"
+          },
+          "task_description": {
+            "type": "string",
+            "description": "Fallback task description used when a packet stub does not override it"
+          },
+          "execution_mode": {
+            "type": "string",
+            "enum": [
+              "max_quality",
+              "balanced",
+              "economy",
+              "strict_economy"
+            ],
+            "description": "Fallback execution mode used when a packet stub does not override it",
+            "default": "balanced"
+          },
+          "partial_result": {
+            "type": "string",
+            "description": "Optional partial result carried into each created packet"
+          },
+          "key_facts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Up to 10 key facts carried into each created packet",
+            "default": []
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "limit_hit"
+            ],
+            "default": "manual"
+          },
+          "from_model_id": {
+            "type": "string",
+            "description": "Optional originating cloud model/component"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Memory agent_id for Qdrant storage",
+            "default": "handoff"
+          },
+          "packets": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "description": "Recommended packet stubs to materialize as real task packets",
+            "items": {
+              "type": "object",
+              "properties": {
+                "handoff_label": {
+                  "type": "string",
+                  "description": "Human-readable packet label"
+                },
+                "task_description": {
+                  "type": "string",
+                  "description": "Packet-specific task description"
+                },
+                "owner_agent": {
+                  "type": "string",
+                  "description": "Optional owner for the created packet"
+                },
+                "write_scope": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Bounded write scope for the created packet",
+                  "default": []
+                },
+                "phase": {
+                  "type": "string",
+                  "description": "Packet lifecycle phase"
+                },
+                "priority": {
+                  "type": "string",
+                  "description": "Packet priority"
+                },
+                "execution_mode": {
+                  "type": "string",
+                  "enum": [
+                    "max_quality",
+                    "balanced",
+                    "economy",
+                    "strict_economy"
+                  ],
+                  "description": "Execution mode for the created packet"
+                },
+                "background_job_type": {
+                  "type": "string",
+                  "description": "Optional background job type for the created packet"
+                },
+                "background_payload": {
+                  "type": "object",
+                  "description": "Optional payload for background dispatch",
+                  "default": {}
+                },
+                "suggested_execution_tier": {
+                  "type": "string",
+                  "description": "Suggested execution tier for the created packet"
+                },
+                "model_hint": {
+                  "type": "string",
+                  "description": "Suggested model hint for the created packet"
+                },
+                "why_now": {
+                  "type": "string",
+                  "description": "Why this packet matters now"
+                },
+                "definition_of_done": {
+                  "type": "string",
+                  "description": "Completion contract for the packet"
+                },
+                "expected_output_shape": {
+                  "type": "string",
+                  "description": "Expected output shape for the packet"
+                },
+                "phase_objective": {
+                  "type": "string",
+                  "description": "Phase objective carried into the packet"
+                },
+                "core_instinct_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Core instinct IDs for the packet",
+                  "default": []
+                },
+                "supporting_instinct_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Supporting instinct IDs for the packet",
+                  "default": []
+                },
+                "project_context_summary": {
+                  "type": "string",
+                  "description": "Optional compact project context summary"
+                },
+                "project_context_refs": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "description": "Optional project context references",
+                  "default": {}
+                },
+                "project_context_snapshot": {
+                  "type": "string",
+                  "description": "Optional project context snapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "route_task_packet_execution",
+      "description": "Route a handoff packet to the best execution target using its packet payload or memory_id. Returns packet profile, routing basis, eligible executors, and the recommended executor.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "description": "Optional handoff memory UUID"
+          },
+          "packet": {
+            "type": "object",
+            "description": "Optional packet payload to route",
+            "properties": {
+              "task_description": {
+                "type": "string"
+              },
+              "write_scope": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              },
+              "phase": {
+                "type": "string"
+              },
+              "suggested_execution_tier": {
+                "type": "string"
+              },
+              "execution_mode": {
+                "type": "string",
+                "enum": [
+                  "max_quality",
+                  "balanced",
+                  "economy",
+                  "strict_economy"
+                ]
+              },
+              "background_job_type": {
+                "type": "string"
+              },
+              "background_payload": {
+                "type": "object",
+                "default": {}
+              },
+              "model_hint": {
+                "type": "string"
+              },
+              "definition_of_done": {
+                "type": "string"
+              },
+              "expected_output_shape": {
+                "type": "string"
+              },
+              "phase_objective": {
+                "type": "string"
+              },
+              "priority": {
+                "type": "string"
+              },
+              "owner_agent": {
+                "type": "string"
+              },
+              "why_now": {
+                "type": "string"
+              },
+              "task_id": {
+                "type": "string"
+              },
+              "handoff_label": {
+                "type": "string"
+              },
+              "project_id": {
+                "type": "string"
+              },
+              "from_agent": {
+                "type": "string"
+              },
+              "to_agent": {
+                "type": "string"
+              },
+              "partial_result": {
+                "type": "string"
+              },
+              "key_facts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dispatch_background_task_packet",
+      "description": "Dispatch a handoff packet through the background job queue after routing confirms a background executor. Queues the packet's supported background_job_type and returns the job id and polling location.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "memory_id"
+        ],
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "description": "Existing handoff memory UUID to dispatch through the background job queue"
+          },
+          "acted_by": {
+            "type": "string",
+            "description": "Actor recording the dispatch action",
+            "default": "user"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Dispatch reason or audit note",
+            "default": "background_dispatch"
+          }
+        }
+      }
+    },
+    {
+      "name": "reconcile_background_task_packet",
+      "description": "Reconcile a dispatched background job for a handoff packet after the queue updates its status. Returns the job state, packet lifecycle state, and any result or verification summary.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "memory_id"
+        ],
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "description": "Existing handoff memory UUID with a dispatched background job"
+          },
+          "acted_by": {
+            "type": "string",
+            "description": "Actor recording the reconciliation action",
+            "default": "user"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Reconciliation reason or audit note",
+            "default": "background_reconcile"
+          }
+        }
+      }
+    },
+    {
+      "name": "expand_handoff_refs",
+      "description": "Resolve referenced project context from a handoff packet on demand. Use this after pickup when the compact handoff summary is not enough and you need selected laws, components, improvements, runtime hints, tasks, or docs sections.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "memory_id"
+        ],
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "description": "Handoff memory UUID returned by pickup_handoff"
+          },
+          "ref_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional subset like ['laws','components','tasks']",
+            "default": []
+          },
+          "limit_per_type": {
+            "type": "integer",
+            "default": 3,
+            "description": "Max resolved items per ref type"
+          }
+        }
+      }
+    },
+    {
+      "name": "refresh_handoff_context",
+      "description": "Refresh the compact project context attached to a handoff packet from current project knowledge. Use this when resuming an older handoff so its summary and refs reflect the latest state.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "memory_id"
+        ],
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "description": "Handoff memory UUID"
+          },
+          "task_description": {
+            "type": "string",
+            "description": "Optional task text override used for refresh"
+          },
+          "owner_agent": {
+            "type": "string",
+            "description": "Optional agent that owns the write scope for this packet"
+          },
+          "write_scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional bounded areas this packet may modify",
+            "default": []
+          },
+          "max_components": {
+            "type": "integer",
+            "default": 3,
+            "description": "Max components to include in refreshed refs"
+          }
+        }
+      }
+    },
+    {
+      "name": "update_handoff_status",
+      "description": "Update the lifecycle status of a task packet/handoff. Use this to mark a packet as active, paused, closed, or archived after pickup.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "memory_id",
+          "status"
+        ],
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "description": "Handoff memory UUID"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "picked_up",
+              "active",
+              "paused",
+              "closed",
+              "archived"
+            ]
+          },
+          "acted_by": {
+            "type": "string",
+            "description": "Who is updating the packet lifecycle",
+            "default": "user"
+          },
+          "owner_agent": {
+            "type": "string",
+            "description": "Optional agent that owns the write scope for this packet"
+          },
+          "write_scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional bounded areas this packet may modify",
+            "default": []
+          },
+          "executor_used": {
+            "type": "string",
+            "description": "Optional executor used for the packet lifecycle update"
+          },
+          "model_used": {
+            "type": "string",
+            "description": "Optional model used for the packet lifecycle update"
+          },
+          "result_summary": {
+            "type": "string",
+            "description": "Short summary of the bounded result being merged back"
+          },
+          "verification_summary": {
+            "type": "string",
+            "description": "Short verification note for the bounded result"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Short reason for the status change",
+            "default": ""
+          }
+        }
+      }
+    },
+    {
+      "name": "resume_handoff",
+      "description": "Resume a paused or picked-up task packet. Sets the packet status to active and optionally refreshes compact project context from current knowledge.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "memory_id"
+        ],
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "description": "Handoff memory UUID"
+          },
+          "refresh_context": {
+            "type": "boolean",
+            "default": true
+          },
+          "task_description": {
+            "type": "string",
+            "description": "Optional task text override used during refresh"
+          },
+          "owner_agent": {
+            "type": "string",
+            "description": "Optional agent that owns the write scope for this packet"
+          },
+          "write_scope": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional bounded areas this packet may modify",
+            "default": []
+          },
+          "max_components": {
+            "type": "integer",
+            "default": 3,
+            "description": "Max components to include if refresh runs"
+          },
+          "acted_by": {
+            "type": "string",
+            "default": "user"
+          },
+          "reason": {
+            "type": "string",
+            "default": "resume"
+          }
+        }
+      }
+    }
+  ]
+}

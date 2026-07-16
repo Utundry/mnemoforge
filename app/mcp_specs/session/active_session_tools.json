@@ -1,0 +1,30 @@
+{
+  "active_tools": [
+    "memory_store",
+    "memory_search",
+    "memory_context",
+    "record_memory_outcome",
+    "ingest_file",
+    "ingest_dir",
+    "skill_search",
+    "skill_install",
+    "crystallize_solution",
+    "knowledge_hierarchy",
+    "canonicals_by_scope",
+    "operational_tray",
+    "list_project_laws",
+    "get_project_law",
+    "project_context",
+    "project_verify",
+    "project_capture",
+    "project_rules",
+    "project_rule_candidates_from_stenography",
+    "list_rule_candidates",
+    "get_rule_candidate_review_packet",
+    "review_rule_candidate",
+    "promote_rule_candidate",
+    "revise_law_from_rule_candidate",
+    "set_canonical_status",
+    "merge_canonicals"
+  ]
+}

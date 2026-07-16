@@ -90,6 +90,79 @@ async def execute_artifact_lifecycle_action(
         )
         return format_learning_candidate_transition(data, action="rejected")
 
+
+    if name == "improvements_report":
+        project = args.get("project", "mnemoforge")
+        data = await dependencies.get(api_base, f"/improvements/report?project={project}")
+        stats = data["stats"]
+        lines = [
+            f"## Project Status: {stats['project']}",
+            f"Total: {stats['total']} | Resolved: {stats['resolved']} ({stats['resolved_pct']}%) | Open: {stats['open']}",
+            f"Top tags: {', '.join(item['tag'] for item in stats['top_tags'])}",
+        ]
+        if stats["top_open"]:
+            lines.append("\n**Open (by importance):**")
+            for item in stats["top_open"]:
+                lines.append(f"- [{item['importance']:.2f}] {item['title']}  id={item['id']}")
+        if stats["top_resolved"]:
+            lines.append("\n**Top resolved:**")
+            for item in stats["top_resolved"]:
+                lines.append(f"- [{item['importance']:.2f}] {item['title']}")
+        if data.get("narrative"):
+            lines.append("\n---\n")
+            lines.append(data["narrative"])
+        return "\n".join(lines)
+
+    if name == "knowledge_hierarchy":
+        params = [
+            f"include_suppressed={str(bool(args.get('include_suppressed', False))).lower()}",
+            f"limit_per_scope={int(args.get('limit_per_scope', 25))}",
+            f"reconcile={str(bool(args.get('reconcile', False))).lower()}",
+        ]
+        if args.get("topic_prefix"):
+            params.append(f"topic_prefix={args['topic_prefix']}")
+        data = await dependencies.get(api_base, f"/knowledge-hierarchy?{'&'.join(params)}")
+        totals = data.get("totals", {})
+        lifecycle = data.get("lifecycle", {})
+        lines = [
+            f"Knowledge hierarchy topic_prefix={data.get('topic_prefix') or 'all'}",
+            f"domain={totals.get('domain',0)} principle={totals.get('principle',0)} meta={totals.get('meta',0)}",
+            f"lifecycle: active={lifecycle.get('active',0)} suppressed={lifecycle.get('suppressed',0)} updated={lifecycle.get('updated',0)}",
+        ]
+        for scope in ("domain", "principle", "meta"):
+            items = data.get("by_scope", {}).get(scope, [])
+            if not items:
+                continue
+            lines.append(f"\n[{scope}]")
+            for item in items[:10]:
+                status = item.get("canonical_status") or ("suppressed" if item.get("suppressed") else "active")
+                lines.append(
+                    f"- {item.get('topic_path','?')} | supports={item.get('support_count',0)} | "
+                    f"confidence={item.get('confidence',0):.2f} | status={status} | id={item.get('id')}"
+                )
+        return "\n".join(lines)
+
+    if name == "canonicals_by_scope":
+        params = [
+            f"scope={args['scope']}",
+            f"include_suppressed={str(bool(args.get('include_suppressed', False))).lower()}",
+            f"limit={int(args.get('limit', 50))}",
+        ]
+        if args.get("topic_prefix"):
+            params.append(f"topic_prefix={args['topic_prefix']}")
+        data = await dependencies.get(api_base, f"/canonicals/by-scope?{'&'.join(params)}")
+        items = data.get("items", [])
+        if not items:
+            return f"No canonicals for scope '{args['scope']}'."
+        lines = [f"Canonicals ({args['scope']}):"]
+        for item in items:
+            status = item.get("canonical_status") or ("suppressed" if item.get("suppressed") else "active")
+            lines.append(
+                f"- {item.get('topic_path','?')} | supports={item.get('support_count',0)} | "
+                f"confidence={item.get('confidence',0):.2f} | status={status}\n  id={item.get('id')}"
+            )
+        return "\n".join(lines)
+
     if name == "set_canonical_status":
         data = await dependencies.patch(
             api_base,

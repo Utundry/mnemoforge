@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "id": "project_search",
+  "purpose": "Declarative MCP tool contracts for project search.",
+  "tools": [
+    {
+      "name": "search_project_knowledge",
+      "description": "Search the project knowledge cache for components relevant to a query. Returns component summaries (purpose, implementation, key files) without reading source code. Use this instead of grep/glob to understand what a component does. RepRap principle: the project documents itself so you don't start from scratch each session.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "query"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "description": "Project identifier, e.g. 'mnemoforge'"
+          },
+          "query": {
+            "type": "string",
+            "description": "Natural language query, e.g. 'layout fixer', 'skill crystallization'"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 20
+          }
+        }
+      }
+    }
+  ]
+}

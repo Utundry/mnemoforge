@@ -149,6 +149,13 @@ def test_default_workflow_specs_validate() -> None:
         "get_project_reconstruction_bundle",
     ]
     assert summary["remote_snapshot_tool_contracts"] == ["plan_remote_snapshot", "sync_remote_snapshot"]
+    assert summary["runtime_utility_tool_contracts"] == [
+        "memory_health",
+        "system_info",
+        "model_available",
+        "report_limit_hit",
+        "get_task_status",
+    ]
     assert summary["storage_trust_tool_contracts"] == ["get_storage_trust_status"]
     assert summary["coordination_message_tool_contracts"] == [
         "send_coordination_message",
@@ -552,6 +559,16 @@ def test_remote_snapshot_tool_contracts_are_declarative() -> None:
     ]
     assert plan_props["files"]["items"]["required"] == ["path", "status"]
 
+def test_runtime_utility_tool_contracts_are_declarative_and_provider_neutral() -> None:
+    catalog = load_tool_contract_catalog_spec("runtime_utility")
+    contracts = {tool.name: tool for tool in catalog.tools}
+
+    assert set(contracts) == {"memory_health", "system_info", "model_available", "report_limit_hit", "get_task_status"}
+    assert contracts["memory_health"].inputSchema["properties"] == {}
+    assert "at least one enabled LLM provider" in contracts["memory_health"].description
+    assert "Ollama" not in contracts["memory_health"].description
+    assert contracts["report_limit_hit"].inputSchema["required"] == ["model_id"]
+    assert contracts["get_task_status"].inputSchema["required"] == ["job_id"]
 
 def test_storage_trust_tool_contracts_are_declarative() -> None:
     catalog = load_tool_contract_catalog_spec("storage_trust")

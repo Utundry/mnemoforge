@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 from app.services.intent_polarity import analyze_intent_polarity
 from app.services.mcp_workflow_specs import load_route_catalog_spec
+from app.services.mcp_sse_tool_catalog import (
+    _extract_json_object,
+    _learned_payload_from_decision,
+    _learned_route_match,
+    _record_learned_route_pattern,
+)
 
 PROJECT_WORK_ROUTE_CATALOG: tuple[dict[str, Any], ...] = tuple(
     route.model_dump()
@@ -692,4 +699,232 @@ def _string_list_arg(value: Any) -> list[str]:
     text = str(value).strip()
     return [text] if text else []
 
+async def project_work_route_with_backend(args: dict[str, Any]) -> dict[str, Any]:
+    backend_requested = str(args.get("scorer_backend") or "auto").strip().lower() or "auto"
+    if backend_requested not in {"lexical", "auto", "llm"}:
+        backend_requested = "auto"
+    lexical_route = project_work_route(
+        args,
+        scorer_meta={
+            "backend_requested": backend_requested,
+            "backend_used": "lexical",
+            "llm_attempted": False,
+            "fallback_reason": "",
+        },
+    )
+    candidates = lexical_route.get("route_candidates") or []
+    route_text = _project_work_backend_text(args)
+    allowed_intent_types = {str(route["intent_type"]) for route in PROJECT_WORK_ROUTE_CATALOG}
+    if backend_requested == "auto":
+        learned_match = _learned_route_match(
+            facade="project_work",
+            text=route_text,
+            allowed_intent_types=allowed_intent_types,
+        )
+    else:
+        learned_match = None
+    learned_payload = _learned_payload_from_decision(learned_match)
+    learned_intent_type = str((learned_match or {}).get("intent_type") or "").strip()
+    can_apply_early = (
+        learned_intent_type in {"next_priority", "list_all_tasks"}
+        and str(learned_payload.get("claim_filter") or "").strip().lower() in {"available", "claimed", "all"}
+    )
+    if learned_match and can_apply_early:
+        learned_args, _ = project_work_args_with_learned_payload(
+            args=args,
+            route={"intent_type": learned_intent_type},
+            learned=learned_match,
+        )
+        return project_work_route(
+            learned_args,
+            llm_decision=learned_match,
+            scorer_meta={
+                "backend_requested": backend_requested,
+                "backend_used": learned_match.get("backend_used") or "learned_semantic",
+                "llm_attempted": False,
+                "fallback_reason": "",
+                "matched_pattern_id": learned_match.get("pattern_id") or "",
+                "matched_pattern_score": learned_match.get("score"),
+                "matched_by": learned_match.get("matched_by") or "",
+            },
+        )
+    should_try_llm = backend_requested == "llm" or (
+        backend_requested == "auto" and project_work_needs_llm_disambiguation(candidates)
+    )
+    if not should_try_llm:
+        return lexical_route
+
+    if backend_requested == "auto":
+        learned = _learned_route_match(
+            facade="project_work",
+            text=route_text,
+            allowed_intent_types=allowed_intent_types,
+        )
+        if learned:
+            learned_args, _ = project_work_args_with_learned_payload(
+                args=args,
+                route={"intent_type": learned.get("intent_type")},
+                learned=learned,
+            )
+            return project_work_route(
+                learned_args,
+                llm_decision=learned,
+                scorer_meta={
+                    "backend_requested": backend_requested,
+                    "backend_used": learned.get("backend_used") or "learned_semantic",
+                    "llm_attempted": False,
+                    "fallback_reason": "",
+                    "matched_pattern_id": learned.get("pattern_id") or "",
+                    "matched_pattern_score": learned.get("score"),
+                    "matched_by": learned.get("matched_by") or "",
+                },
+            )
+    try:
+        decision = await _project_work_llm_disambiguate(route_text, args, candidates)
+    except Exception as exc:
+        lexical_route["scorer"] = {
+            "backend_requested": backend_requested,
+            "backend_used": "lexical",
+            "llm_attempted": True,
+            "fallback_reason": _brief_route_error(exc, default="llm disambiguation failed"),
+        }
+        return lexical_route
+
+    if not decision:
+        lexical_route["scorer"] = {
+            "backend_requested": backend_requested,
+            "backend_used": "lexical",
+            "llm_attempted": True,
+            "fallback_reason": "LLM returned no valid project_work intent_type.",
+        }
+        return lexical_route
+
+    route = project_work_route(
+        args,
+        llm_decision=decision,
+        scorer_meta={
+            "backend_requested": backend_requested,
+            "backend_used": "llm",
+            "llm_attempted": True,
+            "fallback_reason": "",
+            "llm_reason": str(decision.get("reason") or "").strip(),
+        },
+    )
+    pattern_id = _record_learned_route_pattern(facade="project_work", text=route_text, route=route, decision=decision, args=args)
+    if pattern_id:
+        route.setdefault("scorer", {})["learned_pattern_id"] = pattern_id
+    return route
+
+
+async def _project_work_llm_disambiguate(text: str, args: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    from app.dependencies import get_llm_gateway
+
+    allowed = [route["intent_type"] for route in PROJECT_WORK_ROUTE_CATALOG]
+    route_brief = [
+        {
+            "intent_type": route["intent_type"],
+            "tool": route["tool"],
+            "mutating": route["mutating"],
+            "examples": list(route["examples"])[:4],
+        }
+        for route in PROJECT_WORK_ROUTE_CATALOG
+    ]
+    prompt = json.dumps(
+        {
+            "task": "Choose the best project_work route for the user intent. Return only JSON.",
+            "allowed_intent_types": allowed,
+            "intent": text,
+            "explicit_context": {
+                "project": args.get("project"),
+                "task_id_present": bool(args.get("task_id")),
+                "artifact_key_present": bool(args.get("artifact_key")),
+                "changed_files_present": bool(args.get("changed_files")),
+                "summary_present": bool(args.get("summary") or args.get("raw_notes")),
+            },
+            "lexical_candidates": candidates,
+            "route_catalog": route_brief,
+            "output_schema": {
+                "intent_type": "one allowed_intent_types value",
+                "confidence": "number 0..1",
+                "matched_example": "closest example or short rationale phrase",
+                "reason": "one sentence",
+            },
+            "safety": "Only classify route intent. Do not authorize mutations.",
+        },
+        ensure_ascii=False,
+    )
+    response = await get_llm_gateway().generate(
+        prompt,
+        system="You are a strict JSON classifier for MCP route selection. Return only a JSON object.",
+        task_type="intent_classification",
+        mode="economy",
+        max_tokens=240,
+        temperature=0.0,
+        timeout=20.0,
+        allow_local_fallback=True,
+        prefer_local=True,
+    )
+    parsed = _extract_json_object(response)
+    if str(parsed.get("intent_type") or "") not in set(allowed):
+        return {}
+    try:
+        confidence = float(parsed.get("confidence") or 0.0)
+    except Exception:
+        confidence = 0.0
+    parsed["confidence"] = max(0.0, min(1.0, confidence))
+    return parsed
+
+
+def project_work_args_with_learned_payload(
+    *,
+    args: dict[str, Any],
+    route: dict[str, Any],
+    learned: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    if str(args.get("claim_filter") or "").strip():
+        return args, None
+    intent_type = str(route.get("intent_type") or "").strip()
+    if intent_type not in {"next_priority", "list_all_tasks"}:
+        return args, None
+    text = _project_work_backend_text(args)
+    if learned is None:
+        learned = _learned_route_match(
+            facade="project_work",
+            text=text,
+            allowed_intent_types={intent_type},
+        )
+    if not learned:
+        return args, None
+    learned_payload = _learned_payload_from_decision(learned)
+    claim_filter = str(learned_payload.get("claim_filter") or "").strip().lower()
+    if claim_filter not in {"available", "claimed", "all"}:
+        return args, None
+    return {
+        **args,
+        "_learned_claim_filter": claim_filter,
+        "_claim_filter_learning": {
+            "pattern_id": str(learned.get("pattern_id") or ""),
+            "backend_used": str(learned.get("backend_used") or ""),
+            "matched_by": str(learned.get("matched_by") or ""),
+            "score": learned.get("score"),
+        },
+    }, learned
+
+
+def _project_work_backend_text(args: dict[str, Any]) -> str:
+    return " ".join(
+        part
+        for part in (
+            str(args.get("intent") or "").strip(),
+            str(args.get("summary") or "").strip(),
+            str(args.get("raw_notes") or "").strip(),
+            str(args.get("state") or "").strip(),
+        )
+        if part
+    )
+
+
+def _brief_route_error(exc: Exception, *, default: str = "request failed") -> str:
+    text = str(exc).strip()
+    return text[:240] if text else default
 

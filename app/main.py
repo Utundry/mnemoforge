@@ -162,21 +162,27 @@ def _lmstudio_warmup_enabled() -> bool:
 
 
 async def _warmup_local_embedding_services(ollama_svc: OllamaService) -> None:
+    warmed: list[str] = []
+    failures: list[tuple[str, Exception]] = []
+
     if _ollama_warmup_enabled():
         try:
             actual_dim = await _warmup_ollama_embeddings(ollama_svc)
             if actual_dim != settings.embedding_dimensions:
-                logger.warning(
-                    "Ollama embedding dimension mismatch: model '%s' produces %d-dim vectors, "
-                    "but EMBEDDING_DIMENSIONS=%d; embedding gateway will try the next provider.",
-                    settings.ollama_embedding_model,
-                    actual_dim,
-                    settings.embedding_dimensions,
+                failures.append(
+                    (
+                        "Ollama",
+                        RuntimeError(
+                            f"embedding dimension mismatch: model '{settings.ollama_embedding_model}' "
+                            f"produces {actual_dim}-dim vectors, expected {settings.embedding_dimensions}"
+                        ),
+                    )
                 )
             else:
+                warmed.append("Ollama")
                 logger.info("Ollama embed model warmed up (dim=%d)", actual_dim)
         except Exception as e:
-            logger.warning("Ollama warmup failed after retries (will retry via embedding gateway): %s", e)
+            failures.append(("Ollama", e))
     else:
         logger.info("Ollama warmup skipped: Ollama is not enabled in the local LLM provider order")
 
@@ -184,18 +190,42 @@ async def _warmup_local_embedding_services(ollama_svc: OllamaService) -> None:
         try:
             actual_dim = await _warmup_lmstudio_embeddings()
             if actual_dim != settings.embedding_dimensions:
-                logger.warning(
-                    "LM Studio embedding dimension mismatch: selected embedding model produces %d-dim vectors, "
-                    "but EMBEDDING_DIMENSIONS=%d; embedding gateway will try the next provider.",
-                    actual_dim,
-                    settings.embedding_dimensions,
+                failures.append(
+                    (
+                        "LM Studio",
+                        RuntimeError(
+                            f"embedding dimension mismatch: selected embedding model produces {actual_dim}-dim vectors, "
+                            f"expected {settings.embedding_dimensions}"
+                        ),
+                    )
                 )
             else:
+                warmed.append("LM Studio")
                 logger.info("LM Studio embedding model warmed up (dim=%d)", actual_dim)
         except Exception as e:
-            logger.warning("LM Studio warmup failed after retries (will retry via embedding gateway): %s", e)
+            failures.append(("LM Studio", e))
     else:
         logger.info("LM Studio warmup skipped: LM Studio is not enabled in the local LLM provider order")
+
+    if not failures:
+        return
+
+    if warmed:
+        for provider, error in failures:
+            logger.info(
+                "%s warmup failed; local embedding gateway has usable provider(s): %s. Details: %s",
+                provider,
+                ", ".join(warmed),
+                error,
+            )
+        return
+
+    for provider, error in failures:
+        logger.warning(
+            "%s warmup failed after retries; no enabled local embedding provider warmed up yet. Details: %s",
+            provider,
+            error,
+        )
 
 
 async def _ensure_qdrant_ready(qdrant_svc: QdrantService) -> None:
@@ -1756,10 +1786,10 @@ async def lifespan(app: FastAPI):
         logger.warning("Startup living docs refresh failed (non-fatal): %s", _docs_startup_err)
 
     logger.info(
-        "Memory server ready — Qdrant=%s:%s, Ollama=%s, model=%s",
+        "Memory server ready - Qdrant=%s:%s, local_llm_provider=%s, embedding_model=%s",
         settings.qdrant_host,
         settings.qdrant_port,
-        settings.ollama_base_url,
+        os.getenv("LOCAL_LLM_PROVIDER", settings.local_llm_provider).strip() or "auto",
         settings.ollama_embedding_model,
     )
 

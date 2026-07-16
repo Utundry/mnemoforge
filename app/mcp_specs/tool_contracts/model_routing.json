@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "id": "model_routing",
+  "purpose": "Declarative MCP tool contracts for model routing.",
+  "tools": [
+    {
+      "name": "registry_best",
+      "description": "Find the best component (local LLM, cloud LLM, skill) for a given task type. Use this to decide whether to handle a task locally or escalate to cloud.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "task_type"
+        ],
+        "properties": {
+          "task_type": {
+            "type": "string",
+            "description": "Task type: layout_fix, log_filter, fact_extraction, code_generation, code_review, text_summarization, skill_tagging, relevance_scoring, memory_extraction, query_expansion, architecture"
+          },
+          "exclude": {
+            "type": "string",
+            "description": "Comma-separated components to exclude"
+          },
+          "top": {
+            "type": "integer",
+            "default": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "registry_update",
+      "description": "Record a task outcome to update capability scores. Call after every LLM task to improve routing over time.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "component",
+          "task_type",
+          "success"
+        ],
+        "properties": {
+          "component": {
+            "type": "string",
+            "description": "e.g. 'qwen3:1.7b', 'cloud-llm', 'skill:fix-layout'"
+          },
+          "task_type": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string",
+            "default": ""
+          }
+        }
+      }
+    },
+    {
+      "name": "registry_components",
+      "description": "List all registered components with their capability scores per task type.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "route_task",
+      "description": "Classify a task and get routing recommendation: which component to use (local LLM, cached skill, or cloud LLM). Use this before expensive cloud LLM calls to check if local can handle it. After executing, record outcome with track_task.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "Task description in natural language"
+          },
+          "task_type": {
+            "type": "string",
+            "description": "Override auto-classification"
+          },
+          "preferred_tier": {
+            "type": "string",
+            "enum": [
+              "local",
+              "cloud",
+              "skill"
+            ],
+            "description": "Force a specific tier"
+          }
+        }
+      }
+    },
+    {
+      "name": "track_task",
+      "description": "Record a task execution outcome to the performance tracker. Call after every LLM task to build accurate capability data. If the task was misrouted (wrong task_type), set corrected_task_type to teach the dispatcher.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "component",
+          "task_type",
+          "success"
+        ],
+        "properties": {
+          "component": {
+            "type": "string",
+            "description": "'qwen3:1.7b', 'cloud-llm', 'skill:<name>'"
+          },
+          "task_type": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "latency_ms": {
+            "type": "number"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "corrected_task_type": {
+            "type": "string",
+            "description": "Set if the task was misclassified \u2014 the actual task type that should have been routed. Ivanov's feedback to Uncle Petya."
+          }
+        }
+      }
+    },
+    {
+      "name": "tracker_stats",
+      "description": "Get aggregate performance statistics: success rates and latencies per component+task_type.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "component": {
+            "type": "string"
+          },
+          "task_type": {
+            "type": "string"
+          },
+          "since_hours": {
+            "type": "number",
+            "description": "Limit to last N hours"
+          }
+        }
+      }
+    }
+  ]
+}

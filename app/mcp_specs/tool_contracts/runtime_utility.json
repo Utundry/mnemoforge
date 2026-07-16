@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "id": "runtime_utility",
+  "purpose": "Declarative contracts for runtime health, system observability, and model availability utilities.",
+  "tools": [
+    {
+      "name": "memory_health",
+      "description": "Check memory server health, storage reachability, and whether at least one enabled LLM provider is usable.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "system_info",
+      "description": "Get a full overview of the SloplessCode system: components, live counters, configured LLM providers, available models, and infrastructure status. Call this when you need to understand what the system can do or explain it to the user.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "model_available",
+      "description": "List available cloud models ranked by remaining quota capacity. Use before starting a long task to pick the model with most remaining budget. Optionally filter by task_type to see models capable of specific tasks.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task_type": {
+            "type": "string",
+            "description": "Filter by task capability (optional)"
+          }
+        }
+      }
+    },
+    {
+      "name": "report_limit_hit",
+      "description": "Signal that a cloud model hit its rate/quota limit (429 or similar error). Triggers a cooldown period. Call this automatically when you receive a rate-limit error. After calling this, use model_available or route_task to find the next available model.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "model_id"
+        ],
+        "properties": {
+          "model_id": {
+            "type": "string",
+            "description": "Cloud model id or component, e.g. claude-sonnet or gpt-4o"
+          },
+          "error_code": {
+            "type": "string",
+            "description": "HTTP error code or API error code"
+          },
+          "error_msg": {
+            "type": "string",
+            "description": "Error message from the API"
+          },
+          "retry_after": {
+            "type": "integer",
+            "description": "Cooldown seconds (default 3600)"
+          }
+        }
+      }
+    },
+    {
+      "name": "get_task_status",
+      "description": "Check the status of a background job submitted via ?background=true. Returns status (queued/running/done/failed) and result when complete. Use after submitting project_ingest, project_refresh, or skills_retag in background mode.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "job_id"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "description": "Job ID returned by background submission"
+          }
+        }
+      }
+    }
+  ]
+}

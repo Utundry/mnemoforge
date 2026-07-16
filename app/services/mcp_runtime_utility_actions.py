@@ -38,15 +38,35 @@ async def execute_runtime_utility_action(
         infra = data.get("infrastructure", {})
         counters = data.get("counters", {})
         components = data.get("components", [])
-        models = infra.get("ollama", {}).get("models", [])
+        llm_providers = infra.get("llm_providers", {}) if isinstance(infra.get("llm_providers"), dict) else {}
+        available_llms = llm_providers.get("available_llms") if isinstance(llm_providers.get("available_llms"), list) else []
+        usable_providers = llm_providers.get("usable_providers") if isinstance(llm_providers.get("usable_providers"), list) else []
+        provider_matrix = llm_providers.get("providers") if isinstance(llm_providers.get("providers"), dict) else {}
         qdrant_status = "ok" if infra.get("qdrant", {}).get("reachable") else "fail"
-        ollama_status = "ok" if infra.get("ollama", {}).get("reachable") else "fail"
+        llm_status = "ok" if llm_providers.get("healthy") else "fail"
+        provider_summary = ", ".join(str(item) for item in usable_providers) or "none"
+        model_summary = ", ".join(
+            str(item.get("id") or item.get("provider") or "llm")
+            for item in available_llms
+            if isinstance(item, dict)
+        ) or "none"
+        if model_summary == "none":
+            ollama_models = infra.get("ollama", {}).get("models", [])
+            if ollama_models:
+                model_summary = ", ".join(str(item) for item in ollama_models)
+        embedding_provider = "gateway"
+        for provider_name, provider in provider_matrix.items():
+            if not isinstance(provider, dict):
+                continue
+            if provider.get("enabled") and provider.get("reachable") and provider.get("kind") in {"local", "local_openai_compatible"}:
+                embedding_provider = str(provider_name)
+                break
 
         lines = [
             f"SloplessCode status: {data.get('status','?')} | uptime: {data.get('uptime_seconds',0)//60}m",
-            f"Qdrant: {qdrant_status}  Ollama: {ollama_status}  "
-            f"embedding: {infra.get('embedding_model','?')} ({infra.get('embedding_dimensions','?')}d)",
-            f"Models: {', '.join(models) or 'none'}",
+            f"Qdrant: {qdrant_status}  LLM providers: {llm_status}  usable: {provider_summary}  "
+            f"embedding: {embedding_provider}/{infra.get('embedding_model','?')} ({infra.get('embedding_dimensions','?')}d)",
+            f"Models: {model_summary}",
             "",
             f"Counters: memories={counters.get('memories',0)}  "
             f"skills={counters.get('skills',0)}  "

@@ -29,6 +29,7 @@ MEMORY_ACTIONS = {
 }
 
 RUNTIME_UTILITY_ACTIONS = {
+    "memory_health",
     "system_info",
     "memory_stats",
     "registry_best",

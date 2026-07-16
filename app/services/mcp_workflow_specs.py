@@ -254,6 +254,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
     project_knowledge_core_tool_contracts = tool_contracts_by_id["project_knowledge_core"]
     project_work_tool_contracts = tool_contracts_by_id["project_work_facade"]
     remote_snapshot_tool_contracts = tool_contracts_by_id["remote_snapshot"]
+    runtime_utility_tool_contracts = tool_contracts_by_id["runtime_utility"]
     storage_trust_tool_contracts = tool_contracts_by_id["storage_trust"]
     coordination_message_tool_contracts = tool_contracts_by_id["coordination_messages"]
     governance_feedback_tool_contracts = tool_contracts_by_id["governance_feedback"]
@@ -352,6 +353,7 @@ def validate_specs(*, spec_root: Path = DEFAULT_SPEC_ROOT) -> dict[str, Any]:
         ],
         "project_work_tool_contracts": [tool.name for tool in project_work_tool_contracts.tools],
         "remote_snapshot_tool_contracts": [tool.name for tool in remote_snapshot_tool_contracts.tools],
+        "runtime_utility_tool_contracts": [tool.name for tool in runtime_utility_tool_contracts.tools],
         "storage_trust_tool_contracts": [tool.name for tool in storage_trust_tool_contracts.tools],
         "coordination_message_tool_contracts": [
             tool.name for tool in coordination_message_tool_contracts.tools

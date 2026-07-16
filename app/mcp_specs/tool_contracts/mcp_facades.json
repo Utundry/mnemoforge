@@ -1,0 +1,545 @@
+{
+  "version": 1,
+  "id": "mcp_facades",
+  "purpose": "Declarative MCP tool contracts for mcp facades.",
+  "tools": [
+    {
+      "name": "ask_project",
+      "description": "Human-facing read-only project expert facade. Ask a natural project question; SloplessCode chooses the thematic facade, route, and response format.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "project": {
+            "type": "string",
+            "default": "mnemoforge"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string",
+            "description": "Natural user question such as 'what is task 382e7306?' or 'is this repo usable yet?'"
+          },
+          "query": {
+            "type": "string",
+            "description": "Compatibility alias for question used by some MCP clients."
+          },
+          "detail": {
+            "type": "string",
+            "enum": [
+              "compact",
+              "full"
+            ],
+            "default": "compact"
+          },
+          "client_profile": {
+            "type": "string",
+            "enum": [
+              "default",
+              "local",
+              "small_context",
+              "agent"
+            ],
+            "default": "default"
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "answer",
+              "diagnostic",
+              "json"
+            ],
+            "default": "auto"
+          },
+          "evaluation_footer": {
+            "type": "string",
+            "enum": [
+              "none",
+              "routine_reduction"
+            ],
+            "default": "none",
+            "description": "Optional self-contained test footer for weak local models; routine_reduction appends ROUTINE_REDUCTION_OK."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20
+          }
+        }
+      }
+    },
+    {
+      "name": "project_rules",
+      "description": "Thematic rule-governance facade. Use for intents such as 'this is a rule', 'why did you forget the rule?', 'check project laws', 'review rule candidates', 'propose new law', or 'promote/revise a law'. It routes to laws, candidates, review packets, promotion, and revision tools while guarding all mutating governance actions unless allow_mutation=true.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "intent"
+        ],
+        "properties": {
+          "project": {
+            "type": "string",
+            "default": "mnemoforge"
+          },
+          "intent": {
+            "type": "string"
+          },
+          "candidate_id": {
+            "type": "string"
+          },
+          "law_id": {
+            "type": "string"
+          },
+          "source_task_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "user_confirmed",
+              "candidate",
+              "needs_clarification",
+              "trial",
+              "revision_pending",
+              "rejected",
+              "suppressed",
+              "all"
+            ],
+            "default": "active"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "reject",
+              "suppress",
+              "needs_clarification",
+              "reopen"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "statement": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "target_scope": {
+            "type": "string",
+            "enum": [
+              "project",
+              "family",
+              "domain",
+              "principle",
+              "meta"
+            ]
+          },
+          "target_status": {
+            "type": "string",
+            "enum": [
+              "trial",
+              "candidate",
+              "proposed",
+              "user_confirmed",
+              "active"
+            ],
+            "default": "trial"
+          },
+          "review_due": {
+            "type": "boolean",
+            "default": false
+          },
+          "review_after_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 365,
+            "default": 7
+          },
+          "trial_days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3650,
+            "default": 30
+          },
+          "confirmed_by": {
+            "type": "string"
+          },
+          "allow_mutation": {
+            "type": "boolean",
+            "default": false
+          },
+          "diagnostic": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return a compact plain-text route diagnostic block."
+          },
+          "answer": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return a compact final-answer-shaped plain-text block."
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "json",
+              "diagnostic",
+              "answer"
+            ],
+            "default": "json"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 100
+          },
+          "max_matches": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "default": 5
+          },
+          "acted_by": {
+            "type": "string",
+            "default": "codex"
+          }
+        }
+      }
+    },
+    {
+      "name": "project_context",
+      "description": "Thematic project-context facade. Use for 'give context', 'what matters here', 'project constraints', 'readiness/bootstrap', and source-loss reconstruction context. It routes to enrichment, laws, readiness, and reconstruction surfaces without requiring agents to choose from the full catalog.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "intent"
+        ],
+        "properties": {
+          "project": {
+            "type": "string",
+            "default": "mnemoforge"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string",
+            "description": "Optional full or partial task id for direct task lookup/replay."
+          },
+          "detail": {
+            "type": "string",
+            "enum": [
+              "compact",
+              "full"
+            ],
+            "default": "compact"
+          },
+          "context_profile": {
+            "type": "string",
+            "enum": [
+              "default",
+              "handoff_compact",
+              "hot_path"
+            ],
+            "default": "hot_path"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "user_confirmed",
+              "all"
+            ],
+            "default": "active"
+          },
+          "diagnostic": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients."
+          },
+          "answer": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return a final-answer-shaped plain-text block for small local models."
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "json",
+              "diagnostic",
+              "answer"
+            ],
+            "default": "json"
+          },
+          "scorer_backend": {
+            "type": "string",
+            "enum": [
+              "lexical",
+              "auto",
+              "llm"
+            ],
+            "default": "auto",
+            "description": "Route scorer backend. auto keeps deterministic lexical strong matches and uses cheap LLM disambiguation when no explicit route is found; lexical forces deterministic-only routing."
+          },
+          "max_components": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "default": 5
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20
+          },
+          "max_items_per_layer": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 10
+          },
+          "include_replay_bundle": {
+            "type": "boolean",
+            "default": false
+          },
+          "agent_id": {
+            "type": "string",
+            "default": "codex"
+          }
+        }
+      }
+    },
+    {
+      "name": "project_verify",
+      "description": "Thematic verification facade. Use for tests, live validation, restarts, health checks, and validation planning. It surfaces project-defined verification contour refs, live/test boundary refs, and restart validation window refs instead of making agents hunt through verification tools.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "intent"
+        ],
+        "properties": {
+          "project": {
+            "type": "string",
+            "default": "mnemoforge"
+          },
+          "intent": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "planning",
+              "implementation",
+              "verification",
+              "live_validation",
+              "documentation",
+              "checkpointing",
+              "handoff",
+              "operator_review"
+            ]
+          },
+          "changed_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "stage_evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "prior_stage_recorded": {
+            "type": "boolean"
+          },
+          "diagnostic": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients."
+          },
+          "answer": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return a final-answer-shaped plain-text block for small local models."
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "json",
+              "diagnostic",
+              "answer"
+            ],
+            "default": "json"
+          },
+          "scorer_backend": {
+            "type": "string",
+            "enum": [
+              "lexical",
+              "auto",
+              "llm"
+            ],
+            "default": "auto",
+            "description": "Route scorer backend. auto keeps deterministic lexical strong matches and uses cheap LLM disambiguation when no explicit route is found; lexical forces deterministic-only routing."
+          }
+        }
+      }
+    },
+    {
+      "name": "project_capture",
+      "description": "Thematic capture facade. Use for stenographer/clerk drafts, checkpoints, handoff, and 'save the work' intents. Review-only drafts run directly; governed memory writes and stenographer writes are guarded unless allow_mutation=true.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "intent"
+        ],
+        "properties": {
+          "project": {
+            "type": "string",
+            "default": "mnemoforge"
+          },
+          "intent": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "artifact_key": {
+            "type": "string"
+          },
+          "work_id": {
+            "type": "string"
+          },
+          "task_title": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "raw_notes": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "default": "implementation"
+          },
+          "status": {
+            "type": "string",
+            "default": "active"
+          },
+          "changed_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "verification": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "next_step": {
+            "type": "string"
+          },
+          "next_step_scope": {
+            "type": "string"
+          },
+          "span_type": {
+            "type": "string"
+          },
+          "allow_mutation": {
+            "type": "boolean",
+            "default": false
+          },
+          "use_llm": {
+            "type": "boolean",
+            "default": false
+          },
+          "diagnostic": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return a compact plain-text route diagnostic block for local/weak MCP clients."
+          },
+          "answer": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return a final-answer-shaped plain-text block for small local models."
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "json",
+              "diagnostic",
+              "answer"
+            ],
+            "default": "json"
+          },
+          "scorer_backend": {
+            "type": "string",
+            "enum": [
+              "lexical",
+              "auto",
+              "llm"
+            ],
+            "default": "auto",
+            "description": "Route scorer backend. auto keeps deterministic lexical strong matches and uses cheap LLM disambiguation when no explicit route is found; lexical forces deterministic-only routing."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50
+          },
+          "agent_id": {
+            "type": "string",
+            "default": "codex"
+          },
+          "acted_by": {
+            "type": "string",
+            "default": "codex"
+          },
+          "work_token": {
+            "type": "string",
+            "default": "",
+            "description": "Work token from start_task_session for mutating operations. Required when allow_mutation=true and a task is claimed."
+          }
+        }
+      }
+    }
+  ]
+}

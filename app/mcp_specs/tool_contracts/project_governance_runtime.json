@@ -1,0 +1,439 @@
+{
+  "version": 1,
+  "id": "project_governance_runtime",
+  "purpose": "Declarative MCP tool contracts for project governance runtime.",
+  "tools": [
+    {
+      "name": "report_issue",
+      "description": "Report a missing feature, incorrect behavior, or improvement idea encountered while working. Use this when you hit a limitation or bug in SloplessCode or any project. Saved improvements are reviewed during future development sessions.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "title",
+          "description"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Short title of the issue or improvement"
+          },
+          "description": {
+            "type": "string",
+            "description": "Full description with context, steps to reproduce, expected behavior"
+          },
+          "project": {
+            "type": "string",
+            "default": "mnemoforge",
+            "description": "Which project this applies to"
+          },
+          "agent_id": {
+            "type": "string",
+            "default": "llm",
+            "description": "Who is reporting"
+          },
+          "importance_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10,
+            "default": 0.7,
+            "description": "Importance on 0..1 scale. Values >1 and <=10 are accepted as 1..10 shorthand and normalized."
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "proposal",
+              "beta_test",
+              "experimental",
+              "stable",
+              "deprecated"
+            ],
+            "default": "proposal",
+            "description": "Optional improvement stage"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "effective",
+              "ineffective"
+            ],
+            "description": "Optional quality verdict"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        }
+      }
+    },
+    {
+      "name": "list_project_laws",
+      "description": "List project laws through MCP so agents can retrieve active project rules without reading repo files directly.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "observed",
+              "proposed",
+              "reviewed",
+              "user_confirmed",
+              "active",
+              "suppressed",
+              "superseded",
+              "archived",
+              "all"
+            ],
+            "default": "active"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "project",
+              "family",
+              "domain",
+              "principle",
+              "meta"
+            ]
+          },
+          "include_promoted": {
+            "type": "boolean",
+            "default": true
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20
+          }
+        }
+      }
+    },
+    {
+      "name": "get_project_law",
+      "description": "Retrieve one project law by id.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "law_id"
+        ],
+        "properties": {
+          "law_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "project_rule_candidates_from_stenography",
+      "description": "Project explicit stenographer rule marker spans into reviewable rule candidates. Use after task closeout; this does not activate laws.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "default": "mnemoforge"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000,
+            "default": 500
+          }
+        }
+      }
+    },
+    {
+      "name": "list_rule_candidates",
+      "description": "List reviewable rule candidates created from explicit rule markers.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "candidate",
+              "needs_clarification",
+              "trial",
+              "revision_pending",
+              "rejected",
+              "suppressed"
+            ]
+          },
+          "source_task_id": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 100
+          }
+        }
+      }
+    },
+    {
+      "name": "get_rule_candidate_review_packet",
+      "description": "Build a read-only grouped review packet for rule candidates, including deterministic overlap with active laws and other candidates. Use before promotion, rejection, or merge decisions.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "candidate",
+              "needs_clarification",
+              "trial",
+              "revision_pending",
+              "rejected",
+              "suppressed"
+            ],
+            "default": "candidate"
+          },
+          "source_task_id": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 100
+          },
+          "max_matches": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "default": 5
+          }
+        }
+      }
+    },
+    {
+      "name": "review_rule_candidate",
+      "description": "Apply a safe operator review action to a rule candidate without mutating the law layer. Supports reject, suppress, needs_clarification, and reopen.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "action",
+          "reason"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "reject",
+              "suppress",
+              "needs_clarification",
+              "reopen"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "acted_by": {
+            "type": "string",
+            "default": "codex"
+          },
+          "source": {
+            "type": "string",
+            "default": "mcp_rule_candidate_review"
+          }
+        }
+      }
+    },
+    {
+      "name": "promote_rule_candidate",
+      "description": "Promote a reviewed rule candidate into the law layer, preserving candidate evidence and recording promoted_law_id on the candidate. Defaults to proposed status; active/user_confirmed require confirmation metadata.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "reason"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "target_scope": {
+            "type": "string",
+            "enum": [
+              "project",
+              "family",
+              "domain",
+              "principle",
+              "meta"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "proposed",
+              "user_confirmed",
+              "active"
+            ],
+            "default": "proposed"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "acted_by": {
+            "type": "string",
+            "default": "codex"
+          },
+          "source": {
+            "type": "string",
+            "default": "mcp_rule_candidate_promotion"
+          },
+          "confirmed_by": {
+            "type": "string"
+          },
+          "confirmation_source": {
+            "type": "string",
+            "default": "mcp_rule_candidate_promotion"
+          }
+        }
+      }
+    },
+    {
+      "name": "revise_law_from_rule_candidate",
+      "description": "Create a pending candidate_revision on an existing law from a reviewed rule candidate. The active law remains effective until the revision is explicitly confirmed.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "candidate_id",
+          "law_id",
+          "reason"
+        ],
+        "properties": {
+          "candidate_id": {
+            "type": "string"
+          },
+          "law_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "acted_by": {
+            "type": "string",
+            "default": "codex"
+          },
+          "source": {
+            "type": "string",
+            "default": "mcp_rule_candidate_law_revision"
+          },
+          "title": {
+            "type": "string"
+          },
+          "statement": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "improvements_report",
+      "description": "Generate a project status report: stats (total/open/resolved, top tags) and a GLM-written narrative summary with achievements and priorities. Use when you want a quick structured overview of project health.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "default": "mnemoforge",
+            "description": "Project name to report on"
+          }
+        }
+      }
+    },
+    {
+      "name": "knowledge_hierarchy",
+      "description": "Inspect canonical knowledge hierarchy grouped by scope. Returns domain/principle/meta canonicals, totals, and lifecycle counts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "topic_prefix": {
+            "type": "string",
+            "description": "Optional topic_path prefix filter"
+          },
+          "include_suppressed": {
+            "type": "boolean",
+            "default": false
+          },
+          "limit_per_scope": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 25
+          },
+          "reconcile": {
+            "type": "boolean",
+            "default": false,
+            "description": "Refresh canonical lifecycle before reading"
+          }
+        }
+      }
+    },
+    {
+      "name": "canonicals_by_scope",
+      "description": "List canonical memories for one scope (domain, principle, or meta).",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "domain",
+              "principle",
+              "meta"
+            ]
+          },
+          "topic_prefix": {
+            "type": "string",
+            "description": "Optional topic_path prefix filter"
+          },
+          "include_suppressed": {
+            "type": "boolean",
+            "default": false
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 50
+          }
+        }
+      }
+    }
+  ]
+}

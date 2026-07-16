@@ -1,0 +1,523 @@
+{
+  "version": 1,
+  "id": "memory_operations",
+  "purpose": "Declarative MCP tool contracts for memory operations.",
+  "tools": [
+    {
+      "name": "memory_store",
+      "description": "Save a new memory to the semantic memory store. Use this to persist facts, preferences, experiences, tasks, or context so they can be retrieved later by semantic search.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "content",
+          "agent_id"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The memory text to store"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Identifier of the agent/user who owns this memory"
+          },
+          "memory_type": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "preference",
+              "experience",
+              "task",
+              "context"
+            ],
+            "default": "fact"
+          },
+          "category": {
+            "type": "string",
+            "default": "general"
+          },
+          "importance_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.5
+          },
+          "source": {
+            "type": "string",
+            "default": "conversation"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string",
+            "description": "Project this memory belongs to"
+          },
+          "project_id": {
+            "type": "string",
+            "description": "Compatibility alias for project"
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_search",
+      "description": "Search the semantic memory store using natural language. Returns the most relevant memories sorted by a composite score (similarity + importance + recency).",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Natural language search query"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Filter by agent ID (optional)"
+          },
+          "memory_type": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "preference",
+              "experience",
+              "task",
+              "context"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string",
+            "description": "Filter to memories attributed to this project"
+          },
+          "project_id": {
+            "type": "string",
+            "description": "Compatibility alias for project"
+          },
+          "context_project": {
+            "type": "string",
+            "description": "Boost memories tagged project:<this> without filtering"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 5
+          },
+          "min_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.0
+          },
+          "since_minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Only memories added within last N minutes"
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_tree_slice",
+      "description": "Search semantic memory using hierarchical tree structure. Returns knowledge slice from trunk (general) to leaves (specific). Provides context from general to specific knowledge.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "query",
+          "agent_id"
+        ],
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_context",
+      "description": "Build a model-ready context bundle from semantic memory search results. Returns a single text block plus a session_id that can be used with record_memory_outcome.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Natural language query for /memories/context"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent ID (optional)"
+          },
+          "memory_type": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "preference",
+              "experience",
+              "task",
+              "context"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 10
+          },
+          "min_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.0
+          },
+          "since_minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Only memories added within last N minutes"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 10000,
+            "default": 2000
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "text",
+              "markdown"
+            ],
+            "default": "markdown"
+          },
+          "context_project": {
+            "type": "string"
+          },
+          "context_file": {
+            "type": "string"
+          },
+          "context_task_type": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Optional episode/session id for outcome linking"
+          }
+        }
+      }
+    },
+    {
+      "name": "record_memory_outcome",
+      "description": "Record success/fail outcome for a /memories/context session and update importance scores of memories used in that episode.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the session outcome was successful"
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Episode id returned by memory_context (preferred)"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Agent identifier (optional)"
+          },
+          "project": {
+            "type": "string",
+            "description": "Project name (optional)"
+          },
+          "memory_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "boost": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "penalty": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_recent",
+      "description": "List memories added recently, sorted by time descending. Use to see what was saved in the last N minutes without needing a search query.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440,
+            "default": 10,
+            "description": "How many minutes back to look"
+          },
+          "agent_id": {
+            "type": "string",
+            "description": "Filter by agent ID (optional)"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_get",
+      "description": "Retrieve a specific memory by its UUID.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "memory_id"
+        ],
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "description": "UUID of the memory"
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_delete",
+      "description": "Permanently delete a memory by its UUID.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "memory_id"
+        ],
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "description": "UUID of the memory to delete"
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_batch_store",
+      "description": "Store multiple memories in a single request.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "memories"
+        ],
+        "properties": {
+          "memories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "content",
+                "agent_id"
+              ],
+              "properties": {
+                "content": {
+                  "type": "string"
+                },
+                "agent_id": {
+                  "type": "string"
+                },
+                "memory_type": {
+                  "type": "string"
+                },
+                "category": {
+                  "type": "string"
+                },
+                "importance_score": {
+                  "type": "number"
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "minItems": 1,
+            "maxItems": 100
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_cleanup",
+      "description": "Delete old and low-importance memories to free space.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "min_importance": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.2
+          },
+          "max_age_days": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 30
+          }
+        }
+      }
+    },
+    {
+      "name": "memory_stats",
+      "description": "Get statistics about the memory collection (count, status, etc.).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "ingest_file",
+      "description": "Parse a local file (.md, .txt, .rst) into chunks and store each chunk as a memory. Markdown files are split by headings; text files by paragraphs.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "path",
+          "agent_id"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute or relative path to the file"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Base directory for resolving a relative path"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "memory_type": {
+            "type": "string",
+            "default": "context"
+          },
+          "category": {
+            "type": "string",
+            "default": "document"
+          },
+          "importance_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.5
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "session_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "ingest_dir",
+      "description": "Recursively scan a directory, parse all supported files, and store their contents as memories.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "path",
+          "agent_id"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute or relative path to the directory"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Base directory for resolving a relative path"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "memory_type": {
+            "type": "string",
+            "default": "context"
+          },
+          "category": {
+            "type": "string",
+            "default": "document"
+          },
+          "importance_score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.5
+          },
+          "extensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "recursive": {
+            "type": "boolean",
+            "default": true
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "session_id": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}
