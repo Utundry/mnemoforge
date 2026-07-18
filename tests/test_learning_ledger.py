@@ -292,6 +292,43 @@ class TestCandidateLifecycle:
         assert art["evidence_count"] == 2
 
     @pytest.mark.asyncio
+    async def test_upsert_candidate_dedups_replayed_evidence_fingerprint(self, store):
+        uid1, created1 = await store.upsert_candidate(
+            agent_id="test",
+            action_type="suggest_save_result",
+            content="save results",
+            meta={"evidence_fingerprint": "window-a"},
+        )
+        uid2, created2 = await store.upsert_candidate(
+            agent_id="test",
+            action_type="suggest_save_result",
+            content="save results",
+            meta={"evidence_fingerprint": "window-a"},
+        )
+
+        assert created1 is True
+        assert created2 is False
+        assert uid1 == uid2
+
+        art = await store.get_artifact(uid1)
+        assert art["evidence_count"] == 1
+        assert (art.get("meta") or {}).get("last_evidence_counted") is False
+        assert (art.get("meta") or {}).get("duplicate_evidence_fingerprint_count") == 1
+
+        uid3, created3 = await store.upsert_candidate(
+            agent_id="test",
+            action_type="suggest_save_result",
+            content="save results",
+            meta={"evidence_fingerprint": "window-b"},
+        )
+
+        assert created3 is False
+        assert uid3 == uid1
+        art = await store.get_artifact(uid1)
+        assert art["evidence_count"] == 2
+        assert (art.get("meta") or {}).get("last_evidence_counted") is True
+
+    @pytest.mark.asyncio
     async def test_upsert_candidate_semantic_dedup_across_context_signature(self, store, monkeypatch):
         import app.services.learning_store as ls
 

@@ -22,6 +22,15 @@
       "risk_if_failed": "Agent may rely on chat memory, local files, or direct backend access for governed project state."
     },
     {
+      "id": "mcp_availability_before_work",
+      "severity": "P0",
+      "nudge_priority": 80,
+      "stage_scope": ["planning", "implementation", "verification", "checkpointing", "handoff"],
+      "question": "Is the public MCP memory server available before I start, checkpoint, or finish governed work?",
+      "expected_cues": ["law:mcp_unavailable_pause"],
+      "risk_if_failed": "Agent may complete local work that cannot be claimed, checkpointed, recovered, or finished in governed project memory."
+    },
+    {
       "id": "next_safe_action_orientation",
       "severity": "P0",
       "nudge_priority": 60,

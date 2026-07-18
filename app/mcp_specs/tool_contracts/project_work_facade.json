@@ -87,6 +87,11 @@
             "type": "string",
             "description": "Concrete work session id used to resume or finish lifecycle work after process/session restart."
           },
+          "work_handle": {
+            "type": "string",
+            "default": "",
+            "description": "Preferred public continuation handle from start_task_session or claim_task; use it for checkpoint, finish, and FSM recovery instead of guessing session identity."
+          },
           "agent_fingerprint": {
             "type": "string",
             "description": "Stable non-secret agent fingerprint used by task reclaim policy."
@@ -113,4 +118,3 @@
     }
   ]
 }
-

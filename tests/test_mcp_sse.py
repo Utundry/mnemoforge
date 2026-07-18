@@ -1228,6 +1228,8 @@ class TestMcpToolExecution:
         assert "live_validation" in props["state"]["enum"]
         assert "session_id" in props
         assert "work_id" in props
+        assert "work_handle" in props
+        assert "public continuation handle" in props["work_handle"]["description"]
         assert "owner_agent" in props
         assert "agent_fingerprint" in props
         assert props["runtime_profile_id"]["default"] == "unknown_cli"
@@ -6693,6 +6695,62 @@ class TestMcpToolExecution:
             assert data["submit_payload"]["work_token"] == "[REDACTED]"
             assert calls[0][1]["work_token"] == work_token
             assert calls
+        finally:
+            lease_store.close()
+
+    async def test_project_work_allow_mutation_executes_finish_with_owned_work_handle(self, monkeypatch):
+        from pathlib import Path
+        from app.services import task_lease_service as lease_mod
+
+        lease_store = lease_mod.TaskLeaseStore(Path(":memory:"))
+        monkeypatch.setattr(lease_mod, "_STORE", lease_store)
+        monkeypatch.setattr(mcp_sse, "_session_observe", AsyncMock())
+        calls: list[tuple[str, dict]] = []
+
+        async def fake_execute_tool(name: str, args: dict, api_base: str, session_id: str | None = None):
+            calls.append((name, args))
+            assert name == "finish_task_session"
+            assert args["project"] == "alpha"
+            assert args["task_id"] == "task-handle"
+            assert args["work_handle"] == work_handle
+            assert args["work_token"] == ""
+            assert args["session_id"] == ""
+            return json.dumps({"status": "finished", "task_id": "task-handle"})
+
+        monkeypatch.setattr(mcp_sse, "_execute_tool", fake_execute_tool)
+
+        try:
+            claim_result = lease_store.claim(
+                project="alpha",
+                task_id="task-handle",
+                owner_agent="codex",
+                session_id="original-session",
+            )
+            work_handle = lease_mod.build_work_handle(
+                lease=claim_result.lease,
+                work_token=claim_result.work_token,
+            )
+            data = await mcp_sse._build_project_work_payload(
+                "http://test",
+                {
+                    "project": "alpha",
+                    "task_id": "task-handle",
+                    "agent_id": "codex",
+                    "intent": "finish task session",
+                    "summary": "Completed lifecycle work through handle.",
+                    "verification": ["verification_contour:alpha:focused-tests passed"],
+                    "changed_files": ["app/routers/mcp_sse.py"],
+                    "next_step": "none",
+                    "allow_mutation": True,
+                    "work_handle": work_handle,
+                },
+            )
+            assert data["status"] == "executed"
+            assert data["action_status"] == "executed"
+            assert data["selected_route"]["tool"] == "finish_task_session"
+            assert data["result"]["status"] == "finished", data["result"]
+            assert data["submit_payload"]["work_handle"] == work_handle
+            assert calls[0][1]["work_handle"] == work_handle
         finally:
             lease_store.close()
 

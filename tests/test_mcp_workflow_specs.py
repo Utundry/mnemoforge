@@ -404,6 +404,8 @@ def test_project_work_tool_contract_is_declarative() -> None:
     properties = contract.inputSchema["properties"]
     assert properties["session_id"]["type"] == "string"
     assert properties["work_id"]["type"] == "string"
+    assert properties["work_handle"]["type"] == "string"
+    assert "public continuation handle" in properties["work_handle"]["description"]
     assert properties["runtime_profile_id"]["default"] == "unknown_cli"
     assert properties["lease_ttl_seconds"]["default"] == 900
 
@@ -663,6 +665,7 @@ def test_mailbox_state_packet_surfaces_compact_context_cues() -> None:
     assert cues
     assert any(cue["cue"] == "law:internal_english_contract" for cue in cues)
     assert any(cue["cue"] == "law:mcp_first_workflow_context" for cue in cues)
+    assert any(cue["cue"] == "law:mcp_unavailable_pause" for cue in cues)
     assert "law:test_contour_before_live" not in {cue["cue"] for cue in cues}
     assert "law:checkpoint_after_work_slice" not in {cue["cue"] for cue in cues}
     assert all("full_text" not in cue for cue in cues)
@@ -844,6 +847,19 @@ def test_context_cues_for_query_remind_mcp_first_workflow_context() -> None:
     assert "full_text" not in cues[0]
 
 
+def test_context_cues_for_query_pause_when_mcp_memory_is_unavailable() -> None:
+    cues = context_cues_for_query(
+        query="Cannot connect to memory server while recording checkpoint; retry or restart MCP before continuing",
+        project="sloplesscode",
+        state="checkpointing",
+    )
+
+    assert cues[0]["cue"] == "law:mcp_unavailable_pause"
+    assert cues[0]["severity"] == "P0"
+    assert "pause" in cues[0]["summary"].lower()
+    assert "full_text" not in cues[0]
+
+
 def test_cognitive_health_packet_is_compact_read_only_and_project_agnostic() -> None:
     packet = build_cognitive_health_packet(
         project="alpha",
@@ -861,6 +877,23 @@ def test_cognitive_health_packet_is_compact_read_only_and_project_agnostic() -> 
     serialized = str(packet).casefold()
     assert "docker" not in serialized
     assert "sloplesscode" not in serialized
+
+
+def test_cognitive_health_packet_checks_mcp_availability_for_governed_work() -> None:
+    packet = build_cognitive_health_packet(
+        project="alpha",
+        state="implementation",
+        query="memory server unavailable during task start checkpoint finish",
+        limit=5,
+    )
+
+    check_ids = {check["id"] for check in packet["checks"]}
+    cue_ids = {cue["cue"] for cue in packet["context_cues"]}
+
+    assert "mcp_availability_before_work" in check_ids
+    assert "law:mcp_unavailable_pause" in cue_ids
+    assert "restart" in str(packet).lower()
+    assert "docker" not in str(packet).lower()
 
 
 def test_public_diagnostic_incidents_are_compact_and_actionable() -> None:
@@ -1986,6 +2019,20 @@ def test_mailbox_get_unknown_reference_returns_public_not_found_receipt() -> Non
 
     assert packet["receipt"]["status"] == "not_found"
     assert "_internal" not in packet
+
+
+def test_mailbox_planning_state_surfaces_stenography_protocol_early() -> None:
+    packet = build_mailbox_state_packet(
+        state="planning",
+        project="alpha",
+        task_id="task-early-steno",
+        runtime_profile_id="weak_mcp_operator",
+    )
+
+    assert packet["stenography_protocol"]["capture_model"] == "tagged_spans"
+    assert "checkpoint_hint" in packet["stenography_protocol"]["minimum_closeout_span_kinds"]
+    assert packet["stenography_coverage"]["status"] == "none"
+    assert "stenography_protocol" in packet
 
 
 def test_mailbox_state_surfaces_stenography_tag_protocol_for_assisted_forms() -> None:

@@ -22,6 +22,7 @@ Legacy note:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -400,6 +401,66 @@ def _validate_candidate(raw: dict) -> list[str]:
     return errors
 
 
+def _stable_digest(value: object) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        ensure_ascii=True,
+        default=str,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _event_evidence_identity(ev: dict) -> dict:
+    payload_json = str(ev.get("payload_json") or "")
+    payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    event_id = str(ev.get("id") or ev.get("event_id") or "").strip()
+    identity = {
+        "event_type": str(ev.get("event_type") or ""),
+        "context_signature": str(ev.get("context_signature") or ""),
+        "payload_sha256": payload_hash,
+    }
+    if event_id:
+        identity["id"] = event_id
+    else:
+        identity["ts"] = round(float(ev.get("ts") or 0), 3)
+    return identity
+
+
+def _analysis_evidence_fingerprint(
+    *,
+    events: list[dict],
+    eligible_patterns: list[tuple[tuple[str, str], int]],
+    analysis_source: str,
+) -> str:
+    event_ids = [_event_evidence_identity(ev) for ev in sorted(events, key=lambda x: float(x.get("ts") or 0))]
+    patterns = [
+        {"key": list(key), "count": int(count)}
+        for key, count in sorted(eligible_patterns, key=lambda item: (item[0], item[1]))
+    ]
+    return _stable_digest({"source": analysis_source, "events": event_ids, "patterns": patterns})
+
+
+def _candidate_evidence_fingerprint(
+    *,
+    analysis_fingerprint: str,
+    action_type: str,
+    artifact_type: str,
+    content: str,
+    observation: str,
+    why_it_matters: str,
+) -> str:
+    return "model_mirror:" + _stable_digest({
+        "analysis": analysis_fingerprint,
+        "action_type": action_type,
+        "artifact_type": artifact_type,
+        "content": content,
+        "observation": observation,
+        "why_it_matters": why_it_matters,
+    })
+
+
 # ── Main service ───────────────────────────────────────────────────────────────
 
 class ModelMirror:
@@ -462,6 +523,12 @@ class ModelMirror:
                 logger.info("Model mirror: no patterns with freq >= %d — skipping", _MIN_PATTERN_FREQ)
                 self._last_result = result
                 return result
+
+            analysis_fingerprint = _analysis_evidence_fingerprint(
+                events=events,
+                eligible_patterns=eligible,
+                analysis_source=analysis_source,
+            )
 
             # Active artifacts (to avoid duplicates in prompt)
             active_arts = await learning_store.list_artifacts(status="active", limit=50)
@@ -553,6 +620,23 @@ class ModelMirror:
                     meta={"analysis_source": analysis_source},
                 )
 
+                evidence_fingerprint = _candidate_evidence_fingerprint(
+                    analysis_fingerprint=analysis_fingerprint,
+                    action_type=action_type,
+                    artifact_type=artifact_type,
+                    content=cleaned_fields["content"],
+                    observation=cleaned_fields["observation"],
+                    why_it_matters=cleaned_fields["why_it_matters"],
+                )
+                candidate_meta = dict(enriched_meta)
+                candidate_meta.update({
+                    "evidence_source": "model_mirror",
+                    "analysis_fingerprint": analysis_fingerprint,
+                    "evidence_fingerprint": evidence_fingerprint,
+                    "source_event_count": result.events_analyzed,
+                    "source_pattern_count": result.patterns_found,
+                })
+
                 artifact_id, created = await learning_store.upsert_candidate(
                     agent_id="glm",
                     action_type=action_type,
@@ -564,14 +648,25 @@ class ModelMirror:
                     confidence=confidence,
                     artifact_type=artifact_type,
                     tags=["glm-mirror"],
-                    meta=enriched_meta,
+                    meta=candidate_meta,
                 )
                 if created:
                     result.candidates_created += 1
                     logger.info("Model mirror: new candidate %s (action=%s)", artifact_id, action_type)
                 else:
-                    result.candidates_updated += 1
-                    logger.info("Model mirror: evidence++ on %s (action=%s)", artifact_id, action_type)
+                    artifact = await learning_store.get_artifact(artifact_id)
+                    artifact_meta = (artifact or {}).get("meta") or {}
+                    evidence_counted = artifact_meta.get("last_evidence_counted") is not False
+                    same_fingerprint = artifact_meta.get("last_evidence_fingerprint") == evidence_fingerprint
+                    if same_fingerprint and not evidence_counted:
+                        logger.info(
+                            "Model mirror: repeated evidence ignored on %s (action=%s)",
+                            artifact_id,
+                            action_type,
+                        )
+                    else:
+                        result.candidates_updated += 1
+                        logger.info("Model mirror: evidence++ on %s (action=%s)", artifact_id, action_type)
 
                 if confidence >= 0.8 and risk_level == "low":
                     result.warnings.append("user_review_required_for_high_confidence_candidates")

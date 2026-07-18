@@ -54,6 +54,16 @@
       "full_text": "After a meaningful implementation, verification, commit, publish, or handoff slice, record a durable progress checkpoint through the public MCP surface. Use record_progress when a task is not claimed or finish_task when closing a claimed task. Chat-only summaries and git commits are not sufficient project memory because the next agent must be able to resume from governed MCP state."
     },
     {
+      "id": "law:mcp_unavailable_pause",
+      "severity": "P0",
+      "scope": ["planning", "implementation", "verification", "checkpointing", "handoff", "task_lifecycle"],
+      "title": "Pause when MCP memory is unavailable",
+      "summary": "If the public MCP memory server is unavailable, pause MCP-backed work, retry briefly, then ask the operator to check or restart it before long work continues.",
+      "expand_ref": "cue:law:mcp_unavailable_pause",
+      "trigger_terms": ["mcp unavailable", "memory server", "cannot connect", "connection error", "checkpoint failed", "checkpoint blocked", "server restart", "retry", "pause work", "work_handle"],
+      "full_text": "For MCP-backed tasks, do not silently continue substantial work when the public MCP memory server is unavailable at task start, claim/start, checkpoint, or finish. Pause the task, retry briefly, and if the server remains unavailable tell the operator that the memory server must be checked or restarted before long work continues. Small read-only local inspection is allowed only when it does not replace claim/checkpoint/finish continuity. Durable project memory is part of the Definition of Done for governed work."
+    },
+    {
       "id": "law:claim_as_workspace_protection",
       "severity": "P0",
       "scope": ["implementation", "checkpointing", "handoff", "workflow", "task_lifecycle"],

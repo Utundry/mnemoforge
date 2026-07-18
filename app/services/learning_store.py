@@ -297,6 +297,62 @@ def _merge_meta(existing: dict, incoming: dict) -> dict:
     return out
 
 
+
+_EVIDENCE_FINGERPRINT_HISTORY_LIMIT = 64
+
+
+def _evidence_fingerprint(meta: dict | None) -> str:
+    if not isinstance(meta, dict):
+        return ""
+    value = meta.get("evidence_fingerprint")
+    if value is None:
+        value = meta.get("source_fingerprint")
+    return str(value or "").strip()
+
+
+def _merge_evidence_metadata(
+    existing: dict,
+    incoming: dict | None,
+    *,
+    now: float,
+) -> tuple[dict, bool]:
+    """
+    Merge metadata and decide whether the incoming observation is new evidence.
+
+    Callers that can identify their evidence window should pass
+    meta["evidence_fingerprint"]. Replays of the same fingerprint update audit
+    metadata but do not increment evidence_count again.
+    """
+    merged = _merge_meta(existing or {}, incoming or {})
+    fingerprint = _evidence_fingerprint(incoming)
+    if not fingerprint:
+        return merged, True
+
+    raw_history = (existing or {}).get("counted_evidence_fingerprints")
+    if isinstance(raw_history, list):
+        history = [str(item).strip() for item in raw_history if str(item).strip()]
+    else:
+        history = []
+
+    counted = fingerprint not in set(history)
+    if counted:
+        history.append(fingerprint)
+        history = history[-_EVIDENCE_FINGERPRINT_HISTORY_LIMIT:]
+        merged["counted_evidence_fingerprints"] = history
+    else:
+        merged["counted_evidence_fingerprints"] = history
+        try:
+            duplicate_count = int(merged.get("duplicate_evidence_fingerprint_count") or 0)
+        except Exception:
+            duplicate_count = 0
+        merged["duplicate_evidence_fingerprint_count"] = duplicate_count + 1
+
+    merged["last_evidence_fingerprint"] = fingerprint
+    merged["last_evidence_counted"] = counted
+    merged["last_evidence_seen_at"] = now
+    return merged, counted
+
+
 # ── Store ──────────────────────────────────────────────────────────────────────
 
 def _merge_text(existing: str, incoming: str, *, max_len: int = 4000) -> str:
@@ -955,12 +1011,13 @@ class LearningStore:
         _REJECT_COOLDOWN_S = 14 * 86400  # rejected candidates stay suppressed for 14 days
 
         def _merge_existing(*, row, bump_by: int = 1) -> tuple[UUID, bool]:
-            new_count = int(row["evidence_count"] or 0) + bump_by
             try:
                 existing_meta = json.loads(row["meta_json"] or "{}")
             except Exception:
                 existing_meta = {}
-            merged_meta = _merge_meta(existing_meta, meta or {})
+            merged_meta, evidence_counted = _merge_evidence_metadata(existing_meta, meta or {}, now=now)
+            current_count = int(row["evidence_count"] or 0)
+            new_count = current_count + (bump_by if evidence_counted else 0)
 
             # Preserve alternative formulations / extra details from repeated observations.
             existing_content = (row["content"] or "").strip()
@@ -1095,7 +1152,8 @@ class LearningStore:
                             existing_meta = json.loads(best_meta_raw or "{}")
                         except Exception:
                             existing_meta = {}
-                        merged_meta = _merge_meta(existing_meta, meta or {})
+                        merged_meta, evidence_counted = _merge_evidence_metadata(existing_meta, meta or {}, now=now)
+                        new_evidence_count = best_evidence + (1 if evidence_counted else 0)
                         # Add semantic diagnostics for later debugging (non-authoritative)
                         merged_meta.setdefault("semantic_norm_sha256", norm_sha)
                         merged_meta.setdefault("semantic_simhash64", str(new_sim))
@@ -1120,7 +1178,7 @@ class LearningStore:
 
                         self._conn.execute(
                             "UPDATE artifacts SET evidence_count = ?, updated_at = ?, meta_json = ?, tags = ?, observation = ?, why_it_matters = ? WHERE id = ?",
-                            (best_evidence + 1, now, json.dumps(merged_meta), json.dumps(merged_tags), new_observation, new_why, best_id),
+                            (new_evidence_count, now, json.dumps(merged_meta), json.dumps(merged_tags), new_observation, new_why, best_id),
                         )
                         self._conn.commit()
                         return UUID(best_id), False
@@ -1145,7 +1203,7 @@ class LearningStore:
                     existing_meta = json.loads(row["meta_json"] or "{}")
                 except Exception:
                     existing_meta = {}
-                merged_meta = _merge_meta(existing_meta, meta or {})
+                merged_meta, evidence_counted = _merge_evidence_metadata(existing_meta, meta or {}, now=now)
                 if score is not None:
                     merged_meta["vector_dedup_last_score"] = float(score)
                 merged_meta["vector_dedup_last_ts"] = now
@@ -1169,7 +1227,7 @@ class LearningStore:
                     existing_tags = []
                 merged_tags = sorted({*(existing_tags if isinstance(existing_tags, list) else []), *((tags or []))})
 
-                new_count = int(row["evidence_count"] or 0) + 1
+                new_count = int(row["evidence_count"] or 0) + (1 if evidence_counted else 0)
                 self._conn.execute(
                     "UPDATE artifacts SET evidence_count = ?, updated_at = ?, meta_json = ?, tags = ?, observation = ?, why_it_matters = ? WHERE id = ?",
                     (new_count, now, json.dumps(merged_meta), json.dumps(merged_tags), new_observation, new_why, row["id"]),
@@ -1179,6 +1237,7 @@ class LearningStore:
 
         def _insert_new_candidate(*, meta_out: dict) -> tuple[UUID, bool]:
             with self._lock:
+                meta_out, _evidence_counted = _merge_evidence_metadata({}, meta_out, now=now)
                 uid = uuid4()
                 try:
                     self._conn.execute(
@@ -1214,7 +1273,8 @@ class LearningStore:
                     # Another process inserted the same key concurrently (UNIQUE index).
                     row2 = self._conn.execute(
                         """
-                        SELECT id, evidence_count, artifact_scope, status FROM artifacts
+                        SELECT id, evidence_count, tags, meta_json, content, observation, why_it_matters, artifact_scope, status
+                        FROM artifacts
                         WHERE key = ? AND status NOT IN ('disabled')
                         """,
                         (key,),
@@ -1222,12 +1282,7 @@ class LearningStore:
                     if row2:
                         # If it's still a candidate, increment evidence; otherwise treat as already satisfied.
                         if (row2["artifact_scope"] == "candidate") and (row2["status"] != "archived"):
-                            new_count = int(row2["evidence_count"] or 0) + 1
-                            self._conn.execute(
-                                "UPDATE artifacts SET evidence_count = ?, updated_at = ? WHERE id = ?",
-                                (new_count, now, row2["id"]),
-                            )
-                            self._conn.commit()
+                            return _merge_existing(row=row2, bump_by=1)
                         return UUID(row2["id"]), False
                     raise
 

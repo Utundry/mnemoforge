@@ -204,7 +204,6 @@
       "examples": [
         "cold start project memory",
         "cold start sloplesscode",
-        "cold start sloplesscode",
         "run sloplesscode cold start",
         "initialize project memory",
         "bootstrap project memory",

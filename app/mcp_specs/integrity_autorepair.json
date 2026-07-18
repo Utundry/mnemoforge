@@ -1,0 +1,30 @@
+{
+  "id": "integrity_autorepair_policy",
+  "version": 1,
+  "enabled": true,
+  "requested_by": "auto_integrity",
+  "defaults": {
+    "batch_limit": 100,
+    "cooldown_seconds": 3600,
+    "discovery_limit": 50,
+    "discovery_cooldown_seconds": 3600,
+    "max_auto_attempts": 3,
+    "discover_before_queue": true
+  },
+  "safe_action_types": [
+    "qdrant_reindex_from_sqlite"
+  ],
+  "slices": {
+    "qdrant.task_memoir_tag_filter": {
+      "enabled": true,
+      "repair_class": "derived_index_repair",
+      "action_type": "qdrant_reindex_from_sqlite",
+      "job_type": "qdrant_reindex_from_sqlite",
+      "payload": {
+        "targets": ["task_memoir"],
+        "limit": 100
+      },
+      "reason": "The task_memoir Qdrant slice is a derived projection rebuilt from canonical SQLite memoir rows."
+    }
+  }
+}

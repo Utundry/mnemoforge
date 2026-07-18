@@ -114,6 +114,7 @@ def test_start_task_session_forwards_public_recovery_identity() -> None:
         session_id="session-1",
         work_id="work-1",
         work_token="secret-token",
+        work_handle="wh1.public-handle",
         agent_fingerprint="fingerprint-1",
         runtime_profile_id="stateless_mcp",
         lease_ttl_seconds=1200,
@@ -123,6 +124,7 @@ def test_start_task_session_forwards_public_recovery_identity() -> None:
     assert route["payload"]["session_id"] == "session-1"
     assert route["payload"]["work_id"] == "work-1"
     assert route["payload"]["work_token"] == "secret-token"
+    assert route["payload"]["work_handle"] == "wh1.public-handle"
     assert route["payload"]["agent_fingerprint"] == "fingerprint-1"
     assert route["payload"]["runtime_profile_id"] == "stateless_mcp"
     assert route["payload"]["lease_ttl_seconds"] == 1200
@@ -138,12 +140,14 @@ def test_finish_task_session_forwards_public_recovery_identity() -> None:
         session_id="session-1",
         work_id="work-1",
         work_token="secret-token",
+        work_handle="wh1.public-handle",
     )
 
     assert route["payload"]["owner_agent"] == "owner-1"
     assert route["payload"]["session_id"] == "session-1"
     assert route["payload"]["work_id"] == "work-1"
     assert route["payload"]["work_token"] == "secret-token"
+    assert route["payload"]["work_handle"] == "wh1.public-handle"
 
 
 def test_primary_start_action_beats_embedded_create_task_phrase() -> None:

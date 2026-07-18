@@ -143,7 +143,7 @@ def _catalog_route_by_intent(intent_type: str) -> dict[str, Any] | None:
 
 
 def _catalog_scores(text: str, args: dict[str, Any]) -> list[dict[str, Any]]:
-    lowered = str(text or "").casefold()
+    lowered = _route_matching_text(text)
     intent_tokens = _route_tokens(lowered)
     has_create_task_intent = _has_create_task_intent(lowered, intent_tokens)
     candidates: list[dict[str, Any]] = []
@@ -402,6 +402,7 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
             "agent_id": str(args.get("agent_id") or "codex").strip() or "codex",
             "session_id": str(args.get("session_id") or "").strip(),
             "work_token": str(args.get("work_token") or "").strip(),
+            "work_handle": str(args.get("work_handle") or "").strip(),
             "source": "project_work",
         }
     elif route["intent_type"] == "create_task":
@@ -474,6 +475,7 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
             "session_id": str(args.get("session_id") or "").strip(),
             "work_id": str(args.get("work_id") or "").strip(),
             "work_token": str(args.get("work_token") or "").strip(),
+            "work_handle": str(args.get("work_handle") or "").strip(),
             "agent_fingerprint": str(args.get("agent_fingerprint") or "").strip(),
             "runtime_profile_id": str(args.get("runtime_profile_id") or "unknown_cli").strip() or "unknown_cli",
             "danger_mode": danger_mode,
@@ -499,6 +501,7 @@ def _apply_payload(route: dict[str, Any], args: dict[str, Any], text: str) -> di
             "next_step": str(args.get("next_step") or "").strip(),
             "checkpoint_mode": str(args.get("checkpoint_mode") or "standard").strip(),
             "work_token": str(args.get("work_token") or "").strip(),
+            "work_handle": str(args.get("work_handle") or "").strip(),
             "danger_mode": danger_mode,
             "danger_confirmation": danger_confirmation,
             "reason": str(args.get("reason") or "project_work:finish_task_session").strip(),
@@ -655,9 +658,7 @@ def _looks_like_lifecycle_anomaly_repair(text: str, tokens: set[str]) -> bool:
         return True
     if "done but still open" in text or "implemented but not closed" in text:
         return True
-    if "выполненные" in text and "открытые" in text:
-        return True
-    if "закрыть" in text and "выполненные" in text and "открытые" in text:
+    if tokens & {"vypolnennye", "zakryt"} and tokens & {"otkrytye"}:
         return True
     lifecycle_terms = {
         "anomaly",
@@ -685,6 +686,54 @@ def _title_from_text(text: str, *, fallback: str) -> str:
         return explicit.group(1).strip()[:96] or fallback
     clean = re.sub(r"^(create|save|record|add|formulate|capture)\s+", "", clean, flags=re.IGNORECASE).strip(" :-")
     return (clean or fallback)[:96]
+
+
+def _route_matching_text(text: str) -> str:
+    lowered = str(text or "").casefold()
+    transliterated = _transliterate_cyrillic_to_ascii(lowered)
+    simplified = transliterated.replace("yy", "y").replace("iy", "i")
+    if transliterated == lowered:
+        return lowered
+    return " ".join({lowered, transliterated, simplified})
+
+
+def _transliterate_cyrillic_to_ascii(text: str) -> str:
+    table = {
+        "\u0430": "a",
+        "\u0431": "b",
+        "\u0432": "v",
+        "\u0433": "g",
+        "\u0434": "d",
+        "\u0435": "e",
+        "\u0451": "e",
+        "\u0436": "zh",
+        "\u0437": "z",
+        "\u0438": "i",
+        "\u0439": "y",
+        "\u043a": "k",
+        "\u043b": "l",
+        "\u043c": "m",
+        "\u043d": "n",
+        "\u043e": "o",
+        "\u043f": "p",
+        "\u0440": "r",
+        "\u0441": "s",
+        "\u0442": "t",
+        "\u0443": "u",
+        "\u0444": "f",
+        "\u0445": "h",
+        "\u0446": "ts",
+        "\u0447": "ch",
+        "\u0448": "sh",
+        "\u0449": "sch",
+        "\u044a": "",
+        "\u044b": "y",
+        "\u044c": "",
+        "\u044d": "e",
+        "\u044e": "yu",
+        "\u044f": "ya",
+    }
+    return "".join(table.get(char, char) for char in text)
 
 
 def _route_tokens(text: str) -> set[str]:
@@ -927,4 +976,3 @@ def _project_work_backend_text(args: dict[str, Any]) -> str:
 def _brief_route_error(exc: Exception, *, default: str = "request failed") -> str:
     text = str(exc).strip()
     return text[:240] if text else default
-

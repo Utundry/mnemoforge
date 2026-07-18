@@ -22,13 +22,13 @@ from app.services.data_hygiene_service import (
     reconcile_completed_remediations as reconcile_hygiene_completed_remediations,
     run_data_hygiene_audit,
 )
+from app.services.data_integrity_autorepair_service import (
+    integrity_autorepair_enabled,
+    maybe_queue_integrity_autorepairs,
+)
 from app.services.data_integrity_service import (
-    build_auto_discovery_guard,
-    build_auto_remediation_guard,
     close_data_integrity_store,
     get_data_integrity_store,
-    maybe_auto_discover_slice,
-    queue_recommended_remediation,
     reconcile_completed_remediations,
     run_integrity_audit,
 )
@@ -1530,7 +1530,7 @@ async def lifespan(app: FastAPI):
         _DATA_HYGIENE_EVENT_LIMIT,
     )
 
-    _INTEGRITY_AUTO_REMEDIATE = _os_integrity.getenv("INTEGRITY_AUTO_REMEDIATE", "").lower() in {"1", "true", "yes", "on"}
+    _INTEGRITY_AUTO_REMEDIATE = integrity_autorepair_enabled()
     _INTEGRITY_AUTO_DISCOVERY_LIMIT = int(_os_integrity.getenv("INTEGRITY_AUTO_DISCOVERY_LIMIT", "50"))
     _INTEGRITY_AUTO_DISCOVERY_COOLDOWN_MINUTES = float(
         _os_integrity.getenv("INTEGRITY_AUTO_DISCOVERY_COOLDOWN_MINUTES", "60")
@@ -1557,58 +1557,22 @@ async def lifespan(app: FastAPI):
                         reconciled.get("repaired_findings", 0),
                     )
                 if _INTEGRITY_AUTO_REMEDIATE:
-                    overview = store.overview()
-                    for slice_id in overview.get("actionable_slices", []):
-                        discovery_guard = build_auto_discovery_guard(
-                            slice_id,
-                            cooldown_seconds=max(0.0, _INTEGRITY_AUTO_DISCOVERY_COOLDOWN_MINUTES) * 60.0,
+                    autorepair = await maybe_queue_integrity_autorepairs(
+                        queue=_get_job_queue_integrity(),
+                        discovery_limit=max(1, _INTEGRITY_AUTO_DISCOVERY_LIMIT),
+                        discovery_cooldown_seconds=max(0.0, _INTEGRITY_AUTO_DISCOVERY_COOLDOWN_MINUTES) * 60.0,
+                        remediation_cooldown_seconds=max(0.0, _INTEGRITY_AUTO_REMEDIATE_COOLDOWN_MINUTES) * 60.0,
+                    )
+                    queued_count = len(autorepair.get("queued", []))
+                    discovered_count = len(autorepair.get("discovered", []))
+                    skipped_count = len(autorepair.get("skipped", []))
+                    if queued_count or discovered_count:
+                        logger.info(
+                            "Integrity autorepair pass: queued=%d discovered=%d skipped=%d",
+                            queued_count,
+                            discovered_count,
+                            skipped_count,
                         )
-                        if discovery_guard.get("allowed"):
-                            try:
-                                discovery = await maybe_auto_discover_slice(
-                                    slice_id,
-                                    limit=max(1, _INTEGRITY_AUTO_DISCOVERY_LIMIT),
-                                    cooldown_seconds=max(0.0, _INTEGRITY_AUTO_DISCOVERY_COOLDOWN_MINUTES) * 60.0,
-                                )
-                                if discovery.get("performed"):
-                                    logger.info(
-                                        "Integrity auto-discovery completed: slice=%s discovered=%d",
-                                        slice_id,
-                                        discovery.get("discovered", 0),
-                                    )
-                            except Exception as _integrity_discovery_err:
-                                logger.warning(
-                                    "Integrity auto-discovery failed for %s: %s",
-                                    slice_id,
-                                    _integrity_discovery_err,
-                                )
-                        guard = build_auto_remediation_guard(
-                            slice_id,
-                            cooldown_seconds=max(0.0, _INTEGRITY_AUTO_REMEDIATE_COOLDOWN_MINUTES) * 60.0,
-                        )
-                        if not guard.get("allowed"):
-                            logger.debug(
-                                "Integrity auto-remediation skipped: slice=%s reason=%s",
-                                slice_id,
-                                guard.get("reason", "unknown"),
-                            )
-                            continue
-                        try:
-                            queued = await queue_recommended_remediation(
-                                slice_id=slice_id,
-                                requested_by="auto_integrity",
-                                queue=_get_job_queue_integrity(),
-                            )
-                            logger.info(
-                                "Integrity auto-remediation queued: slice=%s remediation=%s job=%s",
-                                slice_id,
-                                queued.get("remediation_id"),
-                                queued.get("job_id"),
-                            )
-                        except ValueError:
-                            continue
-                        except Exception as _integrity_queue_err:
-                            logger.warning("Integrity auto-remediation queue failed for %s: %s", slice_id, _integrity_queue_err)
             except Exception as _integrity_sync_err:
                 logger.warning("Integrity remediation sync loop error (non-fatal): %s", _integrity_sync_err)
             await asyncio.sleep(_INTEGRITY_REMEDIATION_SYNC_SECONDS)

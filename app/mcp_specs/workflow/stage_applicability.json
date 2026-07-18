@@ -42,6 +42,11 @@
       "show_in": ["planning", "implementation", "checkpointing", "handoff"],
       "why": "The public MCP surface reminder anchors governed project context across the main task lifecycle."
     },
+    "law:mcp_unavailable_pause": {
+      "show_in": ["planning", "implementation", "verification", "checkpointing", "handoff"],
+      "hide_in": ["live_validation", "operator_review"],
+      "why": "MCP availability is a lifecycle precondition for governed claim, checkpoint, recovery, and finish continuity."
+    },
     "governed_law": {
       "show_in": ["planning", "implementation", "verification", "live_validation", "checkpointing", "handoff", "operator_review"],
       "why": "Full governed law text should be retrieved explicitly when the agent needs the complete rule, while normal packets can carry compact refs."
