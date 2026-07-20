@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from functools import lru_cache
 from typing import Any, Iterable
 
-from app.services.mcp_workflow_specs import load_named_json_spec
+from app.services.mcp_workflow_specs import load_named_json_spec, workflow_spec_cache
 from app.services.public_diagnostic_service import build_public_diagnostic_incident
 
 
-@lru_cache(maxsize=1)
+@workflow_spec_cache(maxsize=1)
 def _edit_authority_spec() -> dict[str, Any]:
     try:
         return load_named_json_spec("workflow/edit_authority.json")

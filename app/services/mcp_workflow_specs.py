@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from app.models.mcp_workflow import (
     ClerkCaptureRegistry,
@@ -29,6 +29,63 @@ DEFAULT_SPEC_ROOT = PROJECT_ROOT / "app" / "mcp_specs"
 
 class WorkflowSpecError(ValueError):
     """Raised when declarative MCP workflow specs are missing or invalid."""
+
+
+_WORKFLOW_SPEC_CACHE_CLEARERS: dict[str, Callable[[], None]] = {}
+
+
+def register_workflow_spec_cache(name: str, cache_clear: Callable[[], None]) -> None:
+    cache_name = str(name or "").strip()
+    if not cache_name:
+        raise WorkflowSpecError("Workflow spec cache name must not be empty")
+    _WORKFLOW_SPEC_CACHE_CLEARERS[cache_name] = cache_clear
+
+
+def workflow_spec_cache(maxsize: int | None = 1) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        cached = lru_cache(maxsize=maxsize)(func)
+        register_workflow_spec_cache(f"{func.__module__}.{func.__name__}", cached.cache_clear)
+
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            return cached(*args, **kwargs)
+
+        wrapper.cache_clear = cached.cache_clear  # type: ignore[attr-defined]
+        wrapper.cache_info = cached.cache_info  # type: ignore[attr-defined]
+        return wrapper
+
+    return decorator
+
+
+def clear_workflow_spec_caches() -> dict[str, Any]:
+    cleared: list[str] = []
+    errors: dict[str, str] = {}
+
+    for name, cache_clear in sorted(_WORKFLOW_SPEC_CACHE_CLEARERS.items()):
+        try:
+            cache_clear()
+            cleared.append(name)
+        except Exception as exc:
+            errors[name] = str(exc)
+
+    try:
+        load_named_json_spec.cache_clear()
+        cleared.append("app.services.mcp_workflow_specs.load_named_json_spec")
+    except Exception as exc:
+        errors["app.services.mcp_workflow_specs.load_named_json_spec"] = str(exc)
+
+    try:
+        cached_validate_default_specs.cache_clear()
+        cleared.append("app.services.mcp_workflow_specs.cached_validate_default_specs")
+    except Exception as exc:
+        errors["app.services.mcp_workflow_specs.cached_validate_default_specs"] = str(exc)
+
+    return {
+        "status": "ok" if not errors else "warning",
+        "cleared": cleared,
+        "errors": errors,
+        "cleared_count": len(cleared),
+    }
 
 
 def _load_json(path: Path) -> dict[str, Any]:

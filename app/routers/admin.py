@@ -1296,6 +1296,12 @@ async def soft_reload(_: None = Depends(_admin_guard)) -> dict[str, Any]:
     results: dict[str, Any] = {}
 
     try:
+        from app.services.mcp_workflow_specs import clear_workflow_spec_caches
+        results["workflow_specs"] = clear_workflow_spec_caches()
+    except Exception as e:
+        results["workflow_specs"] = f"error: {e}"
+
+    try:
         from app.services.qdrant_service import set_qdrant_client
         from qdrant_client import AsyncQdrantClient
         if not settings.qdrant_in_memory:

@@ -353,26 +353,34 @@ class UnifiedArtifactService:
             linked_status=linked_status,
         )
 
-    async def _get_task(self, key: ArtifactKey) -> UnifiedArtifactRecord:
-        """Получить task и преобразовать в UnifiedArtifactRecord."""
-        row = None
+    async def _get_task(
+        self,
+        key: ArtifactKey,
+        *,
+        row: dict | None = None,
+        summary_maps: dict[str, dict[str, dict[str, int | bool]]] | None = None,
+    ) -> UnifiedArtifactRecord:
+        """Return one task as a unified artifact record."""
         canonical_project = resolve_project_id(key.project)
-        for lookup_project in project_lookup_ids(canonical_project):
-            row = self._tasks_store.get_task_by_task_id(
-                project=lookup_project,
-                task_id=key.local_id,
-            )
-            if row:
-                break
-        if not row:
-            row = self._tasks_store.get_unique_task_by_uuid(task_id=key.local_id)
+        if row is None:
+            for lookup_project in project_lookup_ids(canonical_project):
+                row = self._tasks_store.get_task_by_task_id(
+                    project=lookup_project,
+                    task_id=key.local_id,
+                )
+                if row:
+                    break
+            if not row:
+                row = self._tasks_store.get_unique_task_by_uuid(task_id=key.local_id)
 
         if not row:
             raise ValueError(f"Task not found: {key.local_id}")
 
-        # Получить связанный improvement, если есть
         stored_project = str(row.get("project") or canonical_project)
-        summary = (await _task_capture_summary_map(stored_project, limit_hint=1)).get(key.local_id) or {}
+        if summary_maps is None:
+            summary = (await _task_capture_summary_map(stored_project, limit_hint=1)).get(key.local_id) or {}
+        else:
+            summary = (summary_maps.get(stored_project) or {}).get(key.local_id) or {}
         changes = self._tasks_store.list_changes(project=stored_project, task_id=key.local_id, limit=500)
 
         linked_artifact_key = None
@@ -482,7 +490,7 @@ class UnifiedArtifactService:
                 except Exception as e:
                     logger.warning(f"Failed to convert improvement {imp['id']}: {e}")
 
-        # Получить tasks
+        # Fetch tasks and compute task-capture summaries once per stored project.
         if semantic_candidates is None and (type_ is None or type_ == "task"):
             tasks = []
             for lookup_project in lookup_projects:
@@ -494,10 +502,17 @@ class UnifiedArtifactService:
                             limit=fetch_limit,
                         )
                     )
+            task_projects = list(
+                dict.fromkeys(str(task.get("project") or canonical_project) for task in tasks)
+            )
+            summary_maps = {
+                task_project: await _task_capture_summary_map(task_project, limit_hint=fetch_limit)
+                for task_project in task_projects
+            }
             for task in tasks:
                 try:
                     key = ArtifactKey(type="task", project=canonical_project, local_id=task["task_id"])
-                    items.append(await self._get_task(key))
+                    items.append(await self._get_task(key, row=task, summary_maps=summary_maps))
                 except Exception as e:
                     logger.warning(f"Failed to convert task {task['task_id']}: {e}")
 

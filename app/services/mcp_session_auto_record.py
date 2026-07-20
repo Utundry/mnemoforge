@@ -2,18 +2,17 @@
 from __future__ import annotations
 
 import time
-from functools import lru_cache
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote
 
 from app.services.mcp_tool_contracts import build_report_task_checkpoint_payload
-from app.services.mcp_workflow_specs import load_named_json_spec
+from app.services.mcp_workflow_specs import load_named_json_spec, workflow_spec_cache
 
 PostCallback = Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
 DialogueTranscriptCallback = Callable[[list[dict[str, Any]]], str]
 
 
-@lru_cache(maxsize=1)
+@workflow_spec_cache(maxsize=1)
 def active_session_tools() -> set[str]:
     spec = load_named_json_spec("session/active_session_tools.json")
     return {str(item).strip() for item in spec.get("active_tools") or [] if str(item).strip()}

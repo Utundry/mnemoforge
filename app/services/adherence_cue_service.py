@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import Any
 
-from app.services.mcp_workflow_specs import load_named_json_spec
+from app.services.mcp_workflow_specs import load_named_json_spec, workflow_spec_cache
 from app.services.stage_applicability_service import stage_allows_block
 
 
@@ -11,7 +10,7 @@ def _clean_text(value: object) -> str:
     return str(value or "").strip().lower()
 
 
-@lru_cache(maxsize=1)
+@workflow_spec_cache(maxsize=1)
 def _adherence_spec() -> dict[str, Any]:
     try:
         return load_named_json_spec("workflow/adherence_cues.json")

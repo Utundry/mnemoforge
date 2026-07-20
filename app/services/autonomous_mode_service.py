@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from app.services.mcp_workflow_specs import load_named_json_spec
+from app.services.mcp_workflow_specs import load_named_json_spec, workflow_spec_cache
 from app.services.public_diagnostic_service import build_public_diagnostic_incident
 from app.services.system_data_root import data_path
 
@@ -25,7 +24,7 @@ CREATE TABLE IF NOT EXISTS autonomous_mode_grants (
 """
 
 
-@lru_cache(maxsize=1)
+@workflow_spec_cache(maxsize=1)
 def _spec() -> dict[str, Any]:
     try:
         return load_named_json_spec("workflow/autonomous_mode.json")

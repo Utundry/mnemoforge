@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import re
-from functools import lru_cache
 from typing import Any
 
-from app.services.mcp_workflow_specs import load_named_json_spec
+from app.services.mcp_workflow_specs import load_named_json_spec, workflow_spec_cache
 
 
-@lru_cache(maxsize=1)
+@workflow_spec_cache(maxsize=1)
 def _stage_applicability_spec() -> dict[str, Any]:
     try:
         return load_named_json_spec("workflow/stage_applicability.json")

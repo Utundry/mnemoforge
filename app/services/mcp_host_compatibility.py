@@ -4,12 +4,11 @@ import hashlib
 import json
 import sqlite3
 import time
-from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from app.services.mcp_workflow_specs import load_named_json_spec
+from app.services.mcp_workflow_specs import load_named_json_spec, workflow_spec_cache
 from app.services.system_data_root import data_path
 from app.services.task_lease_service import get_task_lease_store, verify_work_token_for_mutation
 
@@ -40,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_mcp_compatibility_cooldown_expiry
 """
 
 
-@lru_cache(maxsize=1)
+@workflow_spec_cache(maxsize=1)
 def _spec() -> dict[str, Any]:
     try:
         return load_named_json_spec("workflow/host_compatibility.json")

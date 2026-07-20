@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import Any
 
 from app.services.adherence_cue_service import (
@@ -8,7 +7,7 @@ from app.services.adherence_cue_service import (
     adherence_cues_for_state,
     expand_adherence_cue,
 )
-from app.services.mcp_workflow_specs import load_named_json_spec
+from app.services.mcp_workflow_specs import load_named_json_spec, workflow_spec_cache
 from app.services.stage_applicability_service import stage_allows_block, stage_applicability_metadata
 
 
@@ -16,7 +15,7 @@ def _clean_text(value: object) -> str:
     return str(value or "").strip().lower()
 
 
-@lru_cache(maxsize=1)
+@workflow_spec_cache(maxsize=1)
 def _cue_spec() -> dict[str, Any]:
     try:
         return load_named_json_spec("context/cues.json")

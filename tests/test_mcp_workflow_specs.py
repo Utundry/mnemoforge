@@ -37,6 +37,7 @@ from app.services.public_diagnostic_service import (
 )
 from app.services.mcp_workflow_specs import (
     WorkflowSpecError,
+    clear_workflow_spec_caches,
     list_mailbox_forms_for_state,
     load_clerk_capture_registry,
     load_feature_toggle_registry,
@@ -53,12 +54,47 @@ from app.services.mcp_workflow_specs import (
     load_tool_family_registry,
     load_tool_surface_spec,
     validate_specs,
+    workflow_spec_cache,
 )
 from app.services.stage_applicability_service import stage_allows_block
 from app.services.spec_edit_guardrail_service import audit_universal_spec_runtime_leaks
 
 
 MCP_SPEC_ROOT = Path(__file__).resolve().parents[1] / "app" / "mcp_specs"
+
+
+def test_clear_workflow_spec_caches_reloads_named_specs(tmp_path: Path) -> None:
+    spec_root = tmp_path / "specs"
+    spec_root.mkdir()
+    spec_path = spec_root / "example.json"
+    spec_path.write_text('{"value": 1}', encoding="utf-8")
+
+    assert load_named_json_spec("example.json", spec_root=spec_root)["value"] == 1
+    spec_path.write_text('{"value": 2}', encoding="utf-8")
+    assert load_named_json_spec("example.json", spec_root=spec_root)["value"] == 1
+
+    result = clear_workflow_spec_caches()
+
+    assert result["status"] == "ok"
+    assert "app.services.mcp_workflow_specs.load_named_json_spec" in result["cleared"]
+    assert load_named_json_spec("example.json", spec_root=spec_root)["value"] == 2
+
+
+def test_clear_workflow_spec_caches_clears_registered_service_caches() -> None:
+    calls = {"count": 0}
+
+    @workflow_spec_cache(maxsize=1)
+    def cached_marker() -> int:
+        calls["count"] += 1
+        return calls["count"]
+
+    assert cached_marker() == 1
+    assert cached_marker() == 1
+
+    result = clear_workflow_spec_caches()
+
+    assert any(name.endswith("test_mcp_workflow_specs.cached_marker") for name in result["cleared"])
+    assert cached_marker() == 2
 
 
 def test_mcp_specs_use_ascii_internal_language() -> None:
